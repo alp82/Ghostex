@@ -301,6 +301,15 @@ impl GhostexGpuiApp {
             return;
         }
         self.swap_agents_workspace_to_project_id(next_state.active_project_id.clone(), cx);
+        self.apply_sidebar_gxserver_presentation_focus_state(next_state, cx);
+    }
+
+    /// Everything a focus state does once the workspace project is settled. Called on its own for a payload that lost to a newer local selection, which must neither enter the project switch coalescer nor swap the workspace (gx_store/local_focus.rs).
+    pub(crate) fn apply_sidebar_gxserver_presentation_focus_state(
+        &mut self,
+        next_state: GpuiGxserverPresentationFocusState,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.reconcile_local_app_shot_session_mappings(&next_state);
         if self.sidebar_gxserver_presentation_focus_state == next_state {
             self.attach_surfaced_local_workspace_terminals(&next_state, cx);
@@ -317,9 +326,7 @@ impl GhostexGpuiApp {
         let workspace_changed = self.reconcile_local_workspace_tabs_with_sidebar(&next_state, cx);
         self.sidebar_gxserver_presentation_focus_state = next_state;
         self.sync_gpui_engine_first_prompt_input_suppression(cx);
-        persist_gpui_gxserver_presentation_focus_state(
-            &self.sidebar_gxserver_presentation_focus_state,
-        );
+        self.gx_store_persist_focus_state_file();
         if self.active_mode.is_project_editor_mode() && self.project_editor_companion_is_visible() {
             let mode = self.active_mode;
             let focus_companion =
@@ -454,6 +461,13 @@ impl GhostexGpuiApp {
             return false;
         };
         if self.agents_workspace_project_id.as_deref() != focus_state.active_project_id.as_deref() {
+            return false;
+        }
+        // An empty list clears every tab of the project, so the Rust store has to agree that the project has none (gx_store/local_focus.rs, `confirms_empty_tab_list`).
+        if !self.gx_store_allows_tab_reconcile(
+            focus_state.active_project_id.as_deref(),
+            tab_sessions.len(),
+        ) {
             return false;
         }
         /*
@@ -631,8 +645,10 @@ impl GhostexGpuiApp {
         GpuiProjectViewState {
             active_mode: self.available_titlebar_mode_or_agents(self.active_mode),
             companion_split_enabled: self.project_editor_shell.left_companion_split_enabled,
+            companion_split_axis: self.project_editor_shell.left_companion_split_axis,
             companion_width_ratio: self.project_editor_shell.left_companion_width_ratio,
             companion_split_ratio: self.project_editor_shell.left_companion_split_ratio,
+            companion_columns_ratio: self.project_editor_shell.left_companion_columns_ratio,
             companion_top_session_id: self.project_editor_companion_terminal_session_id,
             companion_bottom_session_id: self
                 .project_editor_companion_secondary_terminal_session_id,
@@ -689,8 +705,10 @@ impl GhostexGpuiApp {
             return;
         };
         self.project_editor_shell.left_companion_split_enabled = state.companion_split_enabled;
+        self.project_editor_shell.left_companion_split_axis = state.companion_split_axis;
         self.project_editor_shell.left_companion_width_ratio = state.companion_width_ratio;
         self.project_editor_shell.left_companion_split_ratio = state.companion_split_ratio;
+        self.project_editor_shell.left_companion_columns_ratio = state.companion_columns_ratio;
         self.project_editor_companion_terminal_session_id = state
             .companion_top_session_id
             .filter(|session_id| self.agents_workspace.has_session(*session_id));

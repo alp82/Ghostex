@@ -147,11 +147,11 @@ pub fn usage() -> String {
             "Create a Quick chat workspace with its first terminal session",
         ),
         format_help_command(
-            "create-agent <agentId> --project-id id [--group-id id] [--first-input-draft text] [--defer-start]",
-            "Create and start a configured agent session; --first-input-draft stages text in its input without sending",
+            "create-agent <agentId> --project-id id [--group-id id] [--model m] [--effort e] [--first-input-draft text] [--defer-start]",
+            "Create and start a configured agent session; --model/--effort (Claude, Codex) apply to this session only; --first-input-draft stages text in its input without sending",
         ),
         format_help_command(
-            "board start-work <bead-id> [--agent id] [--project-path path|--project-id id] [--json]",
+            "board start-work <bead-id> [--agent id] [--model m] [--effort e] [--project-path path|--project-id id] [--json]",
             "Dispatch a Project Board bead: reuse its usable linked session or create the worker",
         ),
         format_help_command(
@@ -325,7 +325,7 @@ pub fn usage() -> String {
         format_help_command("read-session-chat <selector> [--subagent name-or-id] [--limit n] [--before-offset n] [--history-mode turns|detail] [--preserve-newest] [--wait-ms n --fingerprint f] --json", "Read a session or subagent transcript; --wait-ms long-polls the main chat"),
         format_help_command("switch-draft-agent <selector> --agent-id <id> --json", "Switch an unprompted draft session to another project agent"),
         format_help_command("send-session-chat-key <selector> --key <key> --json", "Queue Enter or a shifted option key behind this session's pending chat writes"),
-        format_help_command("select-session-chat-model <selector> [--model <model> --effort <effort>] [--mode <mode>] [--fast-mode on|off] [--defer] --json", "Change chat model, effort or mode; --defer queues the choice until the agent is ready"),
+        format_help_command("select-session-chat-model <selector> [--model <model> --effort <effort>] [--scope session|default] [--mode <mode>] [--fast-mode on|off] [--defer] --json", "Change chat model, effort or mode; --scope session applies it to this session without changing the agent's default (Claude only); --defer queues the choice until the agent is ready"),
         format_help_command("read-session-chat-skills <selector> --json", "List skills available to the session's agent"),
         format_help_command("read-session-chat-files <selector> --json", "List the session project's files for @ mentions"),
         format_help_command("send-session-chat-message <selector> <text>", "Send a chat message into an agent session"),
@@ -416,8 +416,8 @@ pub fn usage() -> String {
             "Communicate and coordinate with other agents",
         ),
         format_help_command(
-            "fable-5.6-orchestration --help",
-            "Show Ghostex Fable 5.6 Orchestration skill setup",
+            "agents-orchestration --help",
+            "Show Ghostex Agents Orchestration skill setup (launch and coordinate other agents)",
         ),
         format_help_command(
             "manage-beads --help",
@@ -581,7 +581,7 @@ Specialized workflows:
   chat queues, prompt history, server, diagnostics) is covered by ghostex --help
   and the focused help pages. Use $ghostex-embedded-browser-use,
   $ghostex-browser-use, $ghostex-computer-use, $ghostex-manage-beads,
-  $ghostex-fable-56-orchestration, $ghostex-auto-rename-session, or
+  $ghostex-agents-orchestration, $ghostex-auto-rename-session, or
   $ghostex-move-codex-session when their domain applies. Use $ghostex-help to
   explain how a Ghostex feature works or to change an app setting for the user
   (ghostex guide, ghostex settings).
@@ -784,7 +784,7 @@ Inspect:
 pub fn board_usage() -> String {
     let commands = [
         format_help_command(
-            "board start-work <bead-id> [--agent id] [--project-path path|--project-id id] [--json]",
+            "board start-work <bead-id> [--agent id] [--model m] [--effort e] [--project-path path|--project-id id] [--json]",
             "Dispatch a Project Board bead through gxserver",
         ),
         format_help_command(
@@ -802,7 +802,7 @@ pub fn board_usage() -> String {
         "Ghostex Project Board - dispatch bead work through gxserver
 
 Usage:
-  ghostex board start-work <bead-id> [--agent <agentId>] [--project-path <path>|--project-id <id>] [--json]
+  ghostex board start-work <bead-id> [--agent <agentId>] [--model <model>] [--effort <level>] [--project-path <path>|--project-id <id>] [--json]
   ghostex board associate <bead-id> [--session-id <alias|id|title>] [--project-id <id>] [--json]
   gx board start-work <bead-id>
   gx board associate <bead-id>
@@ -817,6 +817,9 @@ Behavior:
   is returned as {{ \"projectId\": ..., \"sessionId\": ..., \"created\": false }} instead of creating a second worker.
   Without --agent, the bead assignee is matched case-insensitively against configured agents,
   falling back to the default prompt agent.
+  --model and --effort start a new Claude or Codex worker on that model and effort for this session
+  only; your default model is unchanged, and a resumed worker keeps them. A reused worker keeps
+  whatever it already runs.
   Pass --project-path <repo> (or --project-id) to start the worker in the project the card is
   about; the bead is still looked up on that project's board. Without either, the worker starts
   in the project whose own path is the Beads directory - the board itself - never in a sibling
@@ -1117,27 +1120,27 @@ Boundary:
     .to_string()
 }
 
-pub fn fable56_orchestration_usage() -> String {
-    "Ghostex Fable 5.6 Orchestration - install the agent skill for the Fable plan / Codex implement / Fable verify pipeline
+pub fn agents_orchestration_usage() -> String {
+    "Ghostex Agents Orchestration - install the agent skill for launching and coordinating other agents
 
 Usage:
-  gx fable-5.6-orchestration --help
-  gx fable-5.6-orchestration install-skill [--json]
+  gx agents-orchestration --help
+  gx agents-orchestration install-skill [--json]
 
 Agent skill:
-  Use $ghostex-fable-56-orchestration to run a multi-phase coding task as a
-  pipeline over Ghostex panes: plan inline with Fable, launch one Codex
-  gpt-5.6 worker pane per phase, then verify with a Fable pane and spawn
-  fixer panes until verification passes.
+  Use $ghostex-agents-orchestration when one agent needs other agents to do
+  part of the work: launch them with a specific model and effort, send them
+  tasks, read their replies, wait for them to finish, and verify the result.
 
 What the skill teaches:
-  Ask for Fable and Codex effort levels, write a self-contained phase plan
-  file, launch workers with create-session, monitor sentinels with read-text,
-  verify acceptance criteria with a Fable pane, and cap the fix loop.
+  Read ghostex agents --help and ghostex --help first, resolve your own
+  session and project, hand over self-contained tasks, keep the global
+  reference of every created session, confirm delivery, wait on a last-line
+  sentinel with wait-for-text, verify independently, and cap fix rounds.
 
 Boundary:
   Use Ghostex CLI commands instead of raw zmx/tmux control when coordinating
-  panes inside Ghostex.
+  sessions inside Ghostex.
 "
     .to_string()
 }

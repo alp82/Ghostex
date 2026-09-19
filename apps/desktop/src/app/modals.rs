@@ -1334,6 +1334,16 @@ impl GhostexGpuiApp {
         CDXC:Diagnostics 2026-06-28-17:06:
         GPUI app-modal open/retry behavior stays functional, but runtime log writers and diagnostic breadcrumbs are intentionally removed until a future requirement adds a narrower diagnostics surface.
         */
+        if !cef::context_initialized() {
+            self.defer_gpui_app_modal_open_for_cef(
+                modal,
+                open_message,
+                sidebar_state_message,
+                reset_ready_retry,
+                cx,
+            );
+            return;
+        }
         if reset_ready_retry {
             self.app_modal_ready_retry_used = false;
         }
@@ -1946,7 +1956,7 @@ impl GhostexGpuiApp {
         );
         message["hud"]["commandSessionIndicators"] =
             gpui_sidebar_command_session_indicators_from_command_pane_sources(&commands, &sessions);
-        message
+        self.with_project_view_scope_options(message)
     }
 
     pub(crate) fn apply_gpui_gxserver_agent_settings_hydration_result(
@@ -2057,6 +2067,11 @@ impl GhostexGpuiApp {
         let chat_file_edit_previews_script = format!(
             "window.ghostexSetSessionChatFileEditPreviews?.({chat_file_edit_previews});undefined;"
         );
+        let chat_model_picks_session_only =
+            gpui_session_chat_model_picks_session_only_from_settings(settings_snapshot.object());
+        let chat_model_picks_session_only_script = format!(
+            "window.ghostexSetSessionChatModelPicksSessionOnly?.({chat_model_picks_session_only});undefined;"
+        );
         let chat_simple_mode =
             gpui_session_chat_simple_mode_from_settings(settings_snapshot.object());
         let chat_simple_mode_script =
@@ -2089,6 +2104,7 @@ impl GhostexGpuiApp {
                 surface.refresh_session_chat_zoom();
                 surface.execute_app_owned_script(&account_privacy_script);
                 surface.execute_app_owned_script(&chat_file_edit_previews_script);
+                surface.execute_app_owned_script(&chat_model_picks_session_only_script);
                 surface.execute_app_owned_script(&chat_file_views_script);
                 surface.execute_app_owned_script(&chat_simple_mode_script);
                 surface.execute_app_owned_script(&chat_hotkeys_script);
@@ -2217,6 +2233,7 @@ impl GhostexGpuiApp {
         let Some(handle) = self.app_modal_window.clone() else {
             return;
         };
+        let sidebar_state_message = self.with_project_view_scope_options(sidebar_state_message);
         let update_result = handle.update(cx, |host, modal_window, cx| {
             host.refresh_sidebar_state_message(sidebar_state_message.clone(), cx);
             modal_window.refresh();

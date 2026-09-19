@@ -39,12 +39,14 @@ import {
   MAX_SESSION_CHAT_TRANSCRIPT_WIDTH_PERCENT,
   MAX_SESSION_CHAT_ZOOM_PERCENT,
   MAX_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS,
+  MAX_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   MAX_SIDEBAR_DEFAULT_WIDTH_PX,
   MAX_SIDEBAR_TOOLTIP_DELAY_MS,
   MAX_TERMINAL_PANE_PADDING_PX,
   MAX_TERMINAL_VIEW_WIDTH_PERCENT,
   MIN_COMMANDS_PANEL_DEFAULT_HEIGHT_PX,
   MIN_PROJECT_SESSION_LIST_COLLAPSED_COUNT,
+  MIN_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   MIN_SESSION_CHAT_TRANSCRIPT_WIDTH_PERCENT,
   MIN_SESSION_CHAT_ZOOM_PERCENT,
   MIN_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS,
@@ -147,6 +149,10 @@ const NUMBER_RANGES: Record<string, { max: number; min: number; step?: number }>
     max: MAX_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS,
     min: MIN_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS,
     step: SIDEBAR_COLLAPSE_ANIMATION_DURATION_STEP_MS,
+  },
+  projectSwitchKeepAliveMinutes: {
+    max: MAX_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
+    min: MIN_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   },
   sidebarDefaultWidthPx: { max: MAX_SIDEBAR_DEFAULT_WIDTH_PX, min: MIN_SIDEBAR_DEFAULT_WIDTH_PX },
   sidebarTooltipDelayMs: {
@@ -376,6 +382,13 @@ const SUPPLEMENTAL_SETTING_ROWS: Record<string, SupplementalRow> = {
     subtitle: 'Switch the session list of a project expanded by a jump to Compact.',
     title: 'Compact list after project jumps',
   },
+  sidebarSessionCycleSkipsSleeping: {
+    ...HOTKEYS_TAB,
+    section: 'navigation',
+    sectionTitle: 'Navigation',
+    subtitle: 'Next Session and Previous Session jump over sleeping sessions in the sidebar.',
+    title: 'Skip sleeping sessions',
+  },
   windowsTerminalBackend: {
     ...GENERAL_TAB,
     group: 'terminal',
@@ -385,7 +398,7 @@ const SUPPLEMENTAL_SETTING_ROWS: Record<string, SupplementalRow> = {
     subtitle:
       'Windows only. PowerShell (default) runs native Windows projects and agents. WSL runs Linux projects. Changing environments prompts you to restart Ghostex.',
     options: [
-      { label: 'PowerShell (native Windows)', value: 'powershell' },
+      { label: 'PowerShell (Native)', value: 'powershell' },
       { label: 'WSL (Linux)', value: 'wsl' },
     ],
   },

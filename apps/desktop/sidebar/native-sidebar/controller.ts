@@ -19,6 +19,7 @@ import type { NativeSidebarBridge } from '@/packages/shared/native-sidebar';
 import { sidebarStore } from '@/packages/core-ui/sidebar-store-model';
 import type { createGpuiSidebarRuntime } from '../gxserver-runtime';
 import { applyNativeSidebarMessage, createNativeSidebarSnapshot } from './model';
+import { nativeSidebarProjectionPhases } from './projection-phases';
 import { NativeSidebarUiState } from './ui-state';
 import { createNativeSidebarPublisher } from './updates';
 import { resolveNativeSessionMenu } from './menu-request';
@@ -33,6 +34,13 @@ export function connectNativeSidebar(runtime: ReturnType<typeof createGpuiSideba
   const publisher = createNativeSidebarPublisher((payload) => bridge.postNativeSidebarSnapshot!(payload));
   let pendingPublish: number | undefined;
   let disposed = false;
+  const tick = createNativeSidebarClock();
+  // Also run after each publish so an armed Delayed Send reaches the chat working row without waiting for the next second.
+  const postClock = () => {
+    const rows = tick();
+    if (rows.length && !disposed)
+      bridge.postNativeSidebarSnapshot!(JSON.stringify({ kind: 'clock', version: 1, rows }));
+  };
   const publish = () => {
     if (pendingPublish !== undefined || disposed) return;
     // CDXC:Sidebar 2026-09-17 WHY:
@@ -45,6 +53,7 @@ export function connectNativeSidebar(runtime: ReturnType<typeof createGpuiSideba
       const snapshot = createNativeSidebarSnapshot(ui);
       const projected = Date.now();
       const metrics = publisher.publish(snapshot);
+      postClock();
       if (
         metrics &&
         snapshot.hud.debuggingMode &&
@@ -54,7 +63,12 @@ export function connectNativeSidebar(runtime: ReturnType<typeof createGpuiSideba
           type: 'sidebarDebugLog',
           scenarioId: 'native.sidebar.refresh',
           event: 'nativeSidebar.publish',
-          details: { ...metrics, projectionMs: projected - started, publishMs: Date.now() - projected },
+          details: {
+            ...metrics,
+            projectionMs: projected - started,
+            publishMs: Date.now() - projected,
+            ...nativeSidebarProjectionPhases.current,
+          },
         });
       }
     });
@@ -154,12 +168,9 @@ export function connectNativeSidebar(runtime: ReturnType<typeof createGpuiSideba
   };
   runtime.messageSource.addEventListener('message', receive);
   const unsubscribe = sidebarStore.subscribe(publish);
-  const tick = createNativeSidebarClock();
   const clock = window.setInterval(() => {
     if (ui.unavailableSince) publish();
-    const rows = tick();
-    if (rows.length && !disposed)
-      bridge.postNativeSidebarSnapshot!(JSON.stringify({ kind: 'clock', version: 1, rows }));
+    postClock();
   }, 1_000);
   publish();
   return () => {

@@ -14,6 +14,10 @@ use crate::{
     },
 };
 
+mod maintenance;
+
+pub use maintenance::hold_gxserver_database_open;
+
 pub struct Migration {
     pub id: &'static str,
     pub sql: &'static str,
@@ -44,6 +48,7 @@ pub fn initialize_gxserver_storage(paths: &GxserverPaths) -> Result<StorageInitR
     let mut db = open_gxserver_database(paths)?;
     let applied_migrations = run_gxserver_migrations(&mut db)?;
     backfill_legacy_macos_recent_projects(&mut db, paths)?;
+    maintenance::reclaim_free_database_pages(&db)?;
     Ok(StorageInitResult {
         applied_migrations,
         state_db_file: paths.state_db_file.to_string_lossy().to_string(),
@@ -398,11 +403,19 @@ pub fn ensure_gxserver_storage_layout(paths: &GxserverPaths) -> Result<()> {
     Ok(())
 }
 
+/// CDXC:ServerDaemon 2026-09-19 DECISION:
+/// User: "avoid any unnecessary writes", and accepted synchronous=NORMAL for state.db. In WAL mode this drops the fsync on every commit and syncs at checkpoints instead: an app or gxserver crash still loses nothing and the database cannot corrupt; only a power cut or OS crash can lose the last few commits.
+fn apply_wal_durability(db: &Connection) -> Result<()> {
+    db.pragma_update(None, "synchronous", "NORMAL")?;
+    Ok(())
+}
+
 pub fn open_gxserver_database(paths: &GxserverPaths) -> Result<Connection> {
     let db = Connection::open(&paths.state_db_file)
         .with_context(|| format!("open {}", paths.state_db_file.display()))?;
     db.pragma_update(None, "foreign_keys", "ON")?;
     db.pragma_update(None, "journal_mode", "WAL")?;
+    apply_wal_durability(&db)?;
     Ok(db)
 }
 
@@ -420,6 +433,7 @@ pub fn open_gxserver_database_with_busy_timeout(
     db.busy_timeout(busy_timeout)?;
     db.pragma_update(None, "foreign_keys", "ON")?;
     db.pragma_update(None, "journal_mode", "WAL")?;
+    apply_wal_durability(&db)?;
     Ok(db)
 }
 
@@ -1662,6 +1676,14 @@ pub const GXSERVER_STORAGE_MIGRATIONS: &[Migration] = &[
         id: "0038_delayed_send_watched_session",
         sql: include_str!("storage/migrations/0038_delayed_send_watched_session.sql"),
     },
+    Migration {
+        id: "0039_session_chat_selection_scope",
+        sql: include_str!("storage/migrations/0039_session_chat_selection_scope.sql"),
+    },
+    Migration {
+        id: "0040_prune_consumed_draft_recovery",
+        sql: include_str!("storage/migrations/0040_prune_consumed_draft_recovery.sql"),
+    },
 ];
 
 #[cfg(unix)]
@@ -1710,10 +1732,10 @@ mod tests {
         let journal_mode: String = db
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .expect("journal_mode");
-        assert_eq!(user_version, 38);
+        assert_eq!(user_version, 40);
         assert_eq!(foreign_keys, 1);
         assert_eq!(journal_mode, "wal");
-        assert_eq!(schema_migration_count(&db), 38);
+        assert_eq!(schema_migration_count(&db), 40);
         assert_eq!(
             explicit_index_names(&db),
             vec![

@@ -21,15 +21,29 @@ pub(crate) fn resolve(
     id: &str,
     text: Option<String>,
 ) -> Result<AsyncAnswer, String> {
+    if crate::session_chat_async_questions::retired_question_ids(session)
+        .iter()
+        .any(|key| key == id)
+    {
+        return Err("This Codex question has already been answered or skipped.".into());
+    }
     let path = resolve_session_chat_transcript_path(
         SessionChatTranscriptAgent::Codex,
         crate::server::read_runtime_text(session, "agentSessionId").as_deref(),
         crate::server::read_runtime_text(session, "agentSessionPath").as_deref(),
     )
     .ok_or("Codex's question transcript is unavailable.")?;
+    let started_at = crate::session_chat_async_questions::async_questions_since(session);
     let mut questions = Vec::new();
     let mut collect = |messages: Vec<SessionChatMessage>| {
         for message in messages {
+            if message
+                .timestamp
+                .zip(started_at)
+                .is_some_and(|(at, start)| at < start)
+            {
+                continue;
+            }
             for (index, question) in message
                 .async_questions
                 .unwrap_or_default()
@@ -389,7 +403,24 @@ impl Driver<'_> {
                 .ok_or("Codex's question-skip shortcut is unavailable.")?;
             self.write(&key).await?;
         }
+        let framed_answer = answer.text.as_ref().map(|text| {
+            format!(
+                "{}{text}",
+                crate::session_chat_async_questions::answer_prefix(&answer.title)
+            )
+        });
         self.wait("Codex accepting the question action", |screen| {
+            if editor(screen).is_none()
+                && framed_answer.as_ref().is_some_and(|text| {
+                    crate::session_chat_notice::session_chat_screen_shows_queued_input(
+                        Some("codex"),
+                        screen,
+                        text,
+                    )
+                })
+            {
+                return Some(());
+            }
             if let Some(e) = editor(screen) {
                 (e.count < current.count && !matches_question(&e, &answer.title)).then_some(())
             } else {

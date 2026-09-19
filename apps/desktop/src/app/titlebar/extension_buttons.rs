@@ -48,7 +48,10 @@ impl GhostexGpuiApp {
             .extensions_snapshot
             .installed
             .values()
-            .filter(|extension| extension.enabled)
+            .filter(|extension| {
+                extension.enabled
+                    && self.view_scope_allows(&extension_view_scope_key(&extension.id))
+            })
             .cloned()
             .collect::<Vec<_>>();
         extensions.sort_by(|left, right| {
@@ -110,7 +113,17 @@ impl GhostexGpuiApp {
             .extensions_snapshot
             .installed
             .values()
-            .filter(|extension| extension.enabled && extension.pinned)
+            /*
+            CDXC:Extensions 2026-09-18 DECISION:
+            User: an extension's "Available in" scope decides where it is shown, so a pinned titlebar
+            button disappears in a project the extension is not scoped to, exactly like its view tab.
+            SEE-ALSO: apps/desktop/src/app/view_scopes.rs.
+            */
+            .filter(|extension| {
+                extension.enabled
+                    && extension.pinned
+                    && self.view_scope_allows(&extension_view_scope_key(&extension.id))
+            })
             .cloned()
             .collect::<Vec<_>>();
         extensions.sort_by(|left, right| {
@@ -184,11 +197,6 @@ impl GhostexGpuiApp {
             .cloned()
             .collect::<Vec<_>>();
         let show_badge = !badge_lines.is_empty();
-        let button_width = if show_badge {
-            58.0
-        } else {
-            TITLEBAR_BUTTON_WIDTH
-        };
         let account_button = button.account;
         let tooltip = button.title.clone();
         let icon_image = button.icon_image.clone();
@@ -234,12 +242,10 @@ impl GhostexGpuiApp {
             .relative()
             .flex()
             .h(px(TITLEBAR_CONTROL_HEIGHT))
-            .w(px(button_width))
+            .px(px(TITLEBAR_BUTTON_HORIZONTAL_PADDING))
             .items_center()
             .justify_center()
             .when(cfg!(target_os = "windows"), |this| this.occlude())
-            .border_l_1()
-            .border_color(titlebar_button_border_color())
             .cursor_default()
             .when(open, |this| this.bg(titlebar_active_segment_color()))
             .hover(move |this| {
@@ -271,6 +277,16 @@ impl GhostexGpuiApp {
                     }
                 }),
             )
+            .when(account_button, |this| {
+                this.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        this.show_gpui_titlebar_account_menu(event.position, window, cx);
+                    }),
+                )
+            })
             .when(!open, |this| {
                 this.managed_discrete_tooltip_with_placement(
                     ManagedTooltipPlacement::Left,

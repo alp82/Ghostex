@@ -45,6 +45,7 @@ pub(crate) const GPUI_AGENTS_CHAT_SURFACE_POOL_GRACE: Duration = Duration::from_
 /// CDXC:SessionChat 2026-09-13 DECISION:
 /// User approved app-wide shared chat state and renderer ownership tied to visible panes, retaining the three spare pages and five-minute expiry.
 /// Durable drafts and active streams outlive mounted pages; only unfinished UI operations and unconfirmed draft transfers protect a hidden binding.
+/// Carve-out 2026-09-19: pages that were on screen when their project was left stay bound for the `projectSwitchKeepAliveMinutes` window (see `project_keep_alive.rs`) before these rules apply.
 pub(crate) const GPUI_AGENTS_CHAT_SURFACE_HIDDEN_MAX: usize = 3;
 
 pub(crate) const GPUI_AGENTS_CHAT_SURFACE_EVICT_POLL_INTERVAL: Duration = Duration::from_secs(60);
@@ -77,18 +78,18 @@ pub(crate) const SIDEBAR_MAX_WIDTH: f32 = 520.0;
 
 pub(crate) const SIDEBAR_RESET_WIDTH: f32 = 235.0;
 
-/// The native resize rail between the sidebar column and the Agents
-/// workspace. It is painted with the workspace background so it reads as a
-/// 5px black gap, mirrored on both sidebar sides:
-/// `window edge | sidebar page | 5px rail | workspace` on the left and the
-/// reverse on the right. The sidebar page's own CSS supplies the 5px
-/// sidebar-colored gutters on both of its edges, so the native column adds
-/// no padding of its own.
-pub(crate) const SIDEBAR_DIVIDER_WIDTH: f32 = 5.0;
+/// CDXC:Workarea 2026-09-19 DECISION:
+/// User: resize rails between areas (sidebar, main area, companion sidepanes, command pane, pane splits) should look like Waku's instead of 5px black gaps: one 1px line between sections, with as few double border lines as possible.
+/// Every rail is therefore a 1px reserved layout sibling in its neighbours' neutral border colour, panes leave their own border off the sides that touch a rail, and hovering or dragging shows a 2px accent line. The grab area is the wider invisible strip in `render/resize_rail.rs`. This supersedes the 5px gap rails with a centred 3px hover line.
+pub(crate) const SIDEBAR_DIVIDER_WIDTH: f32 = 1.0;
 
-pub(crate) const SIDEBAR_DIVIDER_LINE_WIDTH: f32 = 1.0;
+/// How far a rail's invisible grab strip reaches into each neighbouring pane.
+pub(crate) const RESIZE_RAIL_GRAB_REACH: f32 = 4.0;
 
-pub(crate) const SIDEBAR_DIVIDER_HOVER_LINE_WIDTH: f32 = 3.0;
+/// The reach of a grab strip that lies on one side of its rail only, because the other side is a CEF page.
+pub(crate) const RESIZE_RAIL_GRAB_ONE_SIDED_REACH: f32 = 7.0;
+
+pub(crate) const SIDEBAR_DIVIDER_HOVER_LINE_WIDTH: f32 = 2.0;
 
 /* A chat file link routed to Docs waits this long for the Manage surface. */
 pub(crate) const PENDING_DOCS_FILE_OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(120);
@@ -203,18 +204,47 @@ pub(crate) const TITLEBAR_COMPACT_MODE_WIDTH_THRESHOLD: f32 = 1050.0;
 #[cfg(not(target_os = "macos"))]
 pub(crate) const TITLEBAR_COMPACT_MODE_WIDTH_THRESHOLD: f32 = 1330.0;
 
+/// Fixed square width kept only for the non-macOS leading toggle and the
+/// Windows/Linux caption-control gap; trailing buttons size to their icon now.
+#[cfg(not(target_os = "macos"))]
 pub(crate) const TITLEBAR_BUTTON_WIDTH: f32 = 42.0;
 
 /*
-CDXC:Titlebar 2026-09-06 DECISION:
-User: the leading titlebar buttons - sidebar collapse, update, Back and
-Forward - are one square button family of the same width, so they read as a
-row instead of three differently sized affordances. Back/Forward and update
-additionally stand 1px taller than TITLEBAR_CONTROL_HEIGHT at the top and the
-bottom.
+CDXC:Titlebar 2026-09-19 DECISION:
+User: the trailing titlebar icon buttons and the browser address bar buttons have no border lines
+between them and no gap; each button is its icon plus 7px of padding on each side, so two
+neighbouring icons sit 14px apart. The leading buttons (sidebar collapse, companion toggle,
+update, Back, reveal session, Forward, Notifications) use the same padding so their gaps match
+the right side; this supersedes the 2026-09-06 fixed 29px leading width.
 */
-pub(crate) const TITLEBAR_LEADING_BUTTON_WIDTH: f32 = 29.0;
+pub(crate) const TITLEBAR_BUTTON_HORIZONTAL_PADDING: f32 = 7.0;
 
+/*
+CDXC:Titlebar 2026-09-19 DECISION:
+User: the mode tabs are "soft segments" (mockup style 10): today's active and hover fills with
+the hairlines removed, 21px tall (22px trimmed by 1px from the top, so the bottom edge stays put)
+with 6px corners, 2px apart, 12px side padding. Exit Focus and the compact view dropdown reuse
+the same metrics because both are styled as a mode tab.
+*/
+pub(crate) const TITLEBAR_MODE_TAB_HEIGHT: f32 = 21.0;
+
+/// Pushes the tab row down so the 1px trimmed off the tab height comes off the top edge.
+pub(crate) const TITLEBAR_MODE_TAB_TOP_INSET: f32 = 1.0;
+
+pub(crate) const TITLEBAR_MODE_TAB_RADIUS: f32 = 6.0;
+
+pub(crate) const TITLEBAR_MODE_TAB_GAP: f32 = 2.0;
+
+pub(crate) const TITLEBAR_MODE_TAB_HORIZONTAL_PADDING: f32 = 12.0;
+
+pub(crate) const TITLEBAR_MODE_TAB_SLIDE_DURATION: Duration = Duration::from_millis(180);
+
+/*
+CDXC:Titlebar 2026-09-06 DECISION:
+User: Back/Forward and update stand 1px taller than TITLEBAR_CONTROL_HEIGHT at
+the top and the bottom. (The same decision's shared 29px width was replaced on
+2026-09-19 by TITLEBAR_BUTTON_HORIZONTAL_PADDING.)
+*/
 pub(crate) const TITLEBAR_LEADING_TALL_BUTTON_HEIGHT: f32 = TITLEBAR_CONTROL_HEIGHT + 2.0;
 
 pub(crate) const TITLEBAR_TOOLTIP_HEIGHT: f32 = 20.0;
@@ -225,8 +255,6 @@ pub(crate) const TITLEBAR_TOOLTIP_LINE_HEIGHT: f32 = 18.0;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 pub(crate) const TITLEBAR_WINDOW_BUTTON_WIDTH: f32 = 46.0;
-
-pub(crate) const TITLEBAR_SETTINGS_BUTTON_WIDTH: f32 = 45.0;
 
 pub(crate) const TITLEBAR_DROPDOWN_TIPS_PANEL_WIDTH: f32 = 556.0;
 
@@ -585,6 +613,8 @@ pub(crate) const TITLEBAR_ICON_LAYOUT_SPLIT_VERTICAL: &str = "titlebar/layout-sp
 
 pub(crate) const TITLEBAR_ICON_LAYOUT_SINGLE_PANE: &str = "titlebar/layout-single-pane.svg";
 
+pub(crate) const TITLEBAR_ICON_LAYOUT_COLUMNS: &str = "titlebar/layout-columns.svg";
+
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 pub(crate) const TITLEBAR_ICON_WINDOW_MINIMIZE: &str = "titlebar/window-minimize.svg";
 
@@ -662,8 +692,6 @@ pub(crate) const FIND_BAR_NAV_BUTTON_WIDTH: f32 = 42.0;
 pub(crate) const FIND_BAR_CLOSE_BUTTON_WIDTH: f32 = 41.0;
 
 pub(crate) const BROWSER_TOOLBAR_HEIGHT: f32 = 35.0;
-
-pub(crate) const BROWSER_TOOLBAR_BUTTON_WIDTH: f32 = TITLEBAR_BUTTON_WIDTH;
 
 pub(crate) const BROWSER_TOOLBAR_BUTTON_ICON_SIZE: f32 = 16.0;
 
@@ -1177,9 +1205,7 @@ pub(crate) const WORKSPACE_TAB_SELECTED_WHITE_OVERLAY_ALPHA: f32 = 0.13;
 
 pub(crate) const WORKSPACE_TAB_INACTIVE_WHITE_OVERLAY_ALPHA: f32 = 0.06;
 
-pub(crate) const WORKSPACE_SPLIT_HANDLE_THICKNESS: f32 = 5.0;
-
-pub(crate) const WORKSPACE_SPLIT_SEPARATOR_THICKNESS: f32 = 1.0;
+pub(crate) const WORKSPACE_SPLIT_HANDLE_THICKNESS: f32 = 1.0;
 
 pub(crate) const WORKSPACE_BOTTOM_ROW_TOP_RATIO: f32 = 0.72;
 
@@ -1382,7 +1408,7 @@ pub(crate) const COMMAND_PANE_CONTROL_COLLAPSED_TRAILING_PADDING: f32 = 0.0;
 
 pub(crate) const COMMAND_PANE_VISIBILITY_ICON_LEADING_PADDING: f32 = 4.0;
 
-pub(crate) const COMMAND_PANE_SPLIT_HANDLE_THICKNESS: f32 = 5.0;
+pub(crate) const COMMAND_PANE_SPLIT_HANDLE_THICKNESS: f32 = 1.0;
 
 pub(crate) const COMMAND_PANE_DEFAULT_SESSION_TITLE: &str = "Command Terminal";
 

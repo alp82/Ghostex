@@ -840,7 +840,7 @@ type FirstLaunchSkillInstallAction =
   | 'installBrowserUseSkill'
   | 'installComputerUseSkill'
   | 'installCliSkill'
-  | 'installFable56OrchestrationSkill'
+  | 'installAgentsOrchestrationSkill'
   | 'installGenerateTitleSkill'
   | 'installManageBeadsSkill'
   | 'installMoveCodexSessionSkill'
@@ -851,7 +851,7 @@ const FIRST_LAUNCH_SKILL_INSTALL_ACTION_BY_ID: Record<BundledGhostexAgentSkillId
   cli: 'installCliSkill',
   computerUse: 'installComputerUseSkill',
   embeddedBrowserUse: 'installBrowserControl',
-  fable56Orchestration: 'installFable56OrchestrationSkill',
+  agentsOrchestration: 'installAgentsOrchestrationSkill',
   generateTitle: 'installGenerateTitleSkill',
   manageBeads: 'installManageBeadsSkill',
   moveCodexSession: 'installMoveCodexSessionSkill',
@@ -1413,6 +1413,7 @@ function AppModalHost() {
   const commands = useSidebarStore((state) => state.hud.commands);
   const projectSettingsProjects = useSidebarStore((state) => state.hud.projectSettingsProjects ?? []);
   const projectViewSpaces = useSidebarStore((state) => state.hud.projectViewSpaces);
+  const projectViewProjects = useSidebarStore((state) => state.hud.projectViewProjects);
   const portless = useSidebarStore((state) => state.hud.portless);
   const customThemeColor = useSidebarStore((state) => state.hud.customThemeColor);
   const theme = useSidebarStore((state) => state.hud.theme);
@@ -2510,9 +2511,9 @@ function AppModalHost() {
           setGhostexCliStatusLoading(true);
           vscode.postMessage({ type: 'installCliSkill' });
         }}
-        onInstallFable56OrchestrationSkill={() => {
+        onInstallAgentsOrchestrationSkill={() => {
           setGhostexCliStatusLoading(true);
-          vscode.postMessage({ type: 'installFable56OrchestrationSkill' });
+          vscode.postMessage({ type: 'installAgentsOrchestrationSkill' });
         }}
         onInstallManageBeadsSkill={() => {
           setGhostexCliStatusLoading(true);
@@ -2608,6 +2609,7 @@ function AppModalHost() {
         onClose={closeModal}
         portless={portless}
         projects={projectSettingsProjects}
+        projectViewProjects={projectViewProjects}
         projectViewSpaces={projectViewSpaces}
         settings={settings}
         tailcatRpc={gpuiBootstrapTailcatRpc()}
@@ -2670,9 +2672,9 @@ function AppModalHost() {
           setGhostexCliStatusLoading(true);
           vscode.postMessage({ type: 'installCliSkill' });
         }}
-        onInstallFable56OrchestrationSkill={() => {
+        onInstallAgentsOrchestrationSkill={() => {
           setGhostexCliStatusLoading(true);
-          vscode.postMessage({ type: 'installFable56OrchestrationSkill' });
+          vscode.postMessage({ type: 'installAgentsOrchestrationSkill' });
         }}
         onInstallManageBeadsSkill={() => {
           setGhostexCliStatusLoading(true);

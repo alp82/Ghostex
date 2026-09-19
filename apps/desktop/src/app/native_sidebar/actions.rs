@@ -105,12 +105,18 @@ impl GhostexGpuiApp {
             return;
         };
         if command["type"] == "selectSession" && command["mode"] == "focus" {
+            if let Some(session_id) = command["sessionId"].as_str() {
+                crate::app::native_chat::diagnostics::focus_requested(session_id);
+            }
             crate::support_logs::append(
                 crate::support_logs::GpuiSupportLog::SidebarRefresh,
                 "gpui.sidebar.focusRequested",
                 json!({"sessionId": command["sessionId"], "epochMs": crate::support_logs::temporary_epoch_ms()}),
             );
         }
+        self.stage_agent_launch_placeholder(&command, cx);
+        // A sidebar command can change focus in the runtime, so it must not be handled while the runtime still holds an older focus stamp than the store (gx_store/burst.rs).
+        self.gx_store_flush_old_runtime_tell(cx);
         let script = format!("window.ghostexGpui.onNativeSidebarCommand({command}); undefined;");
         service.update(cx, |surface, _| {
             surface.execute_app_owned_script(&script);

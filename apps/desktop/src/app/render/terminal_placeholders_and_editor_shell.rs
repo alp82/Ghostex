@@ -22,6 +22,7 @@ use gpui_component::v_flex;
 use crate::app::consts::*;
 use crate::app::helpers::*;
 use crate::app::model::*;
+use crate::app::render::resize_rail::*;
 use crate::*;
 
 impl GhostexGpuiApp {
@@ -235,6 +236,7 @@ impl GhostexGpuiApp {
         */
         let mode_slug = mode.element_slug();
         let surface_border_state = self.project_editor_surface_border_state(mode, window);
+        let outer_rail_edges = self.main_workspace_outer_rail_edges(window);
         if self.project_editor_shell.left_companion_visible {
             let companion_ratio = project_editor_companion_width_ratio(
                 self.project_editor_shell.left_companion_width_ratio,
@@ -254,7 +256,12 @@ impl GhostexGpuiApp {
                 .items_start()
                 .overflow_hidden()
                 .bg(project_editor_shell_background_color())
-                .child(self.render_project_editor_companion_pane(mode, companion_ratio, window, cx))
+                .child(self.render_project_editor_companion_region(
+                    mode,
+                    companion_ratio,
+                    window,
+                    cx,
+                ))
                 .child(self.render_project_editor_companion_divider(mode, cx))
                 .child(
                     // CDXC:Workarea 2026-09-14 WHY:
@@ -291,8 +298,14 @@ impl GhostexGpuiApp {
                                 .min_h_0()
                                 .overflow_hidden()
                                 .when(mode != TitlebarMode::Browser, |this| {
-                                    this.border_1().border_color(
+                                    rail_aware_pane_border(
+                                        this,
+                                        RailFacingEdges {
+                                            left: true,
+                                            ..outer_rail_edges
+                                        },
                                         workspace_pane_border_color_for_state(surface_border_state),
+                                        workspace_pane_border_color(),
                                     )
                                 })
                                 .child(self.render_project_editor_surface(mode, window, cx))
@@ -333,10 +346,12 @@ impl GhostexGpuiApp {
                         .min_h_0()
                         .overflow_hidden()
                         .when(mode != TitlebarMode::Browser, |this| {
-                            this.border_1()
-                                .border_color(workspace_pane_border_color_for_state(
-                                    surface_border_state,
-                                ))
+                            rail_aware_pane_border(
+                                this,
+                                outer_rail_edges,
+                                workspace_pane_border_color_for_state(surface_border_state),
+                                workspace_pane_border_color(),
+                            )
                         })
                         .child(self.render_project_editor_surface(mode, window, cx))
                         .window_corner_pane(),

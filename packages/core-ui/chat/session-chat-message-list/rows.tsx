@@ -4,13 +4,10 @@ import {
   IconArrowBackUp,
   IconCheck,
   IconChevronRight,
-  IconCopy,
-  IconFile,
   IconGitBranch,
   IconInfoCircle,
   IconPhoto,
   IconSparkles,
-  IconMessagePlus,
 } from '@tabler/icons-react';
 import { memo, useContext, useId, useRef } from 'react';
 import {
@@ -24,8 +21,10 @@ import { Bubble, BubbleContent } from '../../../components/ui/bubble';
 import { Button } from '../../../components/ui/button';
 import { Marker, MarkerContent, MarkerIcon } from '../../../components/ui/marker';
 import { Message, MessageContent, MessageFooter } from '../../../components/ui/message';
-import { SESSION_CHAT_FORK_BOUNDARY_ID_PREFIX, type SessionChatMessage } from '../../../shared/session-chat';
-import { SessionChatAgentMessageCard, parseSessionChatAgentMessage } from '../session-chat-agent-message-card';
+import { type SessionChatMessage } from '../../../shared/session-chat';
+import { SessionChatAgentMessageCard } from '../session-chat-agent-message-card';
+import { SessionChatInterAgentMessageCard } from '../session-chat-inter-agent-message-card';
+import { parseSessionChatInterAgentMessage } from '@/packages/shared/session-chat-presentation/agent-message';
 import { SessionChatExpansion, centerSessionChatExpansion } from '../session-chat-expansion';
 import { SessionChatFileChangeCards } from '../session-chat-file-change-card';
 import { splitSessionChatFileChanges } from '../session-chat-file-changes';
@@ -44,7 +43,9 @@ import {
   type SessionChatStatusRow,
   type SessionChatStatusTone,
 } from '../session-chat-noise';
-import { SESSION_CHAT_CODEX_GOAL_ID_PREFIX, isSessionChatPendingMessageId } from '../session-chat-pending';
+import { sessionChatProseMarkdown } from '@/packages/shared/session-chat-presentation/prose-blocks';
+import { classifySessionChatSystemCard } from '@/packages/shared/session-chat-presentation/system-cards';
+import statusTones from '@/packages/shared/session-chat-presentation/status-tone.json';
 import {
   SessionChatQuestionExchangeCard,
   answeredSessionChatQuestionExchange,
@@ -58,27 +59,20 @@ import { isSessionChatTerminalToolMessage, sessionChatTerminalToolActivity } fro
 import { SessionChatTerminalToolRow } from '../session-chat-terminal-tool-row';
 import { pairSessionChatToolBlocks, splitSessionChatBlocks } from '../session-chat-tool-fold';
 import { SessionChatToolRun } from '../session-chat-tool-run';
-import { SessionChatUserMessageLayout } from '../session-chat-user-message-layout';
+import { sessionChatMessageActionContent } from '@/packages/shared/session-chat-presentation/message-actions';
+import { sessionChatMessageTime } from '@/packages/shared/session-chat-presentation/message-time';
 import '../session-chat-agent-tools-disclosure.css';
+import { SessionChatMessageActionIcon } from '../session-chat-message-action-icon';
 import { playCopySound } from '../../copy-sound';
-export const PASTED_IMAGE_NAME = /^ghostex-paste-.+\.png$/i;
-export function isPastedImagePath(path: string | undefined): boolean {
-  if (!path) {
-    return false;
-  }
-  const segment = path.split(/[\\/]/).at(-1) ?? '';
-  return PASTED_IMAGE_NAME.test(segment);
-}
-
-export function imageChipLabel(block: { alt?: string; path?: string; url?: string }): string {
-  if (isPastedImagePath(block.path)) {
-    return 'Pasted image';
-  }
-  if (block.path) {
-    return block.path.split(/[\\/]/).at(-1) ?? block.path;
-  }
-  return block.alt ?? block.url ?? 'Image';
-}
+import {
+  SESSION_CHAT_PASTED_IMAGE_NAME,
+  isSessionChatPastedImagePath,
+  sessionChatImageLabel,
+} from '@/packages/shared/session-chat-presentation/images';
+import { sessionChatMessageCanRewind } from '@/packages/shared/session-chat-presentation/message-rewind';
+export const PASTED_IMAGE_NAME = SESSION_CHAT_PASTED_IMAGE_NAME;
+export const isPastedImagePath = isSessionChatPastedImagePath;
+export const imageChipLabel = sessionChatImageLabel;
 
 export function ImageAttachments({
   blocks,
@@ -147,83 +141,100 @@ export function UserImageThumbnails({ blocks }: { blocks: readonly { alt?: strin
 }
 
 export function CopyFooter({
-  anchoredToAssistantMarker = false,
   className,
   markdown,
   onAnnotate,
   onRewind,
   onSaveMarkdown,
   onSavePrompt,
+  time,
+  user = false,
 }: {
-  anchoredToAssistantMarker?: boolean;
   className?: string;
   markdown: string;
   /**
    * CDXC:Docs 2026-09-15 DECISION:
-   * User: an agent reply can be annotated like a document. The button is titled "Reply by Annotating" and sits between Copy message and Save to md in the final reply's rail. Set only by hosts with a Docs review (the desktop app); the reply opens there and the feedback comes back to this session.
+   * User: an agent reply can be annotated like a document. The button is titled "Reply by Annotating" and sits between Copy message and Save to md in the final reply's actions. Set only by hosts with a Docs review (the desktop app); the reply opens there and the feedback comes back to this session.
    */
   onAnnotate?: (markdown: string) => void;
   /** Opens the rewind confirmation for this prompt (user rows only). */
   onRewind?: () => void;
   onSaveMarkdown?: (markdown: string) => void;
   onSavePrompt?: (prompt: string) => Promise<void>;
+  time?: { label: string; title: string } | null;
+  /** A prompt's row mirrors a reply's: the time leads and Copy sits at the bubble's edge. */
+  user?: boolean;
 }) {
-  const canSaveMarkdown = markdown.split(/\r?\n/u).filter((line) => line.trim().length > 0).length > 1;
-  return (
-    <MessageFooter
-      className={cn(
-        'px-0',
-        anchoredToAssistantMarker
-          ? 'ghostex-chat-final-actions'
-          : 'opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100',
-        className
-      )}
+  const { canAnnotate, canSaveMarkdown } = sessionChatMessageActionContent(markdown);
+  const copy = (
+    <Button
+      aria-label='Copy message'
+      key='copy'
+      onClick={() => {
+        playCopySound();
+        void navigator.clipboard.writeText(markdown);
+      }}
+      size='icon-xs'
+      title='Copy message'
+      variant='ghost'
     >
-      <Button
-        aria-label='Copy message'
-        className={anchoredToAssistantMarker ? 'ghostex-chat-final-action ghostex-chat-final-action-copy' : undefined}
-        onClick={() => {
-          playCopySound();
-          void navigator.clipboard.writeText(markdown);
-        }}
-        size='icon-xs'
-        title='Copy message'
-        variant='ghost'
-      >
-        <IconCopy aria-hidden='true' data-icon='inline-start' stroke={1.9} />
-      </Button>
-      {onSavePrompt ? <SessionChatSavePromptButton prompt={markdown} onSave={onSavePrompt} /> : null}
-      {onRewind ? (
-        <Button aria-label='Rewind to here' onClick={onRewind} size='icon-xs' title='Rewind to here' variant='ghost'>
-          <IconArrowBackUp aria-hidden='true' data-icon='inline-start' stroke={1.9} />
-        </Button>
-      ) : null}
-      {onAnnotate && markdown.trim().length > 0 ? (
-        <Button
-          aria-label='Reply by Annotating'
-          className={
-            anchoredToAssistantMarker ? 'ghostex-chat-final-action ghostex-chat-final-action-annotate' : undefined
-          }
-          onClick={() => onAnnotate(markdown)}
-          size='icon-xs'
-          title='Reply by Annotating'
-          variant='ghost'
-        >
-          <IconMessagePlus aria-hidden='true' data-icon='inline-start' stroke={1.9} />
-        </Button>
-      ) : null}
-      {onSaveMarkdown && canSaveMarkdown ? (
-        <Button
-          aria-label='Save message to Markdown'
-          className={anchoredToAssistantMarker ? 'ghostex-chat-final-action ghostex-chat-final-action-save' : undefined}
-          onClick={() => onSaveMarkdown(markdown)}
-          size='icon-xs'
-          title='Save to md'
-          variant='ghost'
-        >
-          <IconFile aria-hidden='true' data-icon='inline-start' stroke={1.9} />
-        </Button>
-      ) : null}
+      <SessionChatMessageActionIcon name='copy' />
+    </Button>
+  );
+  const buttons = user
+    ? [
+        onRewind ? (
+          <Button
+            aria-label='Rewind to here'
+            key='rewind'
+            onClick={onRewind}
+            size='icon-xs'
+            title='Rewind to here'
+            variant='ghost'
+          >
+            <IconArrowBackUp aria-hidden='true' data-icon='inline-start' stroke={1.9} />
+          </Button>
+        ) : null,
+        onSavePrompt ? <SessionChatSavePromptButton key='save-prompt' prompt={markdown} onSave={onSavePrompt} /> : null,
+        copy,
+      ]
+    : [
+        copy,
+        onAnnotate && canAnnotate ? (
+          <Button
+            aria-label='Reply by Annotating'
+            key='annotate'
+            onClick={() => onAnnotate(markdown)}
+            size='icon-xs'
+            title='Reply by Annotating'
+            variant='ghost'
+          >
+            <SessionChatMessageActionIcon name='annotate' />
+          </Button>
+        ) : null,
+        onSaveMarkdown && canSaveMarkdown ? (
+          <Button
+            aria-label='Save message to Markdown'
+            key='save'
+            onClick={() => onSaveMarkdown(markdown)}
+            size='icon-xs'
+            title='Save to md'
+            variant='ghost'
+          >
+            <SessionChatMessageActionIcon name='save' />
+          </Button>
+        ) : null,
+      ];
+  const timeLabel = time ? (
+    <span className='ghostex-chat-message-time' title={time.title}>
+      {time.label}
+    </span>
+  ) : null;
+  return (
+    <MessageFooter className={cn('ghostex-chat-message-actions px-0', className)}>
+      {user ? timeLabel : null}
+      <div className='ghostex-chat-message-action-buttons'>{buttons}</div>
+      {user ? null : timeLabel}
     </MessageFooter>
   );
 }
@@ -298,14 +309,26 @@ export function InlineSuppressedTurn({ label, text }: { label: string; text: str
   );
 }
 
-export const STATUS_TONE_ICON: Record<SessionChatStatusTone, { Icon: typeof IconCheck; className: string }> = {
-  ok: { Icon: IconCheck, className: 'bg-emerald-500/15 text-emerald-400' },
-  error: {
-    Icon: IconAlertTriangle,
-    className: 'bg-destructive/15 text-destructive',
-  },
-  neutral: { Icon: IconInfoCircle, className: 'bg-muted text-muted-foreground' },
+const STATUS_TONE_GLYPH: Record<string, typeof IconCheck> = {
+  check: IconCheck,
+  'alert-triangle': IconAlertTriangle,
+  'info-circle': IconInfoCircle,
 };
+
+/**
+ * Which glyph a tone wears is shared with the GPUI transcript
+ * (session-chat-presentation/status-tone.json): the glyph name and the tint are
+ * the same row there, so a status that is a green check here cannot be a red
+ * triangle in native chat. The class names in that file are this renderer's, the
+ * hex colors the native one's.
+ */
+export const STATUS_TONE_ICON: Record<SessionChatStatusTone, { Icon: typeof IconCheck; className: string }> =
+  Object.fromEntries(
+    Object.entries(statusTones).map(([tone, visual]) => [
+      tone,
+      { Icon: STATUS_TONE_GLYPH[visual.icon] ?? IconInfoCircle, className: visual.className },
+    ])
+  ) as Record<SessionChatStatusTone, { Icon: typeof IconCheck; className: string }>;
 
 /**
  * The one durable row for a completed action — a model/effort change, a
@@ -365,70 +388,24 @@ export function StatusRows({ statuses }: { statuses: readonly SessionChatStatusR
  * the code block's copy control are interactive). It keeps line structure so
  * the caller can rebuild paragraphs from it.
  */
-export function plainReasoningText(markdown: string): string {
-  return (
-    markdown
-      .replace(/```(?:[^\n]*)\n?([\s\S]*?)```/g, '$1')
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/^\s{0,3}(?:#{1,6}|>|[-+*]|\d+[.)])\s+/gm, '')
-      // Underscores drop only where they mark emphasis; the ones inside
-      // snake_case identifiers are part of the word and stay.
-      .replace(/(?:\*\*|\*|~~|(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9]))/g, '')
-      .replace(/\\([\\`*_[\]{}()#+\-.!>])/g, '$1')
-      .trim()
-  );
-}
-
-/** The first non-empty line of the stripped reasoning, for a one-line label. */
-export function plainReasoningTeaser(markdown: string): string {
-  return (
-    plainReasoningText(markdown)
-      .split(/\n+/)
-      .map((line) => line.trim())
-      .find(Boolean) ?? ''
-  );
-}
-
-/**
- * A list item, a table row, a blockquote, or a fence opener means something to
- * the markdown renderer that plain text on the trigger cannot carry, so that
- * line and everything after it stay in the body.
- */
-export const NON_HOISTABLE_REASONING_LINE = /^\s{0,3}(?:[-+*]\s|\d+[.)]\s|>|\||```|~~~)/;
-
-/**
- * The disclosure heading carries the reasoning's OWN text, never the word
- * "Thinking". Verbose mode opens every reasoning turn by default, so a static
- * label produced a column of identical "Thinking" rows that said nothing
- * while the sentence under each of them said everything.
- *
- * CDXC:SessionChat 2026-09-04 DECISION:
- * User: a reasoning row with tool calls under it must "always show all of the text wrapped"; it used to hoist only the first line and clamp it to one row with an ellipsis, so the reader had to expand the row to finish the sentence.
- * The heading therefore owns every leading line that plain text can carry (paragraphs, headings, emphasis, inline code, links), and the body renders only what follows the first line that needs the markdown renderer, so nothing is printed twice and the chevron folds the tool calls rather than the thought.
- * Paragraphs stay separated by one blank line and hard-wrapped lines rejoin with a space, so the heading reads the way markdown would have set it.
- */
-export function splitReasoningHeadline(markdown: string): {
-  headline: string;
-  body: string;
-} {
-  const lines = markdown.split(/\r?\n/);
-  const firstBlock = lines.findIndex((line) => NON_HOISTABLE_REASONING_LINE.test(line));
-  const split = firstBlock < 0 ? lines.length : firstBlock;
-  const headline = plainReasoningText(lines.slice(0, split).join('\n'))
-    .split(/\n[ \t]*\n+/)
-    .map((paragraph) => paragraph.replace(/\s*\n\s*/g, ' ').trim())
-    .filter(Boolean)
-    .join('\n\n');
-  if (headline.length === 0) {
-    return { headline: plainReasoningTeaser(markdown), body: markdown };
-  }
-  return {
-    headline,
-    body: lines.slice(split).join('\n').trim(),
-  };
-}
+import {
+  plainReasoningText,
+  plainReasoningTeaser,
+  NON_HOISTABLE_REASONING_LINE,
+  splitReasoningHeadline,
+  USER_TURN_SEPARATOR,
+  normalizeUserMessageMarkdown,
+  userTurnCopyMarkdown,
+} from '@/packages/shared/session-chat-presentation/message-text';
+export {
+  plainReasoningText,
+  plainReasoningTeaser,
+  NON_HOISTABLE_REASONING_LINE,
+  splitReasoningHeadline,
+  USER_TURN_SEPARATOR,
+  normalizeUserMessageMarkdown,
+  userTurnCopyMarkdown,
+};
 
 /**
  * Answered question cards carried by a turn's tool blocks. They are
@@ -634,47 +611,6 @@ input after the separator (the repeated part is normally a prefix of the
 combined part). Present those inputs as ordinary paragraphs and collapse the
 repeated prefix instead of exposing transport syntax in the user's bubble.
 */
-export const USER_TURN_SEPARATOR = /\r?\n[\t ]*---[\t ]*(?:\r?\n|$)/;
-
-export function normalizeUserMessageMarkdown(markdown: string): string {
-  const parts = markdown.split(USER_TURN_SEPARATOR).map((part) => part.trim());
-  if (parts.length === 1) {
-    return markdown;
-  }
-
-  const visible: string[] = [];
-  for (const part of parts) {
-    if (!part) {
-      continue;
-    }
-    const containingIndex = visible.findIndex((candidate) => candidate.startsWith(part));
-    if (containingIndex < 0) {
-      visible.push(part);
-      continue;
-    }
-
-    const remainder = visible[containingIndex]?.slice(part.length).trimStart() ?? '';
-    visible[containingIndex] = remainder ? `${part}\n\n${remainder}` : part;
-  }
-  return visible.join('\n\n');
-}
-
-/*
- * Legacy agent transcripts carry a picture as a separate image block. Copy has
- * to restore a named reference for those blocks or the reader loses the one
- * thing that names the file they attached. Modern linked references stay in
- * the turn's text, so both their authored position and copyable path survive.
- */
-export function userTurnCopyMarkdown(markdown: string, images: readonly { path?: string; url?: string }[]): string {
-  const references = images
-    .map((block, index) => {
-      const href = block.path ?? block.url;
-      return href === undefined ? '' : `[Image #${index + 1}](${href})`;
-    })
-    .filter((reference) => reference !== '');
-  return [references.join(' '), markdown].filter((part) => part !== '').join('\n\n');
-}
-
 export const MessageRow = memo(
   function MessageRow(props: Parameters<typeof MessageRowBody>[0]) {
     return (
@@ -733,10 +669,7 @@ export function MessageRowBody({
   const { prose, tools: allTools } = splitSessionChatBlocks(message.blocks);
   const { tools, changes } = splitSessionChatFileChanges(allTools);
   const fileCards = hideFileChanges ? null : <SessionChatFileChangeCards changes={changes} messageId={message.id} />;
-  const markdown = prose
-    .filter((block) => block.type === 'text')
-    .map((block) => (block.type === 'text' ? block.text : ''))
-    .join('\n\n');
+  const markdown = sessionChatProseMarkdown(prose);
   const images = prose.filter((block) => block.type === 'image-ref');
 
   // No ghost bubbles: skip entirely when there is nothing to show.
@@ -767,36 +700,19 @@ export function MessageRowBody({
 
   const isUser = message.role === 'user';
   const isReasoning = message.role === 'reasoning';
-  const isSystem = message.role === 'system';
   const userMarkdown = isUser ? normalizeUserMessageMarkdown(markdown) : '';
   const userCopyMarkdown = isUser ? userTurnCopyMarkdown(userMarkdown, images) : '';
   const showCopy = isUser
     ? userCopyMarkdown.length > 0
     : markdown.length > 0 && message.role === 'assistant' && showAssistantCopy;
-  /*
-  CDXC:SessionChat 2026-09-02:
-  A rewind target is a prompt the agent has actually taken: the same "genuine
-  user prompt" test the transcript already uses for its turn boundaries (a
-  suppressed harness turn returned above, a `queued` row is still held by the
-  agent's queue) plus the optimistic local echo, which has no transcript row
-  for the daemon to rewind to yet.
-  */
+  // Which prompt is a rewind target is shared with GPUI chat (message-rewind.ts).
   const showRewind =
-    isUser &&
-    onRewind !== undefined &&
-    showCopy &&
-    message.queued !== true &&
-    !message.startupDelivery &&
-    !isSessionChatPendingMessageId(message.id);
+    onRewind !== undefined && showCopy && sessionChatMessageCanRewind(message, userCopyMarkdown, suppressedTurn);
 
-  const autoNamedTitle =
-    message.id.startsWith('app-command:') &&
-    message.blocks[0]?.type === 'text' &&
-    message.blocks[0].text === 'Ghostex auto named this session' &&
-    message.blocks[1]?.type === 'text'
-      ? message.blocks[1].text.trim()
-      : '';
-  if (isSystem && autoNamedTitle) {
+  // Which card a system row is belongs to the shared classifier, so GPUI chat
+  // renders the same rows from the same rule; only the layout below is React's.
+  const systemCard = classifySessionChatSystemCard(message, markdown);
+  if (systemCard?.kind === 'auto-named') {
     return (
       <Marker className='ghostex-chat-status-card'>
         <div className='inline-flex max-w-full items-start gap-2.5 rounded-2xl border border-border/70 bg-muted/40 px-3.5 py-2.5 shadow-sm'>
@@ -804,7 +720,7 @@ export function MessageRowBody({
           <span className='flex min-w-0 flex-col gap-0.5'>
             <span className='text-sm font-medium leading-5 text-foreground'>Ghostex auto named this session</span>
             <span className='wrap-break-word text-xs leading-4 text-muted-foreground'>
-              New name: <span className='text-foreground/85'>{autoNamedTitle}</span>
+              New name: <span className='text-foreground/85'>{systemCard.title}</span>
             </span>
           </span>
         </div>
@@ -820,48 +736,48 @@ export function MessageRowBody({
   horizontal rule instead of another centered sentence. The text stays exactly
   as the daemon wrote it.
   */
-  if (isSystem && message.id.startsWith(SESSION_CHAT_FORK_BOUNDARY_ID_PREFIX)) {
+  if (systemCard?.kind === 'fork-boundary') {
     return (
       <Marker className='pt-1 pb-3' variant='separator'>
         <MarkerContent className='inline-flex items-center gap-1.5'>
           <MarkerIcon className='size-3.5'>
             <IconGitBranch aria-hidden='true' className='size-3.5' stroke={2} />
           </MarkerIcon>
-          {markdown}
+          {systemCard.text}
         </MarkerContent>
       </Marker>
     );
   }
 
-  if (isSystem && message.id.startsWith(SESSION_CHAT_CODEX_GOAL_ID_PREFIX)) {
-    const [status, objective, usage] = message.blocks.map((block) => (block.type === 'text' ? block.text : ''));
-    return <SessionChatGoalCard objective={objective ?? ''} status={status ?? ''} usage={usage || undefined} />;
+  if (systemCard?.kind === 'goal') {
+    return (
+      <SessionChatGoalCard
+        objective={systemCard.objective}
+        status={systemCard.status}
+        usage={systemCard.usage || undefined}
+      />
+    );
   }
 
-  if (isSystem && message.id.startsWith('app-command-output:')) {
-    const command = message.blocks[0]?.type === 'text' ? message.blocks[0].text : '';
-    const output = message.blocks[1]?.type === 'text' ? message.blocks[1].text : '';
+  if (systemCard?.kind === 'command-output') {
     return (
       <details open className='ghostex-chat-status-card min-w-0 rounded-lg border bg-muted/20'>
-        <summary className='cursor-pointer px-3 py-2 text-xs font-medium'>{command}</summary>
+        <summary className='cursor-pointer px-3 py-2 text-xs font-medium'>{systemCard.command}</summary>
         <pre className='max-h-96 overflow-auto whitespace-pre-wrap break-words border-t px-3 py-2 text-xs leading-relaxed'>
-          {output}
+          {systemCard.output}
         </pre>
       </details>
     );
   }
 
-  if (isSystem) {
-    const agentMessage = parseSessionChatAgentMessage(markdown);
-    if (agentMessage) {
-      return <SessionChatAgentMessageCard body={agentMessage.body} sender={agentMessage.sender} />;
-    }
+  if (systemCard?.kind === 'agent-message') {
+    return <SessionChatAgentMessageCard body={systemCard.body} sender={systemCard.sender} />;
   }
 
-  if (isSystem) {
+  if (systemCard) {
     return (
       <Marker className='pb-2'>
-        <MarkerContent>{markdown}</MarkerContent>
+        <MarkerContent>{systemCard.text}</MarkerContent>
       </Marker>
     );
   }
@@ -889,6 +805,25 @@ export function MessageRowBody({
     );
   }
 
+  const interAgentMessage = isUser ? parseSessionChatInterAgentMessage(markdown) : null;
+  if (interAgentMessage) {
+    return (
+      <SessionChatInterAgentMessageCard
+        footer={
+          message.startupDelivery ? (
+            <SessionChatStartupSendStatus
+              delivery={message.startupDelivery}
+              onRetryStartupSend={onRetryStartupSend}
+              onRemoveStartupSend={onRemoveStartupSend}
+            />
+          ) : undefined
+        }
+        message={interAgentMessage}
+        queued={message.queued === true}
+      />
+    );
+  }
+
   if (isUser) {
     /*
      * The "Queued" label is driven by the agent's own queue bookkeeping in
@@ -910,17 +845,7 @@ export function MessageRowBody({
           ) : message.queued === true ? (
             <QueuedLabel />
           ) : null}
-          <SessionChatUserMessageLayout>
-            {showCopy ? (
-              <CopyFooter
-                className='ghostex-chat-user-actions'
-                markdown={userCopyMarkdown}
-                onSavePrompt={onSavePrompt}
-                {...(showRewind && onRewind
-                  ? { onRewind: () => onRewind({ messageId: message.id, prompt: userCopyMarkdown }) }
-                  : {})}
-              />
-            ) : null}
+          <div className='ghostex-chat-user-message'>
             <div className='ghostex-chat-user-content'>
               <UserImageThumbnails blocks={images} />
               {userMarkdown.length > 0 ? (
@@ -931,7 +856,19 @@ export function MessageRowBody({
                 </Bubble>
               ) : null}
             </div>
-          </SessionChatUserMessageLayout>
+            {showCopy ? (
+              <CopyFooter
+                className='ghostex-chat-user-actions'
+                markdown={userCopyMarkdown}
+                onSavePrompt={onSavePrompt}
+                time={sessionChatMessageTime(message.timestamp)}
+                user
+                {...(showRewind && onRewind
+                  ? { onRewind: () => onRewind({ messageId: message.id, prompt: userCopyMarkdown }) }
+                  : {})}
+              />
+            ) : null}
+          </div>
         </MessageContent>
       </Message>
     );
@@ -964,10 +901,11 @@ export function MessageRowBody({
         {fileCards}
         {showCopy ? (
           <CopyFooter
-            anchoredToAssistantMarker={tools.length === 0}
+            className='ghostex-chat-reply-actions'
             markdown={markdown}
             onAnnotate={onAnnotate}
             onSaveMarkdown={onSaveMarkdown}
+            time={sessionChatMessageTime(message.timestamp)}
           />
         ) : null}
       </MessageContent>

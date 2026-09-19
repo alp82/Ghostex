@@ -558,6 +558,8 @@ impl GhostexGpuiApp {
             "type": GPUI_SIDEBAR_STATUS_PET_ACTIVATION_MESSAGE_TYPE,
             "version": GPUI_SIDEBAR_STATUS_PET_ACTIVATION_MESSAGE_VERSION,
         });
+        // The runtime can answer this with a focus change, so it must hear the newest local selection first (gx_store/burst.rs).
+        self.gx_store_flush_old_runtime_tell(cx);
         let script = gpui_status_pet_activation_script(&message);
         sidebar.update(cx, |surface, _| surface.execute_app_owned_script(&script));
         true
@@ -583,6 +585,8 @@ impl GhostexGpuiApp {
             "type": GPUI_SIDEBAR_MENU_BAR_PROJECT_ACTIVATION_MESSAGE_TYPE,
             "version": GPUI_SIDEBAR_MENU_BAR_PROJECT_ACTIVATION_MESSAGE_VERSION,
         });
+        // The runtime can answer this with a focus change, so it must hear the newest local selection first (gx_store/burst.rs).
+        self.gx_store_flush_old_runtime_tell(cx);
         let script = gpui_menu_bar_project_activation_script(&message);
         sidebar.update(cx, |surface, _| surface.execute_app_owned_script(&script));
         true
@@ -611,6 +615,8 @@ impl GhostexGpuiApp {
             "type": GPUI_SIDEBAR_MENU_BAR_SESSION_ACTIVATION_MESSAGE_TYPE,
             "version": GPUI_SIDEBAR_MENU_BAR_SESSION_ACTIVATION_MESSAGE_VERSION,
         });
+        // The runtime can answer this with a focus change, so it must hear the newest local selection first (gx_store/burst.rs).
+        self.gx_store_flush_old_runtime_tell(cx);
         let script = gpui_menu_bar_session_activation_script(&message);
         sidebar.update(cx, |surface, _| surface.execute_app_owned_script(&script));
         true
@@ -660,6 +666,8 @@ impl GhostexGpuiApp {
             "type": GPUI_SIDEBAR_PROJECT_BOARD_CONVERSATION_REQUEST_MESSAGE_TYPE,
             "version": GPUI_SIDEBAR_PROJECT_BOARD_CONVERSATION_REQUEST_MESSAGE_VERSION,
         });
+        // The runtime can answer this with a focus change, so it must hear the newest local selection first (gx_store/burst.rs).
+        self.gx_store_flush_old_runtime_tell(cx);
         let script = gpui_project_board_conversation_request_script(&message);
         if script.chars().count() > GPUI_SIDEBAR_PROJECT_BOARD_CONVERSATION_PAYLOAD_MAX_CHARS {
             return false;
@@ -695,6 +703,8 @@ impl GhostexGpuiApp {
             "type": GPUI_SIDEBAR_COMMAND_PALETTE_SESSION_FOCUS_MESSAGE_TYPE,
             "version": GPUI_SIDEBAR_COMMAND_PALETTE_SESSION_FOCUS_MESSAGE_VERSION,
         });
+        // The runtime can answer this with a focus change, so it must hear the newest local selection first (gx_store/burst.rs).
+        self.gx_store_flush_old_runtime_tell(cx);
         let script = gpui_command_palette_session_focus_script(&message);
         sidebar.update(cx, |surface, _| surface.execute_app_owned_script(&script));
         true
@@ -736,6 +746,8 @@ impl GhostexGpuiApp {
         if !bounded(command_id) || run_mode.is_some_and(|run_mode| !bounded(run_mode)) {
             return false;
         }
+        // A sidebar command can change focus in the runtime: it must hear the newest local selection first (gx_store/burst.rs).
+        self.gx_store_flush_old_runtime_tell(cx);
         let Some(sidebar) = self.sidebar.clone() else {
             return false;
         };
@@ -777,11 +789,27 @@ impl GhostexGpuiApp {
         click-history set. Carry the bounded gxserver ids for every active
         rendered Agents leaf or companion slot with the selected id so split
         siblings keep the visible tier and hidden tabs lose it immediately.
+
+        CDXC:FocusRouting 2026-09-19 WHY:
+        Focus is owned by the Rust store (the user decision is recorded in gx_store/local_focus.rs). A local session's selection changes the store at once and reaches the sidebar runtime once per burst, about 120 ms after the last selection, with the store's focus stamp (gx_store/local_focus.rs, gx_store/burst.rs). This supersedes the immediate callback of 2026-06-26 for local sessions; every rule above about what the callback carries still holds. Remote sessions are not in the store yet and keep the immediate callback.
         */
         if !gpui_status_bridge_id_allowed(project_id) || !gpui_status_bridge_id_allowed(session_id)
         {
             return false;
         }
+        // Machine-scoped ids (`remote:<machine>:...`) name a remote session or project.
+        if !project_id.starts_with("remote:") && !session_id.starts_with("remote:") {
+            let key = GpuiLocalWorkspaceSessionKey {
+                project_id: project_id.to_string(),
+                session_id: session_id.to_string(),
+            };
+            self.gx_store_select_local_session(&key, local_was_sleeping, local_runtime_missing, cx);
+            return true;
+        }
+        // The sidebar runtime handles messages in order: a local selection it has not heard of
+        // yet must not arrive after the remote one that followed it.
+        self.gx_store_flush_old_runtime_tell(cx);
+        self.gx_store_note_remote_selection();
         let Some(sidebar) = self.sidebar.clone() else {
             return false;
         };

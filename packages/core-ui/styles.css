@@ -3658,20 +3658,26 @@ body.app-modal-host-body {
    * The list now contains top-level Settings pages plus collapsible section
    * groups, so override the horizontal tab-list default into a vertical rail.
    */
+  /*
+   * CDXC:Settings 2026-09-18 DECISION:
+   * The rail scrollbar touches the rail's right border. The list extends through the rail's right padding and puts it back as inner padding, so rows keep their inset while the overlay track sits at the border.
+   */
   --edge-fade-distance: 12px;
   align-items: stretch;
   background: transparent;
   border: 0;
+  box-sizing: border-box;
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: 0.25rem;
   height: auto;
   justify-content: flex-start;
+  margin-right: -0.5rem;
   min-height: 0;
   overflow: auto;
-  padding: 0;
-  width: 100%;
+  padding: 0 0.5rem 0 0;
+  width: calc(100% + 0.5rem);
 }
 
 .ghostex-settings-shadcn .settings-sidebar-page-group {
@@ -4329,6 +4335,62 @@ body.app-modal-host-body {
   justify-content: flex-end;
   max-width: 60%;
   min-width: 0;
+}
+
+/*
+ * CDXC:Settings 2026-09-18 DECISION:
+ * User: the "Available in" scope choices are toggle cards, three to a row, instead of a checkbox list.
+ *
+ * Written as real CSS rather than Tailwind utilities because the app-modal Settings page loads the
+ * pre-generated `shadcn.generated.css`, so a utility that appears nowhere else in the tree (an arbitrary
+ * opacity, a 2.5 step) is simply absent at runtime and the cards fall back to unstyled blocks.
+ * SEE-ALSO: packages/core-ui/settings-modal/project-views/scope-editor.tsx.
+ */
+.ghostex-settings-shadcn .settings-scope-toggle-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+}
+
+.ghostex-settings-shadcn .settings-scope-toggle-card {
+  align-items: center;
+  background: var(--settings-raised);
+  border: 1px solid var(--settings-hairline);
+  border-radius: var(--settings-radius-control);
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0.5rem 0.625rem;
+  text-align: start;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+  width: 100%;
+}
+
+.ghostex-settings-shadcn .settings-scope-toggle-card:hover {
+  background: var(--settings-raised-hover);
+}
+
+.ghostex-settings-shadcn .settings-scope-toggle-card[aria-pressed='true'] {
+  background: var(--settings-raised-hover);
+  border-color: color-mix(in srgb, var(--ring) 70%, transparent);
+}
+
+.ghostex-settings-shadcn .settings-scope-toggle-card:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
+  outline: none;
+}
+
+.ghostex-settings-shadcn .settings-scope-toggle-card-label {
+  font-size: var(--settings-text-body);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*
@@ -5040,13 +5102,46 @@ body.app-modal-host-body {
  * near-fullscreen shell rule and the bespoke bordered notes box / action row
  * are gone; only the release-notes scroll body stays modal-specific.
  */
+/* CDXC:Release 2026-09-18 DECISION:
+ * User: make the update dialog 1.5x taller (560px to 840px), using the extra space for the release notes.
+ * SEE-ALSO: apps/desktop/src/app/window/update_available_modal.rs.
+ */
+.gx-app-modal.update-available-modal {
+  height: 840px;
+  max-height: calc(100dvh - 2rem);
+  overflow: hidden;
+}
+
+.app-modal-host-native-window-body[data-app-modal-fit-height='true'] .gx-app-modal.update-available-modal {
+  height: 840px;
+  max-height: 100dvh;
+}
+
+.update-available-modal .gx-app-modal-form {
+  height: 100%;
+  min-height: 0;
+}
+
+.update-available-modal .gx-app-modal-stack,
+.update-available-modal [data-slot='card'] {
+  flex: 1;
+  min-height: 0;
+}
+
+.update-available-modal [data-slot='dialog-header'],
+.update-available-modal .gx-app-modal-footer,
+.update-available-modal .update-available-modal-portable {
+  flex-shrink: 0;
+}
+
 .update-available-modal .update-available-modal-notes {
   --chat-code-size: 0.8125rem;
 
   color: var(--foreground);
   font-size: 13px;
   line-height: 1.55;
-  max-height: 260px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
 }

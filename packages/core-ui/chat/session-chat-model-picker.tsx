@@ -1,5 +1,13 @@
 import { formatSidebarHotkeyLabel } from '@/packages/core-ui/hotkey-label';
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type CSSProperties,
+} from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import { getDefaultSidebarAgentById } from '@/packages/shared/sidebar-agents';
 import { AGENT_LOGOS } from '../agent-logos';
@@ -13,26 +21,26 @@ import {
 } from './session-chat-model-picker-input';
 import './session-chat-model-picker.css';
 
-export interface ModelPickerModel {
-  value: string;
-  label: string;
-  version?: string;
-  efforts: { value: string; label: string }[];
-  defaultEffort?: string;
-}
-export type ModelPickerProvider = 'codex' | 'claude' | 'cursor' | 'grok' | 'antigravity';
-export interface ModelPickerRequest {
-  requestId: string;
-  provider: ModelPickerProvider;
-  models: ModelPickerModel[];
-  efforts: { value: string; label: string }[];
-  model: string;
-  effort: string;
-}
-export interface ModelPickerSelection {
-  model: string;
-  effort: string;
-}
+export type {
+  ModelPickerModel,
+  ModelPickerProvider,
+  ModelPickerRequest,
+  ModelPickerSelection,
+} from '@/packages/shared/session-chat-presentation/model-picker';
+import {
+  modelPickerLayout,
+  modelPickerChooseModel,
+  modelPickerChooseEffort,
+  modelPickerNextEffortIndex,
+  modelPickerPrimaryScope,
+  modelPickerSupportsSessionScope,
+  modelPicksSessionOnly,
+  subscribeModelPicksSessionOnly,
+  MODEL_PICKER_DEFAULT_SCOPE_ONLY_REASON,
+  type ModelPickerRequest,
+  type ModelPickerSelection,
+} from '@/packages/shared/session-chat-presentation/model-picker';
+import type { SessionChatModelSelectionScope } from '@/packages/shared/session-chat';
 
 /**
  * CDXC:SessionChat 2026-09-05 DECISION:
@@ -62,8 +70,8 @@ export function SessionChatModelPicker({
 }: {
   request: ModelPickerRequest;
   container: HTMLElement;
-  onSave: (selection: ModelPickerSelection) => void;
-  onCommit?: (selection: ModelPickerSelection) => Promise<void>;
+  onSave: (selection: ModelPickerSelection, scope: SessionChatModelSelectionScope) => void;
+  onCommit?: (selection: ModelPickerSelection, scope: SessionChatModelSelectionScope) => Promise<void>;
   notice?: ReactNode;
   onClose: () => void;
   cancelRequested?: boolean;
@@ -86,23 +94,24 @@ export function SessionChatModelPicker({
   const model = request.models[modelIndex]!;
   const effortIndex = request.efforts.findIndex((effort) => effort.value === selection.effort);
   const agent = getDefaultSidebarAgentById(request.provider)!;
-  const narrow = paneSize.width <= 700;
-  const viewportHeight = Math.max(1, paneSize.height - controlsHeight - 24);
-  const stageWidth = Math.max(1180, Math.ceil(request.efforts.length / 2) * 284 + 328);
-  const widthScale = Math.max(0.01, Math.min(1, (paneSize.width - 28) / (narrow ? 240 : stageWidth - 120)));
-  const short = viewportHeight - 24 < 3 * 142 * widthScale;
-  const scale = Math.max(0.01, Math.min(widthScale, (viewportHeight - 24) / (short ? 200 : 3 * 142)));
-  const visibleModels = short
-    ? 1
-    : Math.min(request.models.length, Math.max(3, Math.floor((viewportHeight - 24) / (142 * scale))));
-  const firstVisible = short
-    ? modelIndex
-    : (pointerRailStart ??
-      Math.max(0, Math.min(request.models.length - visibleModels, modelIndex - Math.floor(visibleModels / 2))));
-  const stageHeight = viewportHeight / scale;
-  const railOffset = (stageHeight - visibleModels * 142) / 2 - firstVisible * 142;
-  const centerY = 71 + modelIndex * 142 + railOffset;
-  const effortSplit = Math.ceil(request.efforts.length / 2);
+  const sessionScope = modelPickerSupportsSessionScope(request.provider);
+  const sessionOnlyPicks = useSyncExternalStore(subscribeModelPicksSessionOnly, modelPicksSessionOnly);
+  const defaultScope = modelPickerPrimaryScope(request.provider, sessionOnlyPicks);
+  const sessionKey = defaultScope === 'session' ? 'Enter' : 'EnterAlternate';
+  const defaultKey = defaultScope === 'default' ? 'Enter' : 'EnterAlternate';
+  const {
+    narrow,
+    viewportHeight,
+    stageWidth,
+    short,
+    scale,
+    visibleModels,
+    firstVisible,
+    stageHeight,
+    railOffset,
+    centerY,
+    effortSplit,
+  } = modelPickerLayout(request, modelIndex, paneSize, controlsHeight, pointerRailStart);
 
   useEffect(() => {
     mounted.current = true;
@@ -127,7 +136,7 @@ export function SessionChatModelPicker({
     if (!committing) selectedTile.current?.focus({ preventScroll: true });
   }, [selection.model, selection.effort, committing]);
 
-  const finish = (save: boolean, choice = selection) => {
+  const finish = (save: boolean, choice = selection, scope: SessionChatModelSelectionScope = defaultScope) => {
     if (closingRef.current) return;
     closingRef.current = true;
     setCommitting(save);
@@ -135,13 +144,13 @@ export function SessionChatModelPicker({
       if (!mounted.current) return;
       setClosing(true);
       timer.current = setTimeout(
-        () => (save ? onSave(choice) : onClose()),
+        () => (save ? onSave(choice, scope) : onClose()),
         window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 190
       );
     };
     // The terminal host must receive durable acceptance before its native window can close.
     if (save && onCommit) {
-      void onCommit(choice).then(animateClose, () => {
+      void onCommit(choice, scope).then(animateClose, () => {
         if (!mounted.current) return;
         closingRef.current = false;
         setCommitting(false);
@@ -160,40 +169,25 @@ export function SessionChatModelPicker({
    * Briefly hold the model rail after a pointer click so recentering cannot move the card away from the second click.
    */
   const chooseModel = (index: number, save = false, pointer = false) => {
-    const next = request.models[index];
-    if (!next || closingRef.current) return;
+    const choice = modelPickerChooseModel(request, selection, index);
+    if (!choice || closingRef.current) return;
     clearTimeout(pointerRailTimer.current);
     setPointerRailStart(pointer ? firstVisible : null);
     if (pointer) pointerRailTimer.current = setTimeout(() => setPointerRailStart(null), 350);
-    const choice = {
-      model: next.value,
-      effort: next.efforts.some((effort) => effort.value === selection.effort)
-        ? selection.effort
-        : (next.efforts.find((effort) => effort.value === next.defaultEffort)?.value ?? next.efforts[0]?.value ?? ''),
-    };
     setSelection(choice);
     if (save) finish(true, choice);
   };
   const chooseEffort = (index: number, save = false) => {
-    const next = request.efforts[index];
-    if (!next || !model.efforts.some((entry) => entry.value === next.value) || closingRef.current) return;
-    const choice = { ...selection, effort: next.value };
+    const choice = modelPickerChooseEffort(request, selection, index);
+    if (!choice || closingRef.current) return;
     setSelection(choice);
     if (save) finish(true, choice);
   };
-  const moveEffort = (direction: number) => {
-    for (let index = effortIndex + direction; index >= 0 && index < request.efforts.length; index += direction) {
-      if (model.efforts.some((entry) => entry.value === request.efforts[index]?.value)) {
-        chooseEffort(index);
-        return;
-      }
-    }
+  const moveEffort = (direction: -1 | 1) => {
+    const index = modelPickerNextEffortIndex(request, selection, direction);
+    if (index !== undefined) chooseEffort(index);
   };
-  const canMoveEffort = (direction: number) =>
-    request.efforts.some(
-      (entry, index) =>
-        (index - effortIndex) * direction > 0 && model.efforts.some((supported) => supported.value === entry.value)
-    );
+  const canMoveEffort = (direction: -1 | 1) => modelPickerNextEffortIndex(request, selection, direction) !== undefined;
   const navigate = (control: PickerControl) => {
     pulse(control);
     if (control === 'ArrowUp') chooseModel(modelIndex - 1);
@@ -201,6 +195,8 @@ export function SessionChatModelPicker({
     if (control === 'ArrowLeft') moveEffort(-1);
     if (control === 'ArrowRight') moveEffort(1);
     if (control === 'Enter') finish(true);
+    if (control === 'EnterAlternate' && sessionScope)
+      finish(true, selection, defaultScope === 'session' ? 'default' : 'session');
     if (control === 'Escape') finish(false);
   };
   useModelPickerWheelNavigation(popup, navigate);
@@ -525,13 +521,29 @@ export function SessionChatModelPicker({
               </span>
               <button
                 type='button'
-                data-key-pressed={pressed.has('Enter') ? '' : undefined}
-                disabled={closing || committing}
-                onClick={() => finish(true)}
+                data-key-pressed={pressed.has(sessionKey) ? '' : undefined}
+                disabled={closing || committing || !sessionScope}
+                title={sessionScope ? undefined : MODEL_PICKER_DEFAULT_SCOPE_ONLY_REASON}
+                aria-describedby={sessionScope ? undefined : 'model-picker-scope-reason'}
+                onClick={() => finish(true, selection, 'session')}
               >
-                <kbd>↵</kbd>
-                <span>Save</span>
+                <kbd>{sessionKey === 'Enter' ? '↵' : '⇧↵'}</kbd>
+                <span>Use in this session</span>
               </button>
+              <button
+                type='button'
+                data-key-pressed={pressed.has(defaultKey) ? '' : undefined}
+                disabled={closing || committing}
+                onClick={() => finish(true, selection, 'default')}
+              >
+                <kbd>{defaultKey === 'Enter' ? '↵' : '⇧↵'}</kbd>
+                <span>Set as default</span>
+              </button>
+              {sessionScope ? null : (
+                <span id='model-picker-scope-reason' className='model-picker-sr-only'>
+                  {MODEL_PICKER_DEFAULT_SCOPE_ONLY_REASON}
+                </span>
+              )}
               <button
                 type='button'
                 data-key-pressed={pressed.has('Escape') ? '' : undefined}

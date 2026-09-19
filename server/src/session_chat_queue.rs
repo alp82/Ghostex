@@ -94,6 +94,8 @@ pub struct SessionChatQueueSnapshot {
     pub queue: Vec<SessionChatQueuedPrompt>,
     pub draft: Option<SessionChatDraft>,
     pub account_switch: Option<Value>,
+    pub async_questions_since: Option<i64>,
+    pub retired_async_question_ids: Vec<String>,
     pub pending_model_selection: Option<crate::session_chat_model_selection::PendingModelSelection>,
 }
 
@@ -101,6 +103,16 @@ impl SessionChatQueueSnapshot {
     /// Writes `queue` (always) and `draft` (only when stored) onto a frame or
     /// read result.
     pub fn insert_into(&self, target: &mut Map<String, Value>) {
+        // CDXC:SessionChat 2026-09-17 SEE-ALSO:
+        // session_chat_async_questions.rs owns question expiry; carry its resume boundary on every snapshot and state frame, including a first subscription without a read request.
+        target.insert(
+            "retiredAsyncQuestionIds".to_string(),
+            json!(self.retired_async_question_ids),
+        );
+        target.insert(
+            "asyncQuestionsSince".to_string(),
+            json!(self.async_questions_since),
+        );
         target.insert(
             "accountSwitch".to_string(),
             self.account_switch.clone().unwrap_or(Value::Null),
@@ -130,6 +142,9 @@ impl SessionChatQueueSnapshot {
     pub fn revision(&self) -> String {
         let mut revision = serde_json::to_string(&self.pending_model_selection).unwrap_or_default();
         revision.push_str(&serde_json::to_string(&self.account_switch).unwrap_or_default());
+        revision.push_str(&serde_json::to_string(&self.async_questions_since).unwrap_or_default());
+        revision
+            .push_str(&serde_json::to_string(&self.retired_async_question_ids).unwrap_or_default());
         for prompt in &self.queue {
             revision.push_str(&prompt.id);
             revision.push(':');
@@ -261,7 +276,9 @@ pub fn handle_session_chat_queue_endpoint(
             (snapshot_value(&snapshot), false)
         }
         "/api/queueSessionChatPrompt" => {
-            let transaction = db.unchecked_transaction().map_err(sql_error)?;
+            let transaction =
+                rusqlite::Transaction::new_unchecked(&db, rusqlite::TransactionBehavior::Immediate)
+                    .map_err(sql_error)?;
             let text = required_text(params, "text")?;
             let version = crate::session_chat_draft_versions::parse(params)?;
             if let Some(version) = version.as_ref() {
@@ -512,6 +529,7 @@ pub fn list_sessions_with_pending_queue(
             FROM session_chat_queued_prompts
             WHERE state <> 'failed'
             UNION SELECT projectId, sessionId FROM session_chat_model_selections
+            WHERE state <> 'failed'
             ORDER BY projectId, sessionId
             "#,
         )
@@ -534,7 +552,9 @@ pub fn session_has_pending_session_chat_queue(
     project_id: &str,
     session_id: &str,
 ) -> bool {
-    if crate::session_chat_model_selection::read_pending(db, project_id, session_id).is_some() {
+    if crate::session_chat_model_selection::read_pending(db, project_id, session_id)
+        .is_some_and(|selection| selection.state != "failed")
+    {
         return true;
     }
     db.query_row(
@@ -609,6 +629,12 @@ fn read_snapshot(
         .map_err(sql_error)?;
     let draft = crate::session_chat_draft_versions::read(db, project_id, session_id)?;
     Ok(SessionChatQueueSnapshot {
+        retired_async_question_ids: crate::session_chat_async_questions::read_retired_question_ids(
+            db, project_id, session_id,
+        ),
+        async_questions_since: crate::session_chat_async_questions::read_async_questions_since(
+            db, project_id, session_id,
+        ),
         account_switch: crate::accounts::switch_progress::read(db, project_id, session_id),
         queue,
         draft,
@@ -956,7 +982,9 @@ pub fn clear_session_chat_draft_after_delivery(
     session_id: &str,
     submitted: &SessionChatDraft,
 ) -> Result<(), DomainStateError> {
-    let transaction = db.unchecked_transaction().map_err(sql_error)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(db, rusqlite::TransactionBehavior::Immediate)
+            .map_err(sql_error)?;
     if let Some(version) = submitted.version.as_ref() {
         crate::session_chat_draft_versions::consume_in(
             &transaction,

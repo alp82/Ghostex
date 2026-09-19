@@ -2,8 +2,6 @@
 // lines, itself moved verbatim out of main.rs) into descriptively named
 // modules; pure move, no logic changes. Cluster: project-editor companion pane rendering: companion terminal body/slot, split divider/button, collapse button, restore rail, and divider.
 
-use gpui::Animation;
-use gpui::AnimationExt as _;
 use gpui::AnyElement;
 use gpui::FontWeight;
 use gpui::Hsla;
@@ -32,43 +30,46 @@ use gpui_component::v_flex;
 use crate::app::consts::*;
 use crate::app::helpers::*;
 use crate::app::model::*;
+use crate::app::render::resize_rail::*;
 use crate::*;
 
 use super::terminal_content_layout::terminal_content_frame;
 
 impl GhostexGpuiApp {
-    /// CDXC:Workarea 2026-09-09 DECISION:
-    /// User: remove the hide button from the companion pane header; the app titlebar owns its visibility toggle.
-    /// CDXC:Workarea 2026-09-09 WHY:
-    /// The floating window already applies the saved width ratio, so its lone pane must grow to fill the host (1.0).
-    /// Reapplying the docked ratio inside that window narrowed the content and left a large black strip beside it.
-    /// CDXC:Workarea 2026-09-14 DECISION:
-    /// User: reduce the companion sidepane title area height by 1px.
-    pub(crate) fn render_project_editor_companion_pane(
+    /// CDXC:Workarea 2026-09-19 WHY:
+    /// A side-by-side pair lives inside the companion's own layout region rather than as extra children of
+    /// the editor-shell row: that row's resize metrics read its first and third child as companion and main,
+    /// so widening it would have made the outer divider resize one sidepane against the other.
+    pub(crate) fn render_project_editor_companion_region(
         &self,
         mode: TitlebarMode,
         flex_grow: f32,
         window: &Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        let has_terminal_split = self
-            .project_editor_companion_secondary_terminal_session_id
-            .is_some();
-        let border_state = if has_terminal_split {
-            WorkspacePaneBorderState::Neutral
-        } else {
-            self.project_editor_companion_border_state(mode, window)
-        };
-        let companion_title = self.project_editor_companion_active_title(mode);
+        if !self.project_editor_companion_columns_split_active() {
+            return self.render_project_editor_companion_pane(mode, flex_grow, None, window, cx);
+        }
+
+        let columns_ratio = self
+            .project_editor_shell
+            .left_companion_columns_ratio
+            .clamp(0.1, 0.9);
         let view = cx.entity().clone();
-        v_flex()
+        h_flex()
             .on_children_prepainted(move |child_bounds, _window, cx| {
                 let _ = view.update(cx, |this, _cx| {
+                    this.record_project_editor_companion_split_layout_metrics(
+                        WorkspaceSplitAxis::Horizontal,
+                        &child_bounds,
+                    );
+                    // The pair navigates and focuses as one companion, so the
+                    // region's own span is the companion's focus bounds.
                     this.record_project_editor_companion_layout_bounds(mode, &child_bounds);
                 });
             })
             .id(format!(
-                "ghostex-gpui-project-editor-companion-pane-{}",
+                "ghostex-gpui-project-editor-companion-columns-{}",
                 mode.element_slug()
             ))
             .flex_grow(flex_grow)
@@ -77,11 +78,133 @@ impl GhostexGpuiApp {
             .min_w(px(PROJECT_EDITOR_COMPANION_MIN_WIDTH))
             .h_full()
             .min_h_0()
+            .items_start()
             .overflow_hidden()
-            .border_1()
-            .border_color(project_editor_companion_border_color_for_state(
-                border_state,
+            .child(self.render_project_editor_companion_pane(
+                mode,
+                columns_ratio,
+                Some(ProjectEditorCompanionTerminalSlot::Top),
+                window,
+                cx,
             ))
+            .child(self.render_project_editor_companion_split_divider(
+                mode,
+                WorkspaceSplitAxis::Horizontal,
+                false,
+                cx,
+            ))
+            .child(self.render_project_editor_companion_pane(
+                mode,
+                1.0 - columns_ratio,
+                Some(ProjectEditorCompanionTerminalSlot::Bottom),
+                window,
+                cx,
+            ))
+            .into_any_element()
+    }
+
+    /// CDXC:Workarea 2026-09-09 DECISION:
+    /// User: remove the hide button from the companion pane header; the app titlebar owns its visibility toggle.
+    /// CDXC:Workarea 2026-09-09 WHY:
+    /// The floating window already applies the saved width ratio, so its lone pane must grow to fill the host (1.0).
+    /// Reapplying the docked ratio inside that window narrowed the content and left a large black strip beside it.
+    /// CDXC:Workarea 2026-09-14 DECISION:
+    /// User: reduce the companion sidepane title area height by 1px.
+    ///
+    /// `column` is `Some` for one of a side-by-side pair, and `None` for the
+    /// lone sidepane that hosts the stacked arrangement itself.
+    pub(crate) fn render_project_editor_companion_pane(
+        &self,
+        mode: TitlebarMode,
+        flex_grow: f32,
+        column: Option<ProjectEditorCompanionTerminalSlot>,
+        window: &Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let stacked_split = column.is_none()
+            && self
+                .project_editor_companion_secondary_terminal_session_id
+                .is_some();
+        let companion_border_state = self.project_editor_companion_border_state(mode, window);
+        // A lone sidepane and the first of a pair start at the sidebar divider; every sidepane ends at
+        // a rail, either the pair's own divider or the one before the main surface.
+        let outer_rail_edges = self.main_workspace_outer_rail_edges(window);
+        let rail_edges = RailFacingEdges {
+            left: match column {
+                None | Some(ProjectEditorCompanionTerminalSlot::Top) => outer_rail_edges.left,
+                Some(_) => true,
+            },
+            right: true,
+            top: false,
+            bottom: outer_rail_edges.bottom,
+        };
+        let border_state = match column {
+            // Side by side, each sidepane owns a real frame, so the focused one
+            // carries the outline itself.
+            Some(slot) => {
+                if companion_border_state == WorkspacePaneBorderState::Focused
+                    && self.project_editor_companion_focused_terminal_slot == slot
+                {
+                    WorkspacePaneBorderState::Focused
+                } else {
+                    WorkspacePaneBorderState::Neutral
+                }
+            }
+            // Stacked, the slot bodies inside draw the focus outline.
+            None if stacked_split => WorkspacePaneBorderState::Neutral,
+            None => companion_border_state,
+        };
+        let companion_title = match column {
+            Some(slot) => self.project_editor_companion_slot_title(slot),
+            None => self.project_editor_companion_active_title(mode),
+        };
+        let pane_slug = match column {
+            Some(ProjectEditorCompanionTerminalSlot::Top) => {
+                format!("{}-left", mode.element_slug())
+            }
+            Some(ProjectEditorCompanionTerminalSlot::Bottom) => {
+                format!("{}-right", mode.element_slug())
+            }
+            None => mode.element_slug(),
+        };
+        let record_layout_bounds = column.is_none();
+        let view = cx.entity().clone();
+        v_flex()
+            .on_children_prepainted(move |child_bounds, _window, cx| {
+                if !record_layout_bounds {
+                    return;
+                }
+                let _ = view.update(cx, |this, _cx| {
+                    this.record_project_editor_companion_layout_bounds(mode, &child_bounds);
+                });
+            })
+            .id(format!(
+                "ghostex-gpui-project-editor-companion-pane-{}",
+                pane_slug
+            ))
+            .flex_grow(flex_grow)
+            .flex_shrink_1()
+            .flex_basis(relative(0.0))
+            // Both dividers' resize clamps keep the sidepane minimums; the
+            // sidepanes themselves stay shrinkable so a window too narrow for two
+            // of them keeps showing all of each instead of clipping the second.
+            .when(column.is_none(), |pane| {
+                pane.min_w(px(PROJECT_EDITOR_COMPANION_MIN_WIDTH))
+            })
+            .when(column.is_some(), |pane| pane.min_w_0())
+            .h_full()
+            .min_h_0()
+            .overflow_hidden()
+            .map(|pane| {
+                rail_aware_pane_border(
+                    pane,
+                    rail_edges,
+                    project_editor_companion_border_color_for_state(border_state),
+                    project_editor_companion_border_color_for_state(
+                        WorkspacePaneBorderState::Neutral,
+                    ),
+                )
+            })
             .bg(workspace_terminal_placeholder_color())
             .on_mouse_down(
                 MouseButton::Left,
@@ -96,7 +219,7 @@ impl GhostexGpuiApp {
                 h_flex()
                     .id(format!(
                         "ghostex-gpui-project-editor-companion-tabbar-{}",
-                        mode.element_slug()
+                        pane_slug
                     ))
                     .flex_shrink_0()
                     .h(px(WORKSPACE_TAB_BAR_HEIGHT - 1.0))
@@ -124,10 +247,23 @@ impl GhostexGpuiApp {
                                     .text_ellipsis()
                                     .child(companion_title),
                             )
-                            .child(self.render_project_editor_companion_split_button(mode, cx)),
+                            .children(self.render_project_editor_companion_pane_split_controls(
+                                mode, column, cx,
+                            )),
                     ),
             )
-            .child(self.render_project_editor_companion_terminal_body(mode, window, cx))
+            .child(match column {
+                Some(slot) => self.render_project_editor_companion_terminal_slot_body(
+                    mode,
+                    slot,
+                    self.project_editor_companion_terminal_session_for_slot(slot),
+                    1.0,
+                    false,
+                    false,
+                    cx,
+                ),
+                None => self.render_project_editor_companion_terminal_body(mode, window, cx),
+            })
             .window_corner_pane()
             .into_any_element()
     }
@@ -139,8 +275,17 @@ impl GhostexGpuiApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let top_session_id = self.project_editor_companion_terminal_session_id;
-        let bottom_session_id = self.project_editor_companion_secondary_terminal_session_id;
-        let focused_slot = (bottom_session_id.is_some()
+        // Only the stacked arrangement draws a second slot here, so a state whose
+        // stored axis and slot occupancy disagree cannot render a stacked divider
+        // that then drives the side-by-side ratio.
+        let stacked_session_id = self
+            .project_editor_companion_secondary_terminal_session_id
+            .filter(|_| {
+                self.project_editor_shell.left_companion_split_enabled
+                    && self.project_editor_shell.left_companion_split_axis
+                        == WorkspaceSplitAxis::Vertical
+            });
+        let focused_slot = (stacked_session_id.is_some()
             && self.project_editor_companion_border_state(mode, window)
                 == WorkspacePaneBorderState::Focused)
             .then_some(self.project_editor_companion_focused_terminal_slot);
@@ -148,12 +293,16 @@ impl GhostexGpuiApp {
             .project_editor_shell
             .left_companion_split_ratio
             .clamp(0.1, 0.9);
+        let has_stacked_slot = stacked_session_id.is_some();
         let view = cx.entity().clone();
         v_flex()
             .on_children_prepainted(move |child_bounds, _window, cx| {
-                if bottom_session_id.is_some() {
+                if has_stacked_slot {
                     let _ = view.update(cx, |this, _cx| {
-                        this.record_project_editor_companion_split_layout_metrics(&child_bounds);
+                        this.record_project_editor_companion_split_layout_metrics(
+                            WorkspaceSplitAxis::Vertical,
+                            &child_bounds,
+                        );
                     });
                 }
             })
@@ -170,17 +319,15 @@ impl GhostexGpuiApp {
                 mode,
                 ProjectEditorCompanionTerminalSlot::Top,
                 top_session_id,
-                if bottom_session_id.is_some() {
-                    split_ratio
-                } else {
-                    1.0
-                },
+                if has_stacked_slot { split_ratio } else { 1.0 },
+                has_stacked_slot,
                 focused_slot == Some(ProjectEditorCompanionTerminalSlot::Top),
                 cx,
             ))
-            .when_some(bottom_session_id, |this, session_id| {
+            .when_some(stacked_session_id, |this, session_id| {
                 this.child(self.render_project_editor_companion_split_divider(
                     mode,
+                    WorkspaceSplitAxis::Vertical,
                     focused_slot.is_none(),
                     cx,
                 ))
@@ -189,6 +336,7 @@ impl GhostexGpuiApp {
                     ProjectEditorCompanionTerminalSlot::Bottom,
                     Some(session_id),
                     1.0 - split_ratio,
+                    true,
                     focused_slot == Some(ProjectEditorCompanionTerminalSlot::Bottom),
                     cx,
                 ))
@@ -199,12 +347,17 @@ impl GhostexGpuiApp {
     /// CDXC:Workarea 2026-09-15 DECISION:
     /// User: remove the "No running terminal" message that flashes in panes during app startup.
     /// A missing mount slot is also a normal restoration state, so leave its background blank until terminal content attaches.
+    ///
+    /// `stacked_split` is true only while this slot shares one sidepane with its
+    /// sibling: a side-by-side pair draws its focus outline on the sidepane frame
+    /// instead, so the inner slot border would double it.
     pub(crate) fn render_project_editor_companion_terminal_slot_body(
         &self,
         mode: TitlebarMode,
         slot: ProjectEditorCompanionTerminalSlot,
         session_id: Option<TerminalSessionId>,
         flex_grow: f32,
+        stacked_split: bool,
         show_focus_outline: bool,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
@@ -227,6 +380,7 @@ impl GhostexGpuiApp {
                     slot,
                     session_id,
                     flex_grow,
+                    stacked_split,
                     show_focus_outline,
                     content,
                     cx,
@@ -248,9 +402,6 @@ impl GhostexGpuiApp {
         });
         let native_slot_id = slot_id
             .filter(|_| gpui_engine_view.is_none() && remote_attach_unavailable_message.is_none());
-        let has_terminal_split = self
-            .project_editor_companion_secondary_terminal_session_id
-            .is_some();
         let slot_slug = match slot {
             ProjectEditorCompanionTerminalSlot::Top => "top",
             ProjectEditorCompanionTerminalSlot::Bottom => "bottom",
@@ -439,7 +590,7 @@ impl GhostexGpuiApp {
             .min_h_0()
             .w_full()
             .overflow_hidden()
-            .when(has_terminal_split, |this| {
+            .when(stacked_split, |this| {
                 this.border_1()
                     .border_color(if show_focus_outline && show_active_pane_outline() {
                         workspace_pane_focused_border_color()
@@ -469,13 +620,11 @@ impl GhostexGpuiApp {
         slot: ProjectEditorCompanionTerminalSlot,
         session_id: TerminalSessionId,
         flex_grow: f32,
+        stacked_split: bool,
         show_focus_outline: bool,
         content: AnyElement,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        let has_terminal_split = self
-            .project_editor_companion_secondary_terminal_session_id
-            .is_some();
         let slot_slug = match slot {
             ProjectEditorCompanionTerminalSlot::Top => "top",
             ProjectEditorCompanionTerminalSlot::Bottom => "bottom",
@@ -495,7 +644,7 @@ impl GhostexGpuiApp {
             .min_h_0()
             .w_full()
             .overflow_hidden()
-            .when(has_terminal_split, |this| {
+            .when(stacked_split, |this| {
                 this.border_1()
                     .border_color(if show_focus_outline && show_active_pane_outline() {
                         workspace_pane_focused_border_color()
@@ -504,9 +653,12 @@ impl GhostexGpuiApp {
                     })
             })
             .bg(gpui_session_chat_background_color())
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
+            // Capture phase: the native chat composer stops mouse-down propagation, so a bubble listener never sees a click on the composer itself.
+            .capture_any_mouse_down(
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
                     this.focus_project_editor_companion_terminal_session(
                         mode, session_id, window, cx,
                     );
@@ -518,107 +670,156 @@ impl GhostexGpuiApp {
             .into_any_element()
     }
 
+    /// The boundary between the two companion sessions, whichever way they are
+    /// arranged: a full-width handle between stacked slots, or a full-height one
+    /// between side-by-side sidepanes. Both are real reserved layout regions and
+    /// the visible handle is its own resize target.
     pub(crate) fn render_project_editor_companion_split_divider(
         &self,
         mode: TitlebarMode,
+        axis: WorkspaceSplitAxis,
         show_separator_line: bool,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        let hover_line_offset =
-            (WORKSPACE_SPLIT_HANDLE_THICKNESS - SIDEBAR_DIVIDER_HOVER_LINE_WIDTH) / 2.0;
         let hover_visible = self.project_editor_companion_split_divider_hover_visible == Some(mode);
-        let separator_line_color: Hsla = if show_separator_line {
+        let rail_color: Hsla = if show_separator_line {
             rgb(0x6d6d6d).into()
         } else {
-            rgb(0x000000).opacity(0.0).into()
+            project_editor_companion_divider_background_color()
         };
+        let side_by_side = axis == WorkspaceSplitAxis::Horizontal;
         div()
             .id(format!(
-                "ghostex-gpui-project-editor-companion-split-divider-{}",
+                "ghostex-gpui-project-editor-companion-split-divider-{}-{}",
+                axis.element_slug(),
                 mode.element_slug()
             ))
             .relative()
-            .flex()
             .flex_shrink_0()
-            .h(px(WORKSPACE_SPLIT_HANDLE_THICKNESS))
-            .w_full()
-            .items_center()
-            .justify_center()
-            .cursor_ns_resize()
-            .bg(project_editor_companion_divider_background_color())
-            .on_hover(cx.listener(move |this, hovered, _, cx| {
-                this.set_project_editor_companion_split_divider_hovering(mode, *hovered, cx);
-            }))
-            .on_mouse_move(
-                cx.listener(move |this, _event: &MouseMoveEvent, _window, cx| {
-                    this.set_project_editor_companion_split_divider_hovering(mode, true, cx);
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.handle_project_editor_companion_split_divider_mouse_down(
-                        mode, event, window, cx,
-                    );
-                }),
-            )
-            .child(
-                div()
-                    .h(px(WORKSPACE_SPLIT_SEPARATOR_THICKNESS))
-                    .w_full()
-                    .cursor_ns_resize()
-                    .bg(separator_line_color),
-            )
-            .when(hover_visible, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top(px(hover_line_offset))
-                        .h(px(SIDEBAR_DIVIDER_HOVER_LINE_WIDTH))
-                        .w_full()
-                        .cursor_ns_resize()
-                        .bg(sidebar_divider_hover_line_color())
-                        .with_animation(
-                            format!(
-                                "ghostex-gpui-project-editor-companion-split-divider-hover-line-{}",
-                                mode.element_slug()
-                            ),
-                            Animation::new(SIDEBAR_DIVIDER_HOVER_FADE_DURATION)
-                                .with_easing(gpui::ease_out_quint()),
-                            |line, delta| line.opacity(delta),
-                        ),
-                )
+            .when(side_by_side, |this| {
+                this.w(px(WORKSPACE_SPLIT_HANDLE_THICKNESS)).h_full()
             })
+            .when(!side_by_side, |this| {
+                this.h(px(WORKSPACE_SPLIT_HANDLE_THICKNESS)).w_full()
+            })
+            // Side by side, both sidepanes own a top edge one pixel tall, so carry
+            // that hairline across the divider the way the outer one does instead
+            // of leaving a notch in it.
+            .when(side_by_side, |this| {
+                this.border_t_1()
+                    .border_color(titlebar_button_border_color())
+            })
+            .bg(rail_color)
+            .child(resize_rail_deferred_strip(
+                resize_rail_grab_strip(
+                    format!(
+                        "ghostex-gpui-project-editor-companion-split-grab-strip-{}-{}",
+                        axis.element_slug(),
+                        mode.element_slug()
+                    ),
+                    axis,
+                    ResizeRailGrabSide::Straddle,
+                    self.resize_rail_drag_active(),
+                )
+                .on_hover(cx.listener(move |this, hovered, _, cx| {
+                    this.set_project_editor_companion_split_divider_hovering(mode, *hovered, cx);
+                }))
+                .on_mouse_move(
+                    cx.listener(move |this, _event: &MouseMoveEvent, _window, cx| {
+                        this.set_project_editor_companion_split_divider_hovering(mode, true, cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.handle_project_editor_companion_split_divider_mouse_down(
+                            mode, axis, event, window, cx,
+                        );
+                    }),
+                )
+                .when(hover_visible, |this| {
+                    this.child(resize_rail_hover_line(
+                        format!(
+                            "ghostex-gpui-project-editor-companion-split-divider-hover-line-{}-{}",
+                            axis.element_slug(),
+                            mode.element_slug()
+                        ),
+                        axis,
+                        ResizeRailGrabSide::Straddle,
+                    ))
+                }),
+            ))
             .into_any_element()
+    }
+
+    /// One control per arrangement, always both: while the companion shows a
+    /// single session each one splits it that way, and while it is split the live
+    /// arrangement's control collapses the pair while the other rearranges it.
+    /// Dropping the second control once split would leave rearranging reachable
+    /// only by collapsing and splitting again, which re-picks the second session.
+    fn render_project_editor_companion_pane_split_controls(
+        &self,
+        mode: TitlebarMode,
+        column: Option<ProjectEditorCompanionTerminalSlot>,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        vec![
+            self.render_project_editor_companion_split_button(
+                mode,
+                WorkspaceSplitAxis::Horizontal,
+                column,
+                cx,
+            ),
+            self.render_project_editor_companion_split_button(
+                mode,
+                WorkspaceSplitAxis::Vertical,
+                column,
+                cx,
+            ),
+        ]
     }
 
     /// CDXC:Workarea 2026-09-14 WHY:
     /// Browser takes focus on entry, which dimmed this shared split control while other views kept it bright.
     /// Keep its icon color independent of pane focus so switching views does not change the affordance.
+    /// CDXC:Workarea 2026-09-19 DECISION:
+    /// User: remove the border line from the companion sidepane's split button.
     pub(crate) fn render_project_editor_companion_split_button(
         &self,
         mode: TitlebarMode,
+        axis: WorkspaceSplitAxis,
+        column: Option<ProjectEditorCompanionTerminalSlot>,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let is_split = self.project_editor_shell.left_companion_split_enabled
+            && self.project_editor_shell.left_companion_split_axis == axis
             && self
                 .project_editor_companion_secondary_terminal_session_id
                 .is_some();
-        let tooltip = if is_split {
-            "Show one companion session"
-        } else {
-            "Split companion vertically"
+        let tooltip = match (is_split, axis) {
+            (true, _) => "Show one companion session",
+            (false, WorkspaceSplitAxis::Horizontal) => "Split companion to the right",
+            (false, WorkspaceSplitAxis::Vertical) => "Split companion vertically",
         };
-        let icon = if is_split {
-            TITLEBAR_ICON_LAYOUT_SINGLE_PANE
-        } else {
-            TITLEBAR_ICON_LAYOUT_SPLIT_VERTICAL
+        let icon = match (is_split, axis) {
+            (true, _) => TITLEBAR_ICON_LAYOUT_SINGLE_PANE,
+            (false, WorkspaceSplitAxis::Horizontal) => TITLEBAR_ICON_LAYOUT_COLUMNS,
+            (false, WorkspaceSplitAxis::Vertical) => TITLEBAR_ICON_LAYOUT_SPLIT_VERTICAL,
+        };
+        let pane_slug = match column {
+            Some(ProjectEditorCompanionTerminalSlot::Top) => {
+                format!("{}-left", mode.element_slug())
+            }
+            Some(ProjectEditorCompanionTerminalSlot::Bottom) => {
+                format!("{}-right", mode.element_slug())
+            }
+            None => mode.element_slug(),
         };
         div()
             .id(format!(
-                "ghostex-gpui-project-editor-companion-split-{}",
-                mode.element_slug()
+                "ghostex-gpui-project-editor-companion-split-{}-{}",
+                axis.element_slug(),
+                pane_slug
             ))
             .flex()
             .flex_shrink_0()
@@ -626,8 +827,6 @@ impl GhostexGpuiApp {
             .w(px(41.0))
             .items_center()
             .justify_center()
-            .border_l_1()
-            .border_color(chrome_color(0x252525, 0xd4d4d4))
             .text_color(workspace_tab_close_active_color())
             .cursor_default()
             .hover(|this| this.bg(workspace_tab_close_hover_color()))
@@ -636,7 +835,7 @@ impl GhostexGpuiApp {
                 cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();
-                    this.toggle_project_editor_companion_split(mode, window, cx);
+                    this.toggle_project_editor_companion_split(mode, axis, column, window, cx);
                 }),
             )
             .managed_tooltip_with_placement(
@@ -660,72 +859,61 @@ impl GhostexGpuiApp {
         CDXC:CodeEditor 2026-06-22-05:49:
         The project-editor companion boundary is a real reserved layout region between sibling panes. The visible divider is the resize/reset hit target; it persists shell-only companion sizing and does not use invisible overlays or root-level hit-test routing.
         */
-        let hover_line_offset =
-            (WORKSPACE_SPLIT_HANDLE_THICKNESS - SIDEBAR_DIVIDER_HOVER_LINE_WIDTH) / 2.0;
         let hover_visible = self.project_editor_companion_divider_hover_visible == Some(mode);
+        // The companion is the leading pane and a composited terminal; the main surface behind the
+        // rail is a CEF page, so the whole grab strip lies over the companion.
+        let grab_side = ResizeRailGrabSide::Leading;
         div()
             .id(format!(
                 "ghostex-gpui-project-editor-companion-divider-{}",
                 mode.element_slug()
             ))
             .relative()
-            .flex()
             .flex_shrink_0()
             .h_full()
             .w(px(WORKSPACE_SPLIT_HANDLE_THICKNESS))
-            .items_center()
-            .justify_center()
             // The body row sits 1px under the titlebar so panes can own
-            // their top edge; carry the titlebar hairline across the divider
-            // so its full-height line child starts below it.
+            // their top edge; carry the titlebar hairline across the divider.
             .border_t_1()
             .border_color(titlebar_button_border_color())
-            .cursor_ew_resize()
             .bg(project_editor_companion_divider_background_color())
-            .on_hover(cx.listener(move |this, hovered, _, cx| {
-                this.set_project_editor_companion_divider_hovering(mode, *hovered, cx);
-            }))
-            .on_mouse_move(
-                cx.listener(move |this, _event: &MouseMoveEvent, _window, cx| {
-                    this.set_project_editor_companion_divider_hovering(mode, true, cx);
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.handle_project_editor_companion_divider_mouse_down(
-                        mode, event, window, cx,
-                    );
-                }),
-            )
-            .child(
-                div()
-                    .h_full()
-                    .w(px(WORKSPACE_SPLIT_SEPARATOR_THICKNESS))
-                    .cursor_ew_resize()
-                    .bg(project_editor_companion_divider_line_color()),
-            )
-            .when(hover_visible, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left(px(hover_line_offset))
-                        .h_full()
-                        .w(px(SIDEBAR_DIVIDER_HOVER_LINE_WIDTH))
-                        .cursor_ew_resize()
-                        .bg(sidebar_divider_hover_line_color())
-                        .with_animation(
-                            format!(
-                                "ghostex-gpui-project-editor-companion-divider-hover-line-{}",
-                                mode.element_slug()
-                            ),
-                            Animation::new(SIDEBAR_DIVIDER_HOVER_FADE_DURATION)
-                                .with_easing(gpui::ease_out_quint()),
-                            |line, delta| line.opacity(delta),
-                        ),
+            .child(resize_rail_deferred_strip(
+                resize_rail_grab_strip(
+                    format!(
+                        "ghostex-gpui-project-editor-companion-grab-strip-{}",
+                        mode.element_slug()
+                    ),
+                    WorkspaceSplitAxis::Horizontal,
+                    grab_side,
+                    self.resize_rail_drag_active(),
                 )
-            })
+                .on_hover(cx.listener(move |this, hovered, _, cx| {
+                    this.set_project_editor_companion_divider_hovering(mode, *hovered, cx);
+                }))
+                .on_mouse_move(
+                    cx.listener(move |this, _event: &MouseMoveEvent, _window, cx| {
+                        this.set_project_editor_companion_divider_hovering(mode, true, cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.handle_project_editor_companion_divider_mouse_down(
+                            mode, event, window, cx,
+                        );
+                    }),
+                )
+                .when(hover_visible, |this| {
+                    this.child(resize_rail_hover_line(
+                        format!(
+                            "ghostex-gpui-project-editor-companion-divider-hover-line-{}",
+                            mode.element_slug()
+                        ),
+                        WorkspaceSplitAxis::Horizontal,
+                        grab_side,
+                    ))
+                }),
+            ))
             .into_any_element()
     }
 }

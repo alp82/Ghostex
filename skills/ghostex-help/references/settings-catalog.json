@@ -4188,34 +4188,6 @@
       "agentWritable": false
     },
     {
-      "key": "sidebarProjectGroupStyle",
-      "title": "Project group style",
-      "subtitle": "Choose how project groups are marked in the sidebar.",
-      "tab": "settings",
-      "tabTitle": "General",
-      "group": "sidebar",
-      "groupTitle": "Sidebar",
-      "section": "sidebar",
-      "sectionTitle": "Sidebar",
-      "type": "enum",
-      "default": "branched",
-      "options": [
-        {
-          "label": "Quiet rail",
-          "value": "quiet"
-        },
-        {
-          "label": "Header rail",
-          "value": "header"
-        },
-        {
-          "label": "Branched rail",
-          "value": "branched"
-        }
-      ],
-      "agentWritable": true
-    },
-    {
       "key": "sidebarSpacesEnabled",
       "title": "Spaces",
       "subtitle": "Show a row of Space filter buttons in each server's sidebar section.",
@@ -4275,6 +4247,22 @@
       "sectionTitle": "Sidebar",
       "type": "boolean",
       "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "projectSwitchKeepAliveMinutes",
+      "title": "Keep the previous project live for",
+      "subtitle": "After you switch to another project or Space, keep the terminals, chats, and view that were open in the previous project running for this many minutes so switching back is instant. 0 releases them right away.",
+      "tab": "settings",
+      "tabTitle": "General",
+      "group": "sidebar",
+      "groupTitle": "Sidebar",
+      "section": "sidebar",
+      "sectionTitle": "Sidebar",
+      "type": "number",
+      "default": 10,
+      "min": 0,
+      "max": 60,
       "agentWritable": true
     },
     {
@@ -4949,6 +4937,20 @@
         }
       ],
       "agentWritable": false
+    },
+    {
+      "key": "sessionChatUseGpui",
+      "title": "Use GPUI chat",
+      "subtitle": "Use native GPUI chat on desktop. Turn off to use React chat. Restart the desktop app to apply; mobile and web are unchanged.",
+      "tab": "settings",
+      "tabTitle": "General",
+      "group": "chat",
+      "groupTitle": "Chat",
+      "section": "chat",
+      "sectionTitle": "Chat",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
     },
     {
       "key": "preferredAgentInterface",
@@ -5664,7 +5666,7 @@
       "default": "powershell",
       "options": [
         {
-          "label": "PowerShell (native Windows)",
+          "label": "PowerShell (Native)",
           "value": "powershell"
         },
         {
@@ -6933,15 +6935,17 @@
         "wakeFocusedSession": "",
         "closeFocusedSession": "",
         "popOutPane": "ctrl+shift+o",
-        "focusPreviousGroup": "cmd+[",
-        "focusNextGroup": "cmd+]",
-        "navigateHistoryBack": "cmd+ctrl+[",
-        "navigateHistoryForward": "cmd+ctrl+]",
+        "focusPreviousGroup": "",
+        "focusNextGroup": "",
+        "navigateHistoryBack": "cmd+[",
+        "navigateHistoryForward": "cmd+]",
         "openNotifications": "cmd+i",
         "jumpToLatestUnreadNotification": "cmd+shift+u",
         "deferNotificationAndJumpNext": "cmd+ctrl+u",
-        "focusPreviousSession": "cmd+shift+tab",
-        "focusNextSession": "cmd+tab",
+        "focusPreviousSession": "ctrl+shift+tab",
+        "focusNextSession": "ctrl+tab",
+        "focusPreviousPaneTab": "cmd+alt+[",
+        "focusNextPaneTab": "cmd+alt+]",
         "focusUp": "cmd+alt+up",
         "focusRight": "cmd+alt+right",
         "focusDown": "cmd+alt+down",
@@ -6984,6 +6988,18 @@
       "sectionTitle": "Internal state (not user settings)",
       "type": "json",
       "default": [],
+      "agentWritable": false
+    },
+    {
+      "key": "viewScopes",
+      "title": "viewScopes",
+      "subtitle": "App-managed state saved with the settings; not a user preference.",
+      "tab": "settings",
+      "tabTitle": "General",
+      "section": "internalState",
+      "sectionTitle": "Internal state (not user settings)",
+      "type": "json",
+      "default": {},
       "agentWritable": false
     },
     {
@@ -7651,6 +7667,18 @@
       "agentWritable": false
     },
     {
+      "key": "sessionChatModelPicksSessionOnly",
+      "title": "Session-only model picks",
+      "subtitle": "Apply a model or effort picked in a chat to that session only, without changing the default for new sessions. Off saves every pick as the default. Claude only: other agents always save the default.",
+      "tab": "agents",
+      "tabTitle": "Agents",
+      "section": "config",
+      "sectionTitle": "Config",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
       "key": "acceptAll",
       "title": "Agent approvals",
       "subtitle": "Choose whether supported agents ask before editing files or running commands. Per-agent settings can override this default.",
@@ -8003,8 +8031,8 @@
           "value": "ghostex-embedded-browser-use"
         },
         {
-          "label": "Ghostex Fable 5.6 Orchestration",
-          "value": "ghostex-fable-56-orchestration"
+          "label": "Ghostex Agents Orchestration",
+          "value": "ghostex-agents-orchestration"
         },
         {
           "label": "Ghostex Auto Rename Session",
@@ -9240,6 +9268,18 @@
       "type": "boolean",
       "default": false,
       "agentWritable": true
+    },
+    {
+      "key": "sidebarSessionCycleSkipsSleeping",
+      "title": "Skip sleeping sessions",
+      "subtitle": "Next Session and Previous Session jump over sleeping sessions in the sidebar.",
+      "tab": "hotkeys",
+      "tabTitle": "Hotkeys",
+      "section": "navigation",
+      "sectionTitle": "Navigation",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
     }
   ],
   "hotkeys": [
@@ -9568,27 +9608,27 @@
       "id": "focusPreviousGroup",
       "title": "Previous Group",
       "description": "Focus the previous group.",
-      "defaultKey": "cmd+["
+      "defaultKey": ""
     },
     {
       "id": "focusNextGroup",
       "title": "Next Group",
       "description": "Focus the next group.",
-      "defaultKey": "cmd+]"
+      "defaultKey": ""
     },
     {
       "id": "navigateHistoryBack",
       "title": "Back",
       "description": "Go back to the previously active session or project.",
-      "defaultKey": "cmd+ctrl+[",
-      "windowsLinuxDefaultKey": "cmd+alt+["
+      "defaultKey": "cmd+[",
+      "windowsLinuxDefaultKey": "cmd+alt+shift+["
     },
     {
       "id": "navigateHistoryForward",
       "title": "Forward",
       "description": "Go forward again after going back.",
-      "defaultKey": "cmd+ctrl+]",
-      "windowsLinuxDefaultKey": "cmd+alt+]"
+      "defaultKey": "cmd+]",
+      "windowsLinuxDefaultKey": "cmd+alt+shift+]"
     },
     {
       "id": "openNotifications",
@@ -9610,15 +9650,29 @@
     },
     {
       "id": "focusPreviousSession",
-      "title": "Previous Tab",
-      "description": "Select the previous tab in the focused split pane.",
-      "defaultKey": "cmd+shift+tab"
+      "title": "Previous Session",
+      "description": "Select the previous session shown in the sidebar.",
+      "defaultKey": "ctrl+shift+tab",
+      "windowsLinuxDefaultKey": "cmd+shift+tab"
     },
     {
       "id": "focusNextSession",
-      "title": "Next Tab",
+      "title": "Next Session",
+      "description": "Select the next session shown in the sidebar.",
+      "defaultKey": "ctrl+tab",
+      "windowsLinuxDefaultKey": "cmd+tab"
+    },
+    {
+      "id": "focusPreviousPaneTab",
+      "title": "Previous Tab in Pane",
+      "description": "Select the previous tab in the focused split pane.",
+      "defaultKey": "cmd+alt+["
+    },
+    {
+      "id": "focusNextPaneTab",
+      "title": "Next Tab in Pane",
       "description": "Select the next tab in the focused split pane.",
-      "defaultKey": "cmd+tab"
+      "defaultKey": "cmd+alt+]"
     },
     {
       "id": "focusUp",

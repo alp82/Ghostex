@@ -20,6 +20,7 @@ import {
 import {
   DEFAULT_ACCENT_COLOR,
   DEFAULT_PROJECT_SESSION_LIST_COLLAPSED_COUNT,
+  DEFAULT_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   DEFAULT_SESSION_CHAT_TRANSCRIPT_WIDTH_PERCENT,
   DEFAULT_SESSION_CHAT_ZOOM_PERCENT,
   DEFAULT_TERMINAL_VIEW_WIDTH_MODE,
@@ -106,8 +107,8 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
    * surfaces hidden until the user enables Enable Experimental Features from
    * Advanced Settings.
    *
-   * CDXC:Automations 2026-07-01-03:24:
-   * Automations Overview and project Automate start hidden behind their
+   * CDXC:Automations 2026-09-17:
+   * All Automations and project Automate start hidden behind their
    * coming-soon overlay until Enable Experimental Features is on.
    */
   showBetaFeatures: false,
@@ -205,6 +206,7 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
    */
   showNotificationOnTerminalBell: false,
   createSessionOnSidebarDoubleClick: false,
+  sidebarSessionCycleSkipsSleeping: false,
   /**
    * CDXC:Sessions 2026-09-10 DECISION:
    * User: enable parking by default, but keep sleep on park disabled by default.
@@ -391,9 +393,9 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
    */
   sidebarDefaultWidthPx: DEFAULT_SIDEBAR_DEFAULT_WIDTH_PX,
   projectSessionListCollapsedCount: DEFAULT_PROJECT_SESSION_LIST_COLLAPSED_COUNT,
-  sidebarProjectGroupStyle: 'branched',
   sidebarSpacesEnabled: false,
   sidebarSpaceSwitchBehavior: 'restore',
+  projectSwitchKeepAliveMinutes: DEFAULT_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   sidebarSpaceFollowActiveSession: false,
   sidebarVisibilityMemory: 'shared',
   expandCollapsedProjectsOnJump: true,
@@ -401,6 +403,8 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
   /** CDXC:Theming 2026-09-14 DECISION: User: default App theme to System, with Chat and Terminal on Follow app. Existing saved theme selections remain unchanged. */
   sidebarTheme: 'system',
   sessionChatTheme: 'app',
+  /** CDXC:SessionChat 2026-09-19 DECISION: User: make GPUI chat the default on desktop. This supersedes the React default; turning the setting off still selects React chat, and saved choices are kept. */
+  sessionChatUseGpui: true,
   sessionChatFontFamily: '',
   sessionChatZoomPercent: DEFAULT_SESSION_CHAT_ZOOM_PERCENT,
   sessionChatCustomTranscriptWidthEnabled: false,
@@ -408,6 +412,7 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
   sessionChatVerboseMode: false,
   sessionChatSimpleMode: false,
   sessionChatFileEditPreviews: false,
+  sessionChatModelPicksSessionOnly: false,
   /**
    * CDXC:Theming 2026-06-15-11:24:
    * Custom sidebar/titlebar colors are scoped to the sidebar and titlebar.
@@ -540,6 +545,7 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
   showAgentsPaneTabBarWhenUnsplit: false,
   customViews: [],
   customViewTemplates: [],
+  viewScopes: {},
   titlebarViewOrder: [],
   /**
    * CDXC:Titlebar 2026-05-11-00:22

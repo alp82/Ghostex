@@ -81,7 +81,8 @@ companion pane that is 47 columns instead of 42 for a diff or a command dump.
   container: ghostex-session-chat / inline-size;
 }
 
-.ghostex-session-chat-scope[data-chat-custom-transcript-width='true'] [data-slot='message-scroller-content'] {
+.ghostex-session-chat-scope[data-chat-custom-transcript-width='true'] [data-slot='message-scroller-content'],
+.ghostex-session-chat-scope[data-chat-custom-transcript-width='true'] .ghostex-chat-transcript-skeleton {
   width: calc(var(--ghostex-session-chat-transcript-width-percent, 75) * 1%);
   max-width: calc(100% - 60px);
 }
@@ -217,7 +218,8 @@ companion pane that is 47 columns instead of 42 for a diff or a command dump.
  * At the existing 1070px cutoff and below, remove the percentage inset and retain the shared px-4 padding.
  */
 @container ghostex-session-chat (max-width: 1070px) {
-  .ghostex-session-chat-scope[data-chat-custom-transcript-width='true'] [data-slot='message-scroller-content'] {
+  .ghostex-session-chat-scope[data-chat-custom-transcript-width='true'] [data-slot='message-scroller-content'],
+  .ghostex-session-chat-scope[data-chat-custom-transcript-width='true'] .ghostex-chat-transcript-skeleton {
     max-width: 100%;
     width: 100%;
   }
@@ -520,51 +522,25 @@ body[data-session-chat-bullets='off'] .ghostex-session-chat-popup {
 
 /* --- Conversation blocks ------------------------------------------------- */
 
-/* CDXC:SessionChat 2026-09-07 DECISION:
-   User: keep Copy, Save prompt and Rewind outside the bubble on the left; show them horizontally for one- or two-line messages and vertically for longer messages, superseding the always-vertical arrangement. */
 .ghostex-chat-user-message-container {
   container-type: inline-size;
 }
 
 .ghostex-chat-user-message {
-  --chat-user-action-width: 1.5rem;
-  align-items: flex-start;
+  align-items: flex-end;
   align-self: flex-end;
   display: flex;
-  gap: 0.375rem;
+  flex-direction: column;
+  gap: 0.25rem;
   max-width: 100%;
   min-width: 0;
-}
-
-.ghostex-chat-user-message:has(.ghostex-chat-user-actions > button:nth-child(2)) {
-  --chat-user-action-width: 3rem;
-}
-
-.ghostex-chat-user-message:has(.ghostex-chat-user-actions > button:nth-child(3)) {
-  --chat-user-action-width: 4.5rem;
-}
-
-.ghostex-chat-user-message[data-compact='true'] {
-  align-items: center;
-}
-
-.ghostex-chat-user-message[data-compact='true'] > .ghostex-chat-user-actions {
-  flex-direction: row;
-  padding-block-start: 0;
-}
-
-.ghostex-chat-user-message > .ghostex-chat-user-actions {
-  flex: none;
-  flex-direction: column;
-  padding-block-start: 0.75rem;
 }
 
 .ghostex-chat-user-content {
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
-  /* Keep wrapping independent of button orientation so a two-line bubble cannot oscillate between layouts. */
-  max-width: min(80cqi, calc(100cqi - var(--chat-user-action-width) - 0.375rem));
+  max-width: 80cqi;
   min-width: 0;
 }
 
@@ -634,13 +610,11 @@ body[data-session-chat-bullets='off'] .ghostex-session-chat-popup {
 }
 
 .ghostex-chat-agent-message::before {
-  anchor-name: --ghostex-chat-final-message-marker;
   margin-block-start: var(--chat-marker-bullet-offset);
 }
 
 /* CDXC:SessionChat 2026-09-13 WHY:
-   A leading Markdown list already supplies its own marker; the row dot otherwise doubles it.
-   Keep the transparent marker box so final-reply actions retain their gutter anchor. */
+   A leading Markdown list already supplies its own marker; the row dot otherwise doubles it. */
 .ghostex-chat-agent-message:has(> .ghostex-chat-markdown > :is(ul, ol):first-child)::before,
 .ghostex-chat-thinking-line:has(
     > [data-ghostex-thinking-text]
@@ -652,44 +626,47 @@ body[data-session-chat-bullets='off'] .ghostex-session-chat-popup {
   background: transparent;
 }
 
-/* A final reply's action rail belongs to the marker gutter, not to a footer row
-   beneath the prose. Its first action replaces the bullet and the save action
-   continues directly below it, all outside layout. The nearest preceding marker
-   with this name is the one in the same message row. */
-.ghostex-chat-final-actions {
-  display: contents;
-}
-
-.ghostex-chat-final-action {
-  left: anchor(center);
+/* CDXC:SessionChat 2026-09-19 DECISION:
+   User: show a message's actions below it with the time it arrived, exactly like t3code's chat view. A reply's row reads Copy, Reply by Annotating, Save to md, then the time, starting at the prose column; a prompt's row sits right-aligned under the bubble as the time, Rewind, Save prompt, Copy. Supersedes the marker-gutter rail on final replies and the rail left of the user bubble. */
+.ghostex-chat-message-actions {
+  font-variant-numeric: tabular-nums;
+  gap: 0.5rem;
   opacity: 0;
-  pointer-events: none;
-  position: absolute;
-  position-anchor: --ghostex-chat-final-message-marker;
-  top: anchor(center);
-  transform: translate(-50%, -50%);
-  transition: opacity 120ms ease;
+  transition: opacity 200ms ease;
 }
 
-/* Rail order is Copy, Reply by Annotating, Save to md; each slot is one row
-   below the previous one. */
-.ghostex-chat-final-action-annotate {
-  top: calc(anchor(center) + 1.625rem);
-}
-
-.ghostex-chat-final-action-save {
-  top: calc(anchor(center) + 3.25rem);
-}
-
-.ghostex-session-chat-scope [data-slot='message']:is(:hover, :focus-within) .ghostex-chat-final-action {
+.ghostex-session-chat-scope [data-slot='message']:is(:hover, :focus-within) .ghostex-chat-message-actions {
   opacity: 1;
-  pointer-events: auto;
 }
 
-.ghostex-session-chat-scope
-  [data-slot='message']:has(.ghostex-chat-final-actions):is(:hover, :focus-within)
-  .ghostex-chat-agent-message::before {
-  opacity: 0;
+/* Touch screens have no hover to reveal the row, so it stays visible there. */
+@media (pointer: coarse) {
+  .ghostex-chat-message-actions {
+    opacity: 1;
+  }
+}
+
+.ghostex-chat-message-action-buttons {
+  align-items: center;
+  display: flex;
+  gap: 0.125rem;
+}
+
+.ghostex-chat-message-time {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+/* MessageContent's 0.625rem gap less 0.25rem leaves the 0.375rem t3code puts between prose and its footer. */
+.ghostex-chat-reply-actions {
+  margin-block-start: -0.25rem;
+  padding-inline-start: calc(var(--chat-marker-inset) + var(--chat-marker-slot) + var(--chat-marker-gap));
+}
+
+.ghostex-chat-user-actions {
+  padding-inline-end: 0.25rem;
 }
 
 .ghostex-chat-thinking-row {
@@ -1168,12 +1145,9 @@ the markdown block) rather than pinned to a tier of its own.
   background: var(--background);
 }
 
-/* The transcript reserves the band's height below its last row. While the
-   composer is collapsed the inset holds the expanded height, so the rows the
-   expansion will cover again stay hidden instead of flashing into view. */
-.ghostex-session-chat-scope [data-slot='message-scroller-content'] {
-  padding-bottom: calc(var(--ghostex-chat-composer-inset, 0px) + 1rem);
-}
+/* The message list reserves the band's height plus the shared transcript end
+   padding below its last row. While collapsed, the inset holds the expanded
+   height so expansion does not flash previously hidden rows into view. */
 
 /* The viewport's bottom scroll fade sits under the opaque band, so lift its
    fade region to the band's top edge. --scroll-fade-b is what scroll-fade-b
@@ -2002,6 +1976,32 @@ so the swap barely moves the composer row.
   }
 }
 
+/* The transcript skeleton a loading chat shows (session-chat-loading-state.tsx). Its
+   geometry, tint and pulse come from transcript-skeleton.json, which GPUI chat reads too. */
+.ghostex-chat-transcript-skeleton-rows {
+  animation: ghostex-chat-transcript-skeleton-pulse var(--ghostex-chat-skeleton-pulse-ms) ease-in-out infinite;
+}
+
+.ghostex-chat-transcript-skeleton-block {
+  background: color-mix(in srgb, var(--foreground) var(--ghostex-chat-skeleton-tint), transparent);
+}
+
+@keyframes ghostex-chat-transcript-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: var(--ghostex-chat-skeleton-pulse-min);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ghostex-chat-transcript-skeleton-rows {
+    animation: none;
+  }
+}
+
 /* The plain input backend grows with the draft. A pasted line with no
    break opportunity (a long URL, a base64 blob) would make the input's
    min-content width enormous and push the whole page past the viewport.
@@ -2419,7 +2419,7 @@ lane inherits the same one — a size is chosen per lane, a rhythm is not.
 .ghostex-chat-markdown pre,
 .ghostex-chat-markdown .ghostex-chat-markdown-codeblock,
 .ghostex-chat-markdown .ghostex-chat-markdown-table {
-  margin: 0.65rem 0;
+  margin: var(--chat-paragraph-gap) 0;
 }
 
 /* Markers sit outside the padding box (`list-style-position: outside`), so a
@@ -2494,25 +2494,27 @@ lane inherits the same one — a size is chosen per lane, a rhythm is not.
 .ghostex-chat-markdown h5,
 .ghostex-chat-markdown h6 {
   font-weight: 600;
-  line-height: 1.3;
-  margin: 1.25rem 0 0.5rem;
+  line-height: var(--chat-heading-line-height);
+  margin: var(--chat-heading-gap-before) 0 0.5rem;
 }
 
 .ghostex-chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: var(--chat-heading-1-size);
 }
 .ghostex-chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: var(--chat-heading-2-size);
 }
 .ghostex-chat-markdown h3 {
-  font-size: 1rem;
+  font-size: var(--chat-heading-3-size);
 }
-.ghostex-chat-markdown h4,
-.ghostex-chat-markdown h5,
-.ghostex-chat-markdown h6 {
-  font-size: 0.875rem;
+.ghostex-chat-markdown h4 {
+  font-size: var(--chat-heading-4-size);
+}
+.ghostex-chat-markdown h5 {
+  font-size: var(--chat-heading-5-size);
 }
 .ghostex-chat-markdown h6 {
+  font-size: var(--chat-heading-6-size);
   color: var(--muted-foreground);
 }
 
@@ -2533,11 +2535,11 @@ lane inherits the same one — a size is chosen per lane, a rhythm is not.
 
 .ghostex-chat-markdown :not(pre) > code {
   background: var(--chat-inline-code-surface, var(--muted));
-  border: 1px solid var(--chat-inline-code-border, var(--border));
-  border-radius: 0.375rem;
+  border: var(--chat-inline-code-border-width) solid var(--chat-inline-code-border, var(--border));
+  border-radius: var(--chat-inline-code-radius);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
-  font-size: var(--chat-code-size);
-  padding: 0.1rem 0.35rem;
+  font-size: var(--chat-inline-code-size);
+  padding: var(--chat-inline-code-padding-y) var(--chat-inline-code-padding-x);
 }
 
 /* An inline-code span that is a file reference. Its visual chrome comes from
@@ -2908,14 +2910,17 @@ lane inherits the same one — a size is chosen per lane, a rhythm is not.
 }
 
 .ghostex-chat-markdown a {
-  color: var(--info-foreground);
+  color: var(--chat-web-link-light, var(--info-foreground));
   text-decoration: none;
 }
 
 .ghostex-chat-markdown .ghostex-chat-markdown-link-icon {
-  display: inline;
+  background-color: currentColor;
+  -webkit-mask: var(--chat-web-link-icon) center / contain no-repeat;
+  mask: var(--chat-web-link-icon) center / contain no-repeat;
+  display: inline-block;
   height: 1em;
-  margin-right: 0.2em;
+  margin-right: var(--chat-web-link-gap, 0.2em);
   vertical-align: -0.08em;
   width: 1em;
 }
@@ -2944,8 +2949,8 @@ lane inherits the same one — a size is chosen per lane, a rhythm is not.
 .ghostex-chat-markdown .ghostex-chat-reference-pill::before {
   align-self: center;
   background-color: currentColor;
-  height: 1em;
-  width: 1em;
+  height: var(--chat-reference-icon-size, 1em);
+  width: var(--chat-reference-icon-size, 1em);
 }
 
 .ghostex-chat-markdown .ghostex-chat-markdown-file-chip-icon {
@@ -2973,13 +2978,17 @@ lane inherits the same one — a size is chosen per lane, a rhythm is not.
 }
 
 .ghostex-session-chat-scope[data-chat-theme='dark'] .ghostex-chat-markdown a {
-  color: color-mix(in srgb, var(--info-foreground) 72%, white 28%);
+  color: color-mix(in srgb, var(--chat-web-link-dark, var(--info-foreground)) 72%, white 28%);
 }
 
 .ghostex-session-chat-scope[data-chat-theme='dark']
   .ghostex-chat-markdown
   :is(.ghostex-chat-reference-pill, .ghostex-chat-markdown-file-chip) {
-  color: color-mix(in srgb, var(--ghostex-chat-reference-outline) 72%, white 28%);
+  color: color-mix(
+    in srgb,
+    var(--ghostex-chat-reference-outline) var(--chat-reference-dark-base, 72%),
+    white var(--chat-reference-dark-white, 28%)
+  );
 }
 
 /* --- Footnotes ------------------------------------------------------------ */
@@ -4058,35 +4067,74 @@ reduced-motion turns both off and keeps the static glyph.
 .ghostex-chat-working-strip {
   display: grid;
   gap: 0.375rem;
-  min-height: 1.5rem;
-  padding: 0 0.375rem;
+  min-height: var(--working-min-height);
+  padding: 0 var(--working-padding-x);
   user-select: none;
 }
 
 .ghostex-chat-working-strip-row {
   align-items: center;
+  column-gap: var(--working-armed-column-gap);
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  row-gap: var(--working-armed-row-gap);
+}
+
+.ghostex-chat-working-strip-lead {
+  align-items: center;
+  display: flex;
+  gap: var(--working-gap);
+  margin-right: auto;
+  min-width: 0;
+}
+
+.ghostex-chat-working-strip-armed {
+  align-items: center;
+  display: flex;
+  gap: var(--working-armed-icon-gap);
+  min-width: 0;
+}
+
+.ghostex-chat-working-strip-armed-icon {
+  align-items: center;
+  display: flex;
+  flex: none;
+  height: var(--working-spark-box);
+  justify-content: center;
+  width: var(--working-spark-box);
+}
+
+.ghostex-chat-working-strip-armed-icon svg {
+  display: block;
+  height: var(--working-spark-size);
+  width: var(--working-spark-size);
+}
+
+.ghostex-chat-working-strip-armed-text {
+  color: var(--foreground);
+  font-size: var(--working-font-size);
+  letter-spacing: 0.01em;
   min-width: 0;
 }
 
 .ghostex-chat-working-strip-spark {
   align-items: center;
-  animation: ghostex-chat-working-spark-pulse 1.6s ease-in-out infinite;
+  animation: ghostex-chat-working-spark-pulse var(--working-pulse) ease-in-out infinite;
   display: flex;
   flex: none;
-  height: 1rem;
+  height: var(--working-spark-box);
   justify-content: center;
-  width: 1rem;
+  width: var(--working-spark-box);
   will-change: transform, opacity, filter;
 }
 
 .ghostex-chat-working-strip-spark svg {
-  animation: ghostex-chat-working-spark-spin 9s linear infinite;
+  animation: ghostex-chat-working-spark-spin var(--working-spin) linear infinite;
   display: block;
   fill: var(--foreground);
-  height: 0.875rem;
-  width: 0.875rem;
+  height: var(--working-spark-size);
+  width: var(--working-spark-size);
 }
 
 @keyframes ghostex-chat-working-spark-pulse {
@@ -4114,7 +4162,7 @@ reduced-motion turns both off and keeps the static glyph.
 
 .ghostex-chat-working-strip-text {
   color: var(--muted-foreground);
-  font-size: 0.78125rem;
+  font-size: var(--working-font-size);
   letter-spacing: 0.01em;
   min-width: 0;
   overflow: hidden;

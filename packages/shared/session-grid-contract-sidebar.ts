@@ -212,13 +212,13 @@ export type SidebarGhostexCliStatusMessage = {
   manageBeadsSkillInstalled?: boolean;
   manageBeadsSkillPath?: string;
   /**
-   * CDXC:AgentSkills 2026-07-04-00:00:
-   * `$ghostex-fable-56-orchestration` shipped after existing hosts, so its
+   * CDXC:AgentSkills 2026-09-19 WHY:
+   * `$ghostex-agents-orchestration` (which replaced the Fable 5.6 orchestration skill in the same slot) shipped after existing hosts, so its
    * status fields stay optional and consumers must treat a missing value as
    * not installed instead of requiring every host build to send it.
    */
-  fable56OrchestrationSkillInstalled?: boolean;
-  fable56OrchestrationSkillPath?: string;
+  agentsOrchestrationSkillInstalled?: boolean;
+  agentsOrchestrationSkillPath?: string;
   generateTitleSkillInstalled: boolean;
   generateTitleSkillPath?: string;
   moveCodexSessionSkillInstalled: boolean;
@@ -967,6 +967,17 @@ export type SidebarHudState = {
    */
   projectSettingsProjects?: SidebarProjectSettingsItem[];
   projectViewSpaces?: import('./ghostex-settings/project-views').ProjectViewSpace[];
+  projectViewProjects?: import('./ghostex-settings/project-views').ProjectViewProject[];
+  /**
+   * CDXC:Extensions 2026-09-18 WHY:
+   * Space membership lives on the owning daemon's collections and spaces documents, which the native
+   * titlebar cannot read. The active project's id and its resolved spaces (group and worktree-parent
+   * inheritance already applied) ride the HUD so a scoped view resolves synchronously while the titlebar
+   * renders, instead of each surface re-deriving sidebar membership or polling gxserver.
+   * SEE-ALSO: packages/shared/ghostex-settings/view-scopes.ts, apps/desktop/src/app/view_scopes.rs.
+   */
+  activeProjectId?: string;
+  activeProjectSpaceRefs?: import('./ghostex-settings/view-scopes').GhostexViewScopeSpaceRef[];
   /**
    * CDXC:Projects 2026-05-04-14:25
    * Combined sidebar hides projects without active/sleeping sessions in a
@@ -1707,7 +1718,7 @@ export type SidebarToExtensionMessage =
         | 'installComputerUseSkill'
         | 'installCliSkill'
         | 'installManageBeadsSkill'
-        | 'installFable56OrchestrationSkill'
+        | 'installAgentsOrchestrationSkill'
         | 'installGenerateTitleSkill'
         | 'installManageBeadsSkill'
         | 'installMoveCodexSessionSkill'

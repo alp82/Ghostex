@@ -31,11 +31,12 @@ use gpui::{
     ParentElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::h_flex;
+use gpui_component::tooltip::{ManagedTooltipExt as _, ManagedTooltipPlacement};
 
 use crate::{
-    GhostexGpuiApp, TITLEBAR_CONTROL_HEIGHT, TITLEBAR_LEADING_BUTTON_WIDTH,
+    GhostexGpuiApp, TITLEBAR_BUTTON_HORIZONTAL_PADDING, TITLEBAR_CONTROL_HEIGHT,
     TITLEBAR_LEADING_TALL_BUTTON_HEIGHT, titlebar_button_hover_color, titlebar_disabled_text_color,
-    titlebar_icon_color, titlebar_svg_icon,
+    titlebar_icon_color, titlebar_svg_icon, titlebar_tooltip, titlebar_tooltip_label,
 };
 
 /// Page-side event the sidebar runtime listens for. Must stay identical to
@@ -123,8 +124,6 @@ impl GhostexGpuiApp {
     ) -> impl IntoElement {
         h_flex()
             .h(px(TITLEBAR_CONTROL_HEIGHT))
-            .ml(px(4.0))
-            .mr(px(2.0))
             .mt(px(2.0))
             .flex_shrink_0()
             .items_center()
@@ -156,6 +155,11 @@ impl GhostexGpuiApp {
         } else {
             titlebar_disabled_text_color()
         };
+        let tooltip = if back {
+            titlebar_tooltip_label("Back", "navigateHistoryBack")
+        } else {
+            titlebar_tooltip_label("Forward", "navigateHistoryForward")
+        };
 
         div()
             .id(if back {
@@ -173,7 +177,7 @@ impl GhostexGpuiApp {
             toggle next to them.
             */
             .h(px(TITLEBAR_LEADING_TALL_BUTTON_HEIGHT))
-            .w(px(TITLEBAR_LEADING_BUTTON_WIDTH))
+            .px(px(TITLEBAR_BUTTON_HORIZONTAL_PADDING))
             .flex_shrink_0()
             .items_center()
             .justify_center()
@@ -191,6 +195,9 @@ impl GhostexGpuiApp {
                             );
                         }),
                     )
+            })
+            .managed_tooltip_with_placement(ManagedTooltipPlacement::Right, move |window, cx| {
+                titlebar_tooltip(tooltip.clone(), window, cx)
             })
             .child(titlebar_svg_icon(icon, NAVIGATION_ICON_SIZE, icon_color))
             .into_any_element()

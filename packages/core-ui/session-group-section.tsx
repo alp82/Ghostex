@@ -553,9 +553,16 @@ function ProjectSessionSectionToggle({
         {statusLabel ? (
           <AppTooltip content={statusLabel}>
             <span aria-hidden='true' className='session-kind-indicators'>
-              {summary.workingCount > 0 ? <span className='session-kind-dot' data-status='working' /> : null}
-              {summary.attentionCount > 0 ? <span className='session-kind-dot' data-status='attention' /> : null}
-              {summary.questionCount > 0 ? <span className='session-kind-dot' data-status='question' /> : null}
+              {/* CDXC:Sidebar 2026-09-19 DECISION: User: status dots next to a section title show only while it is collapsed. Same rule as render_native_section_header in apps/desktop/src/app/native_sidebar/sections.rs. */}
+              {isCollapsed && summary.workingCount > 0 ? (
+                <span className='session-kind-dot' data-status='working' />
+              ) : null}
+              {isCollapsed && summary.attentionCount > 0 ? (
+                <span className='session-kind-dot' data-status='attention' />
+              ) : null}
+              {isCollapsed && summary.questionCount > 0 ? (
+                <span className='session-kind-dot' data-status='question' />
+              ) : null}
               {showActiveSessionIndicator ? <span className='session-kind-dot' data-status='active' /> : null}
             </span>
           </AppTooltip>
@@ -2967,7 +2974,7 @@ export function SessionGroupSection({
                   type='button'
                 >
                   <IconPlus aria-hidden='true' className='session-context-menu-icon' size={14} />
-                  New project group
+                  New Project Group
                 </button>
                 {projectCollectionOptions.map((collection) => (
                   <button
@@ -2994,7 +3001,7 @@ export function SessionGroupSection({
                       type='button'
                     >
                       <IconX aria-hidden='true' className='session-context-menu-icon' size={14} />
-                      Remove from group
+                      Remove from Group
                     </button>
                   </>
                 ) : null}
@@ -3173,8 +3180,8 @@ export function SessionGroupSection({
                  * CDXC:Worktrees 2026-05-28-07:46:
                  * Worktree project rows have their own compact context menu: open/reveal/rename first, then destructive worktree-specific actions. Delete removes the Git worktree checkout after confirmation; Remove only drops the Ghostex project row.
                  *
-                 * CDXC:Projects 2026-06-04-13:39:
-                 * Project and worktree filesystem menu items should say Open File/Folder Location instead of Finder-specific copy so the macOS app presents OS-agnostic action names.
+                 * CDXC:Projects 2026-09-18 WHY:
+                 * Project and worktree filesystem menus use the shorter Open Folder label, replacing Open File/Folder Location while keeping OS-agnostic copy.
                  *
                  * CDXC:Projects 2026-06-08-09:19:
                  * Worktree project headings should keep Copy Path but omit Open so the compact menu prioritizes filesystem copy/reveal and worktree-specific rename/delete/remove actions.
@@ -3190,7 +3197,7 @@ export function SessionGroupSection({
                   type='button'
                 >
                   <IconFolderOpen aria-hidden='true' className='session-context-menu-icon' size={14} />
-                  Open File/Folder Location
+                  Open Folder
                 </button>
                 {projectGitRemoteOriginUrl ? (
                   <button
@@ -3231,7 +3238,7 @@ export function SessionGroupSection({
                     type='button'
                   >
                     <IconPlus aria-hidden='true' className='session-context-menu-icon' size={14} />
-                    Add to project group
+                    Add to Group
                     <IconChevronRight aria-hidden='true' className='session-context-menu-trailing-icon' size={14} />
                   </button>
                 ) : null}
@@ -3311,7 +3318,7 @@ export function SessionGroupSection({
                   type='button'
                 >
                   <IconFolderOpen aria-hidden='true' className='session-context-menu-icon' size={14} />
-                  Open File/Folder Location
+                  Open Folder
                 </button>
                 {projectGitRemoteOriginUrl ? (
                   <button
@@ -3332,7 +3339,7 @@ export function SessionGroupSection({
                     type='button'
                   >
                     <IconPlus aria-hidden='true' className='session-context-menu-icon' size={14} />
-                    Add to project group
+                    Add to Group
                     <IconChevronRight aria-hidden='true' className='session-context-menu-trailing-icon' size={14} />
                   </button>
                 ) : null}
@@ -3421,7 +3428,7 @@ export function SessionGroupSection({
                   type='button'
                 >
                   <IconX aria-hidden='true' className='session-context-menu-icon' size={14} />
-                  Close inactive
+                  Close Inactive
                 </button>
                 <button
                   className='session-context-menu-item session-context-menu-item-danger'

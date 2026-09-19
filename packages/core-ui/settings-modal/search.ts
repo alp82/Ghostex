@@ -101,10 +101,21 @@ export function getHotkeySettingsSectionSearches({
                 : []),
             ]
           : [];
+      const sessionCycleSettings: SettingSearchDefinition[] =
+        section.id === 'navigation'
+          ? [
+              {
+                key: 'sidebarSessionCycleSkipsSleeping',
+                subtitle: 'Next Session and Previous Session jump over sleeping sessions in the sidebar.',
+                title: 'Skip sleeping sessions',
+              },
+            ]
+          : [];
       return [
         section.id,
         getSettingsSectionSearch(searchQuery, section.title, [
           ...projectJumpSettings,
+          ...sessionCycleSettings,
           ...section.ids.flatMap((id) => {
             const definition = definitionsById.get(id);
             return definition
@@ -397,6 +408,12 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
             key: 'customTitleCommand',
             subtitle: 'Run this command with the title prompt on stdin. It should print only the title.',
             title: 'Custom Title Command',
+          },
+          {
+            key: 'sessionChatModelPicksSessionOnly',
+            subtitle:
+              'Apply a model or effort picked in a chat to that session only, without changing the default for new sessions. Off saves every pick as the default. Claude only: other agents always save the default.',
+            title: 'Session-only model picks',
           },
           {
             key: 'acceptAll',

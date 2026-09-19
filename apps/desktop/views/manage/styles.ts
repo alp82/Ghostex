@@ -4,6 +4,7 @@ import {
   MANAGE_MEO_CODE_COLOR,
   MANAGE_MEO_HEADING_COLOR,
   MANAGE_REDLINE_ANNOTATION_COLOR,
+  MANAGE_SIDEBAR_DEFAULT_WIDTH,
 } from './constants';
 import { quickLabelColor } from './annotation-store';
 import nativeFloatingPanelShadow from '@/packages/core-ui/assets/native-floating-panel-shadow.png';
@@ -92,7 +93,7 @@ export const MANAGE_STYLES = `
   .manage-shell {
     background: var(--manage-bg);
     display: grid;
-    grid-template-columns: var(--manage-sidebar-width, 292px) 6px minmax(0, 1fr);
+    grid-template-columns: var(--manage-sidebar-width) minmax(0, 1fr);
     height: 100%;
     min-height: 0;
     position: relative;
@@ -106,11 +107,16 @@ export const MANAGE_STYLES = `
     --manage-sidebar-reveal-duration: 220ms;
     --manage-sidebar-reveal-easing: cubic-bezier(0.33, 1, 0.68, 1);
     --manage-sidebar-reveal-offset: -100%;
+    /*
+     * CDXC:Docs 2026-09-19 DECISION:
+     * User: the Docs files list is not resizable and keeps one width, so the shell owns that width instead of a persisted per-user value.
+     */
+    --manage-sidebar-width: ${MANAGE_SIDEBAR_DEFAULT_WIDTH}px;
     width: 100%;
   }
 
   .manage-shell[data-sidebar-side="right"] {
-    grid-template-columns: minmax(0, 1fr) 6px var(--manage-sidebar-width, 292px);
+    grid-template-columns: minmax(0, 1fr) var(--manage-sidebar-width);
     --manage-sidebar-reveal-offset: 100%;
   }
 
@@ -190,7 +196,8 @@ export const MANAGE_STYLES = `
    */
   /*
    * CDXC:Docs 2026-09-15 DECISION:
-   * User: in light mode the Docs files list, its search row, and the document and formatting toolbars use #f4f4f5, the search row's bottom border is #e5e5e5, and the docked files list gets a #e5e5e5 border on the edge that faces the content next to a 6px resizer gap.
+   * User: in light mode the Docs files list, its search row, and the document and formatting toolbars use #f4f4f5, and the search row's bottom border is #e5e5e5.
+   * The 6px resizer gap that used to sit beside that border was removed on 2026-09-19, leaving the border as the only line between the list and the content.
    * Dark mode keeps the 2026-09-07 decision (files sidebar, search row, and header rows use #0b0b0b) until the user shares dark colours.
    */
   .manage-sidebar {
@@ -205,10 +212,6 @@ export const MANAGE_STYLES = `
     min-width: 0;
     padding: 0 0 7px;
     position: relative;
-  }
-
-  .manage-shell[data-sidebar-floating="false"][data-sidebar-side="right"] .manage-sidebar {
-    border-left: 1px solid light-dark(#e5e5e5, #212121);
   }
 
   /*
@@ -238,7 +241,7 @@ export const MANAGE_STYLES = `
   }
 
   .manage-shell[data-sidebar-side="right"] .manage-sidebar {
-    grid-column: 3;
+    grid-column: 2;
     grid-row: 1;
   }
 
@@ -251,7 +254,7 @@ export const MANAGE_STYLES = `
     max-width: calc(100% - 34px);
     position: absolute;
     top: 0;
-    width: min(var(--manage-sidebar-width, 292px), calc(100% - 34px));
+    width: min(var(--manage-sidebar-width), calc(100% - 34px));
     z-index: 650;
   }
 
@@ -262,71 +265,23 @@ export const MANAGE_STYLES = `
     right: 0;
   }
 
-  .manage-sidebar-resizer {
-    background: var(--manage-bg);
-    cursor: ew-resize;
-    grid-column: 2;
-    grid-row: 1;
-    min-width: 6px;
-    outline: none;
-    position: relative;
-    touch-action: none;
-  }
-
-  .manage-sidebar-resizer::before {
-    background: light-dark(#e5e5e7, #212121);
-    content: "";
-    bottom: 0;
-    position: absolute;
-    right: 0;
-    top: 0;
-    width: 1px;
-  }
-
-  .manage-shell[data-sidebar-side="right"] .manage-sidebar-resizer::before {
-    left: 0;
-    right: auto;
-  }
-
   /*
-   * CDXC:Docs 2026-09-15 DECISION:
-   * User: the Docs files-list drag handle works just like the divider between the companion side pane and the main view in the GPUI app.
-   * That divider shows a 3px line centred in the handle after a 50ms hover delay, fades it in over 180ms on an ease-out quint curve, hides it instantly on leave, keeps it while dragging, and resets the width on double-click.
-   * SEE-ALSO: apps/desktop/src/app/render/project_editor_companion.rs (render_project_editor_companion_divider), sidebar_divider_hover_line_color, SIDEBAR_DIVIDER_HOVER_DELAY, SIDEBAR_DIVIDER_HOVER_FADE_DURATION.
+   * CDXC:Workarea 2026-09-19 DECISION:
+   * User: the Docs files list shows the same divider as the rest of the app, a single 1px line with no gap, and it is not resizable, so the line is the docked list's own edge border instead of a draggable rail.
+   * This supersedes the 6px resizer column and the hover line that came with it.
+   * SEE-ALSO: apps/desktop/src/app/render/resize_rail.rs (the GPUI rails this matches).
    */
-  .manage-sidebar-resizer::after {
-    background: light-dark(#93c5fd, #ffffff);
-    bottom: 0;
-    content: "";
-    opacity: 0;
-    position: absolute;
-    right: 2px;
-    top: 0;
-    width: 3px;
+  .manage-shell[data-sidebar-floating="false"] .manage-sidebar {
+    border-right: 1px solid light-dark(#e5e5e5, #212121);
   }
 
-  .manage-shell[data-sidebar-side="right"] .manage-sidebar-resizer::after {
-    left: 2px;
-    right: auto;
-  }
-
-  .manage-sidebar-resizer:hover::after,
-  .manage-sidebar-resizer:focus-visible::after,
-  .manage-sidebar-resizer[data-dragging="true"]::after {
-    opacity: 1;
-    transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1) 50ms;
-  }
-
-  .manage-sidebar-resizer[data-dragging="true"]::after {
-    transition: none;
-  }
-
-  .manage-shell[data-sidebar-floating="true"] .manage-sidebar-resizer {
-    display: none;
+  .manage-shell[data-sidebar-floating="false"][data-sidebar-side="right"] .manage-sidebar {
+    border-left: 1px solid light-dark(#e5e5e5, #212121);
+    border-right: 0;
   }
 
   .manage-preview {
-    grid-column: 3;
+    grid-column: 2;
     grid-row: 1;
   }
 
@@ -2596,11 +2551,11 @@ export const MANAGE_STYLES = `
 
   @media (max-width: 760px) {
     .manage-shell:not([data-sidebar-hidden="true"]):not([data-sidebar-floating="true"]) {
-      grid-template-columns: minmax(190px, 42%) 5px minmax(0, 1fr);
+      grid-template-columns: min(var(--manage-sidebar-width), 42%) minmax(0, 1fr);
     }
 
     .manage-shell:not([data-sidebar-hidden="true"]):not([data-sidebar-floating="true"])[data-sidebar-side="right"] {
-      grid-template-columns: minmax(0, 1fr) 5px minmax(190px, 42%);
+      grid-template-columns: minmax(0, 1fr) min(var(--manage-sidebar-width), 42%);
     }
 
     .manage-shell[data-sidebar-hidden="true"],

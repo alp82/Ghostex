@@ -180,10 +180,14 @@ pub struct GhostexGpuiApp {
     pub(crate) titlebar_actions_snapshot: Vec<GpuiTitlebarAction>,
     pub(crate) titlebar_actions_refresh_in_flight: bool,
     pub(crate) project_views: crate::app::project_views::ProjectViews,
+    pub(crate) parked_project_workarea_surfaces:
+        Vec<crate::app::project_keep_alive::ParkedProjectWorkareaSurface>,
+    pub(crate) project_keep_alive_expiry_scheduled: bool,
     pub(crate) extensions_snapshot: GpuiExtensionsSnapshot,
     pub(crate) extension_projects: HashMap<String, GpuiExtensionProjectMetadata>,
     pub(crate) extension_session_details: HashMap<String, serde_json::Value>,
     pub(crate) extensions_refresh_in_flight: bool,
+    pub(crate) extensions_refreshed_at: Option<std::time::Instant>,
     pub(crate) titlebar_accounts: Vec<serde_json::Value>,
     pub(crate) titlebar_accounts_refresh_in_flight: std::collections::HashSet<String>,
     pub(crate) titlebar_accounts_revision: u64,
@@ -438,9 +442,23 @@ pub struct GhostexGpuiApp {
     pub(crate) agents_chat_page_states: HashMap<TerminalSessionId, SessionChatPageState>,
     pub(crate) session_chat_diagnostics: super::session_chat_diagnostics::SessionChatDiagnostics,
     pub(crate) agents_chat_eviction_running: bool,
+    pub(crate) agents_chat_prewarm_scheduled: bool,
+    /// Sessions whose chat is in a visible pane, as of the last chat surface reconcile.
+    pub(crate) native_chat_visible_sessions: HashSet<TerminalSessionId>,
+    /// Each runtime's own broker subscribe request, replayed when a paused view is shown again.
+    pub(crate) session_chat_subscribe_requests: HashMap<u64, serde_json::Value>,
+    /// Runtime generations whose broker subscription is paused because their view is hidden.
+    pub(crate) session_chat_paused_generations: HashSet<u64>,
+    pub(crate) native_chat_pool_pass_scheduled: bool,
+    /// Tabs opened by project-header agent launches that are still waiting for their created session.
+    pub(crate) agent_launch_placeholders:
+        std::collections::VecDeque<super::sidebar_agent_launch_placeholder::AgentLaunchPlaceholder>,
     pub(crate) agents_chat_eviction_retry_scheduled: bool,
     pub(crate) agents_chat_reconcile_scheduled: bool,
     pub(crate) agents_chat_eviction_requested: bool,
+    pub(crate) session_chat_use_gpui: bool,
+    pub(crate) native_chat_views:
+        HashMap<TerminalSessionId, Entity<super::native_chat::state::NativeChatView>>,
     pub(crate) agents_chat_surfaces: HashMap<TerminalSessionId, Entity<CefSurface>>,
     pub(crate) session_chat_broker_endpoints: HashMap<String, (String, String)>,
     pub(crate) session_chat_broker_epoch: Option<String>,
@@ -665,6 +683,9 @@ pub struct GhostexGpuiApp {
     // (CDXC:CefRuntime 2026-07-11).
     pub(crate) cef_sidebar_creation_retried: bool,
     pub(crate) cef_context_initialization_waiting: bool,
+    pub(crate) cef_runtime_requested: bool,
+    pub(crate) app_modal_open_deferred_for_cef:
+        Option<crate::app::cef_deferred_startup::GpuiAppModalOpenDeferredForCef>,
     pub(crate) agents_terminal_zmx_refresh_recorded_bounds:
         HashMap<AgentsTerminalBodyMountSlotId, Bounds<Pixels>>,
     pub(crate) command_terminal_zmx_refresh_recorded_bounds:
@@ -965,6 +986,8 @@ pub struct GhostexGpuiApp {
     /// Last painted bounds of the titlebar Help button, so the `openGhostexHelp`
     /// hotkey can anchor the Help popup without a click.
     pub(crate) titlebar_help_button_bounds: Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    /// Captured mode-tab spans plus the sliding active-fill state; see `titlebar_mode_highlight.rs`.
+    pub(crate) titlebar_mode_highlight: SharedTitlebarModeHighlightState,
     pub(crate) titlebar_extension_popup_generation: u64,
     pub(crate) titlebar_extension_popup: Option<GpuiTitlebarExtensionPopupState>,
     pub(crate) titlebar_tips_panel_open: bool,
@@ -989,8 +1012,9 @@ pub struct GhostexGpuiApp {
     /// Built-in agent ids the sidebar launchers map to; `None` until the first HUD read completes.
     pub(crate) titlebar_tips_sidebar_agent_ids: Option<HashSet<String>>,
     pub(crate) agent_hook_status_request_in_flight: bool,
-    pub(crate) sidebar: Option<Entity<CefSurface>>,
+    pub(crate) sidebar: Option<Entity<crate::app::native_service::NativeService>>,
     pub(crate) native_sidebar: crate::app::native_sidebar::state::NativeSidebarState,
+    pub(crate) gx_store: crate::app::gx_store::GxStoreHost,
     pub(crate) browser_surfaces: HashMap<BrowserTabId, Entity<CefSurface>>,
     pub(crate) browser_address_inputs: HashMap<BrowserPaneId, Entity<InputState>>,
     pub(crate) browser_address_input_subscriptions: HashMap<BrowserPaneId, gpui::Subscription>,

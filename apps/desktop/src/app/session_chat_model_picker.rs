@@ -11,6 +11,9 @@ impl GhostexGpuiApp {
         if !self.agents_chat_mode_sessions.contains(&session_id) {
             return self.open_terminal_model_picker(session_id, cx);
         }
+        if self.native_chat_views.contains_key(&session_id) {
+            return self.open_session_chat_model_picker(session_id, cx);
+        }
         let Some(surface) = self.agents_chat_surfaces.get(&session_id).cloned() else {
             return false;
         };
@@ -57,6 +60,18 @@ impl GhostexGpuiApp {
         if self.terminal_model_picker_session() != Some(session_id) {
             return false;
         }
+        self.open_session_chat_model_picker(session_id, cx)
+    }
+
+    pub(crate) fn open_session_chat_model_picker(
+        &mut self,
+        session_id: TerminalSessionId,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        if let Some(chat) = self.native_chat_views.get(&session_id) {
+            chat.update(cx, |chat, cx| chat.toggle_model_picker(cx));
+            return true;
+        }
         let Some(bootstrap) = self.agents_session_chat_gxserver_bootstrap(session_id) else {
             return false;
         };
@@ -74,6 +89,7 @@ impl GhostexGpuiApp {
             "type": "open", "modal": modal.modal_id(),
             "projectId": project_id, "sessionId": session_id, "provider": provider,
             "hotkeys": settings.object().get("hotkeys"),
+            "modelPicksSessionOnly": gpui_session_chat_model_picks_session_only_from_settings(settings.object()),
             "connection": { "baseUrl": bootstrap.base_url, "authToken": bootstrap.auth_token,
                 "protocolVersion": bootstrap.protocol_version },
         });

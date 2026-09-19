@@ -41,7 +41,6 @@ import { reorderPresentationProjectSessions } from '@/packages/shared/gxserver-p
 import {
   createGxserverPresentationProjectGroupId,
   createGxserverPresentationProjectSessionId,
-  createGxserverPresentationSessionsByProjectFromGroups,
   parseGxserverPresentationProjectGroupId,
   parseGxserverPresentationProjectSessionId,
 } from '@/packages/shared/gxserver-presentation-sidebar-projection';
@@ -143,8 +142,7 @@ export interface GpuiSidebarRuntimeSessionFocusMethods {
     targetGroupId?: string,
     exactVisibleSessionIds?: readonly string[]
   ): void;
-  nextVisibleSessionIdsForLocalFocus(projectId: string, sessionId: string): Set<string>;
-  currentVisibleSessionIdsForLocalProject(projectId: string): string[];
+  nextVisibleSessionIdsForLocalFocus(previousFocusedSessionId: string | undefined, sessionId: string): Set<string>;
   isGpuiPresentationChatProjectId(projectId: string): boolean;
   setRemotePresentationSessionFocus(reference: { machineId: string; projectId: string; sessionId: string }): void;
   dropRemotePresentationSessionFocus(machineId: string): void;
@@ -1350,18 +1348,24 @@ export const gpuiSidebarRuntimeSessionFocusMethods = {
         ? GPUI_GXSERVER_CHATS_GROUP_ID
         : createGxserverPresentationProjectGroupId(normalizedProjectId));
     this.refreshSidebarHudFromClient();
+    const previousFocusedSessionId = this.focusedSessionId;
     this.focusedSessionId = normalizedSessionId;
     rememberGpuiProjectSession(this, normalizedProjectId, normalizedSessionId);
     this.visibleSessionIds = exactVisibleSessionIds
       ? new Set(exactVisibleSessionIds)
-      : this.nextVisibleSessionIdsForLocalFocus(normalizedProjectId, normalizedSessionId);
+      : this.nextVisibleSessionIdsForLocalFocus(previousFocusedSessionId, normalizedSessionId);
     this.postGxserverPresentationFocusState();
   },
 
-  nextVisibleSessionIdsForLocalFocus(this: GpuiSidebarRuntime, projectId: string, sessionId: string): Set<string> {
+  nextVisibleSessionIdsForLocalFocus(
+    this: GpuiSidebarRuntime,
+    previousFocusedSessionId: string | undefined,
+    sessionId: string
+  ): Set<string> {
     /*
-    CDXC:FocusRouting 2026-06-26-04:42:
-    GPUI local session focus should follow the macOS sidebar rule that a click selects the target within the current visible workspace projection instead of replacing all visible ownership with a singleton. Preserve live local visible ids and remote ids, materialize the current project's projected visible row, then add the clicked session so last-activity resorting cannot make a second session steal focus back.
+    CDXC:FocusRouting 2026-09-19 WHY:
+    A click selects the target within the current visible workspace projection instead of replacing all visible ownership with a singleton: other panes keep their sessions, and the clicked session is added so last-activity resorting cannot make a second session steal focus back. Rust's tab-selection report then delivers the exact rendered set.
+    The clicked session replaces the focused pane's session, so the previously focused session leaves the set here rather than after that report; keeping it drew the previous row with the visible fill for the whole round trip, which read as a hover highlight that took a moment to clear. This supersedes the 2026-06-26 rule that kept every prior visible id.
     */
     const liveLocalSessionIds = new Set<string>(
       (this.presentation?.sessions ?? []).map((session) => session.sessionId)
@@ -1369,26 +1373,12 @@ export const gpuiSidebarRuntimeSessionFocusMethods = {
     const nextVisibleSessionIds = new Set(
       [...this.visibleSessionIds].filter(
         (visibleSessionId) =>
-          parseGpuiRemotePresentationSessionId(visibleSessionId) || liveLocalSessionIds.has(visibleSessionId)
+          visibleSessionId !== previousFocusedSessionId &&
+          (parseGpuiRemotePresentationSessionId(visibleSessionId) || liveLocalSessionIds.has(visibleSessionId))
       )
     );
-    const projectVisibleSessionIds = this.currentVisibleSessionIdsForLocalProject(projectId);
-    for (const visibleSessionId of projectVisibleSessionIds) {
-      nextVisibleSessionIds.add(visibleSessionId);
-    }
     nextVisibleSessionIds.add(sessionId);
     return nextVisibleSessionIds;
-  },
-
-  currentVisibleSessionIdsForLocalProject(this: GpuiSidebarRuntime, projectId: string): string[] {
-    const presentation = this.presentation;
-    if (!presentation) {
-      return [];
-    }
-    const sessions = createGxserverPresentationSessionsByProjectFromGroups({ presentation }).get(projectId) ?? [];
-    return sessions.flatMap((session, index) =>
-      this.visibleSessionIds.has(session.sessionId) || index === 0 ? [session.sessionId] : []
-    );
   },
 
   isGpuiPresentationChatProjectId(this: GpuiSidebarRuntime, projectId: string): boolean {

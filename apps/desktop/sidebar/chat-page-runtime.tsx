@@ -1,3 +1,5 @@
+import { sessionChatDesktopHostActions } from '@/packages/shared/session-chat-presentation/actions';
+import type { SessionChatArmedAction } from '@/packages/shared/session-chat-presentation/armed-actions';
 import { releaseDraftWriter } from '@/packages/core-ui/chat/session-chat-draft-outbox';
 import { sessionChatDraftClientId } from '@/packages/core-ui/chat/session-chat-queue';
 import { createSessionChatDiagnosticRecorder } from '@/packages/core-ui/chat/session-chat-diagnostics';
@@ -45,6 +47,7 @@ import {
   type SessionChatTheme,
 } from '@/packages/shared/session-chat';
 import type { GxserverSetSessionChatDraftResult, SessionChatDraftHandoff } from '@/packages/shared/session-chat-queue';
+import { adoptModelPicksSessionOnly } from '@/packages/shared/session-chat-presentation/model-picker';
 import { createRoot } from 'react-dom/client';
 import { createAccountSwitchTransport } from './account-switch';
 
@@ -70,6 +73,7 @@ declare global {
     ghostexSetSessionChatTheme?: (theme: unknown) => void;
     ghostexSetSessionChatTranscriptWidthPercent?: (widthPercent: unknown) => void;
     ghostexSetSessionChatFileEditPreviews?: (enabled: unknown) => void;
+    ghostexSetSessionChatModelPicksSessionOnly?: (enabled: unknown) => void;
     ghostexSetSessionChatFileViews?: (code: boolean, docs: boolean) => void;
     ghostexSetSessionChatHotkeys?: (hotkeys: unknown) => void;
     ghostexSetSessionChatVerboseMode?: (verboseMode: unknown) => void;
@@ -100,6 +104,7 @@ export interface ChatBridgeNamespace {
   onSessionChatExtensionRequested?: (payload: GhostexChatBarPanelToggleMessage) => void;
   onSessionChatExtensionBridgeMessage?: (payload: unknown) => void;
   onSessionChatExtensionContextChanged?: (context: GhostexExtensionContext) => void;
+  onSessionChatArmedActionsChanged?: (actions: SessionChatArmedAction[]) => void;
 }
 
 export interface SessionChatPageActivation {
@@ -227,6 +232,7 @@ export function activateSessionChatPage(root: ReturnType<typeof createRoot>, act
     Number(searchParams.get('transcriptWidthPercent')) || DEFAULT_SESSION_CHAT_TRANSCRIPT_WIDTH_PERCENT
   );
   let chatFileEditPreviews = searchParams.get('fileEditPreviews') === 'true';
+  adoptModelPicksSessionOnly(searchParams.get('modelPicksSessionOnly') === 'true');
   let chatVerboseMode = searchParams.get('verboseMode') === 'true';
   let chatSimpleMode = searchParams.get('simpleMode') === 'true';
   let renderReadyChat: ((theme: SessionChatTheme) => void) | null = null;
@@ -289,6 +295,7 @@ made the chat's typeface impossible to change from CSS.
     chatTranscriptWidthPercent = clampSessionChatTranscriptWidthPercent(Number(value));
     applyDocumentChatTranscriptWidthPercent(chatTranscriptWidthPercent);
   };
+  window.ghostexSetSessionChatModelPicksSessionOnly = (value) => adoptModelPicksSessionOnly(value === true);
   window.ghostexSetSessionChatFileEditPreviews = (value) => {
     chatFileEditPreviews = value === true;
     renderReadyChat?.(chatTheme);
@@ -396,6 +403,7 @@ made the chat's typeface impossible to change from CSS.
           defer: params.defer,
           options: params.options,
           model: params.model,
+          scope: params.scope,
           projectId,
           sessionId,
         });
@@ -1041,73 +1049,7 @@ setting is off.
       moreActionsShortcut: shortcut('toggleAgentActions'),
       sessionNoteShortcut: shortcut('sessionNote'),
       switchViewShortcut: shortcut('toggleChatView'),
-      actions: [
-        {
-          id: 'rename',
-          label: 'Rename',
-          shortcut: shortcut('renameActiveSession'),
-        },
-        {
-          id: 'sleep',
-          label: 'Sleep',
-          shortcut: shortcut('sleepFocusedSession'),
-        },
-        /*
-      Sentence case, matching the desktop terminal's native agent action bar
-      (apps/desktop/src/app/render/terminal_agent_action_bar.rs). The two
-      surfaces show the same menu, so their rows may not read as two different
-      products; the labels the host supplies are the only copy the chat menu has.
-      */
-        {
-          id: 'delayedActions',
-          label: 'Delayed actions',
-          shortcut: shortcut('delayedSend'),
-        },
-        {
-          id: 'closeAfterDone',
-          label: 'Close After Done',
-          shortcut: shortcut('closeAfterDone'),
-        },
-        { id: 'splitSessionRight', label: 'Split Right', shortcut: shortcut('splitSessionRight') },
-        { id: 'fork', label: 'Fork Session', shortcut: shortcut('forkSession') },
-        {
-          id: 'fullReload',
-          label: 'Full Reload',
-          shortcut: shortcut('reloadSession'),
-        },
-        /*
-      CDXC:AgentProviders 2026-09-03:
-      Listed without rows: the shared chat view fills them from the daemon's
-      `switchableAgents` on the read state and hides the row when there are
-      none. The pick comes back as the value and rides to Rust with the id.
-      */
-        { id: 'switchAccount', label: 'Switch Account' },
-        {
-          id: 'promptEditor',
-          label: 'Prompt editor',
-          shortcut: shortcut('promptEditor'),
-        },
-        {
-          id: 'stashPrompt',
-          label: 'Stash prompt',
-          shortcut: shortcut('stashPrompt'),
-        },
-        {
-          id: 'stashedPrompts',
-          label: 'Saved prompts',
-          shortcut: shortcut('stashedPrompts'),
-        },
-        {
-          id: 'attachPath',
-          label: 'Attach a file or folder',
-          shortcut: shortcut('attachFileOrFolder'),
-        },
-        {
-          id: 'exportTranscript',
-          label: 'Handoff / Export',
-          shortcut: shortcut('exportTranscript'),
-        },
-      ],
+      actions: sessionChatDesktopHostActions(shortcut),
       onAction: (id, value) =>
         postSessionChatHostAction(id, id === 'switchAccount' && value ? { agentId: value } : undefined),
     };

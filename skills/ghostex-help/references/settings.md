@@ -36,10 +36,10 @@ How to use this file:
 #### Sidebar
 
 - **Preset** `sidebarSettingsPreset` (Settings UI row without a settings key; use `ghostex settings open`): Apply a sidebar UI preset or show Custom when controlled settings diverge.
-- **Project group style** `sidebarProjectGroupStyle` (one of quiet | header | branched; default branched): Choose how project groups are marked in the sidebar. Option labels: quiet = Quiet rail, header = Header rail, branched = Branched rail.
 - **Spaces** `sidebarSpacesEnabled` (boolean, default false): Show a row of Space filter buttons in each server's sidebar section.
 - **When switching to a Space** `sidebarSpaceSwitchBehavior` (one of restore | keep; default restore): Reopen the session you last had open in a Space when you switch to it, in the view its project was in. Requires Spaces. Option labels: restore = Restore the Space's projects, keep = Don't switch projects.
 - **Follow the active session's Space** `sidebarSpaceFollowActiveSession` (boolean, default false): Switch the selected Space to the one that owns a session you open from outside it, such as through Back/Forward or Search by Prompt. Requires Spaces.
+- **Keep the previous project live for** `projectSwitchKeepAliveMinutes` (number 0 to 60 default 10): After you switch to another project or Space, keep the terminals, chats, and view that were open in the previous project running for this many minutes so switching back is instant. 0 releases them right away.
 - **Sidebar visibility memory** `sidebarVisibilityMemory` (one of shared | perView; default shared) [advanced]: Keep one sidebar state everywhere, or remember it separately for Agents and for the wide views (Browser, Code, Docs, Kanban, Automate). Option labels: shared = Same in every view, perView = Remembered per view.
 - **Show project icons** `showProjectIcons` (boolean, default true) [advanced]: Show project artwork or a folder or worktree icon beside project names.
 - **Hide agent icon until hover** `hideSessionAgentIconUntilHover` (boolean, default false) [advanced]: Hide session agent icons until a session row is hovered.
@@ -74,6 +74,7 @@ How to use this file:
 
 #### Chat
 
+- **Use GPUI chat** `sessionChatUseGpui` (boolean, default true): Use native GPUI chat on desktop. Turn off to use React chat. Restart the desktop app to apply; mobile and web are unchanged.
 - **Default view for compatible agents** `preferredAgentInterface` (one of terminal | chat; default chat): Automatically switch to chat as soon as Ghostex detects that an agent session supports it. Option labels: terminal = Terminal, chat = Chat.
 - **Chat font family** `sessionChatFontFamily` (text, default (empty)): Use any installed font in chat messages and the prompt composer.
 - **Default chat zoom (%)** `sessionChatZoomPercent` (number 70 to 200 step 5 default 100): Scale the desktop chat interface, including messages and the prompt composer, from 70% to 200% in 5% steps. Default: 100%.
@@ -127,7 +128,7 @@ How to use this file:
 - **Show session id in terminal panes** `showSessionIdInTerminalPanes` (boolean, default false) [advanced]: Show the provider session id in the top-right corner of terminal panes.
 - **Show notification on terminal bell** `showNotificationOnTerminalBell` (boolean, default false): Treat terminal bell events as session attention.
 - **⌃G prompt editor** `promptEditorBackend` (one of monaco | inherit; default monaco) [advanced]: Choose which editor ⌃G uses when a terminal prompt asks for $EDITOR. Option labels: monaco = Ghostex editor, inherit = Use default from this machine.
-- **Windows Environment** `windowsTerminalBackend` (one of powershell | wsl; default powershell): Windows only. PowerShell (default) runs native Windows projects and agents. WSL runs Linux projects. Changing environments prompts you to restart Ghostex. Option labels: powershell = PowerShell (native Windows), wsl = WSL (Linux).
+- **Windows Environment** `windowsTerminalBackend` (one of powershell | wsl; default powershell): Windows only. PowerShell (default) runs native Windows projects and agents. WSL runs Linux projects. Changing environments prompts you to restart Ghostex. Option labels: powershell = PowerShell (Native), wsl = WSL (Linux).
 - **WSL distribution** `windowsWslDistribution` (text, default (empty)): Windows only. Exact distro name from `wsl.exe --list --verbose`; blank uses automatic WSL2 discovery.
 #### Terminal Behavior
 
@@ -196,6 +197,7 @@ How to use this file:
 - **settingsModalNavigation** `settingsModalNavigation` (structured value; change it in Settings, not with `ghostex settings set`): App-managed state saved with the settings; not a user preference.
 - **hotkeys** `hotkeys` (structured value; change it in Settings, not with `ghostex settings set`): App-managed state saved with the settings; not a user preference.
 - **customViewTemplates** `customViewTemplates` (structured value; change it in Settings, not with `ghostex settings set`): App-managed state saved with the settings; not a user preference.
+- **viewScopes** `viewScopes` (structured value; change it in Settings, not with `ghostex settings set`): App-managed state saved with the settings; not a user preference.
 - **customWorkspaceOpenTargets** `customWorkspaceOpenTargets` (structured value; change it in Settings, not with `ghostex settings set`): App-managed state saved with the settings; not a user preference.
 - **workspaceOpenTargetAvailability** `workspaceOpenTargetAvailability` (structured value; change it in Settings, not with `ghostex settings set`): App-managed state saved with the settings; not a user preference.
 - **workspaceOpenTargetHiddenIds** `workspaceOpenTargetHiddenIds` (structured value; change it in Settings, not with `ghostex settings set`): App-managed state saved with the settings; not a user preference.
@@ -252,6 +254,7 @@ How to use this file:
 - **Default Prompt Agent** `defaultPromptAgent` (Settings UI row without a settings key; use `ghostex settings open`): Choose the agent used by Git helper prompts, project board Start Work, and the default worktree first-prompt selection.
 - **Title Generation Agent** `titleGenerationAgent` (Settings UI row without a settings key; use `ghostex settings open`): Choose the headless agent Ghostex uses for first-prompt session title generation. Hover the info icon to see the exact command Ghostex sends.
 - **Custom Title Command** `customTitleCommand` (Settings UI row without a settings key; use `ghostex settings open`): Run this command with the title prompt on stdin. It should print only the title.
+- **Session-only model picks** `sessionChatModelPicksSessionOnly` (boolean, default false): Apply a model or effort picked in a chat to that session only, without changing the default for new sessions. Off saves every pick as the default. Claude only: other agents always save the default.
 - **Agent approvals** `acceptAll` (Settings UI row without a settings key; use `ghostex settings open`): Choose whether supported agents ask before editing files or running commands. Per-agent settings can override this default.
 - **Agent approvals: accept all** `agentAcceptAllEnabled` (boolean, default false): Start supported agents with approvals turned off (full access) by default. Off keeps each agent CLI default approval mode. Projects can override it.
 - **Default Prompt Agent** `defaultPromptAgentId` (text, default codex): Agent id used when Ghostex sends a prompt on your behalf (for example PR review). Use an id from the configured agents.
@@ -422,3 +425,6 @@ How to use this file:
 
 - **Expand collapsed projects on jump** `expandCollapsedProjectsOnJump` (boolean, default true): Expand a collapsed project when a project-jump hotkey lands on it.
 - **Compact list after project jumps** `showLessForExpandedProjectJumps` (boolean, default false): Switch the session list of a project expanded by a jump to Compact.
+### Navigation
+
+- **Skip sleeping sessions** `sidebarSessionCycleSkipsSleeping` (boolean, default false): Next Session and Previous Session jump over sleeping sessions in the sidebar.

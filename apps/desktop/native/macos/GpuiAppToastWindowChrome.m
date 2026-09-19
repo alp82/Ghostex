@@ -118,8 +118,8 @@ void GhostexGpuiAttachToastPopupToMainWindow(void *toastNativeView,
  detaches it first: a child window closed while still attached lingers in the
  parent's childWindows list and can be ordered back in with the parent.
  */
-void GhostexGpuiAttachAppModalWindowToMainWindow(void *modalNativeView,
-                                                 void *mainNativeView) {
+static void GhostexGpuiAttachChildWindow(void *modalNativeView,
+                                        void *mainNativeView, BOOL activate) {
   @autoreleasepool {
     if (modalNativeView == NULL || mainNativeView == NULL) {
       return;
@@ -150,7 +150,54 @@ void GhostexGpuiAttachAppModalWindowToMainWindow(void *modalNativeView,
                     observer = nil;
                   }
                 }];
-    [modalWindow makeKeyAndOrderFront:nil];
+    if (activate) [modalWindow makeKeyAndOrderFront:nil];
+  }
+}
+
+void GhostexGpuiAttachAppModalWindowToMainWindow(void *modalNativeView,
+                                               void *mainNativeView) {
+  GhostexGpuiAttachChildWindow(modalNativeView, mainNativeView, YES);
+}
+
+// CDXC:SessionChat 2026-09-17 WHY:
+// Autocomplete owns a child window but typing must remain in the composer's window.
+// It keeps the shadowless chrome set above: the macOS window shadow outlines the rounded card with
+// a dark hairline that React's picker does not have, which read as a black border in light mode.
+void GhostexGpuiAttachComposerSuggestionsWindow(void *nativeView,
+                                               void *mainNativeView) {
+  NSWindow *window = ((__bridge NSView *)nativeView).window;
+  GhostexGpuiRemoveToastPopupWindowChrome(nativeView);
+  if ([window isKindOfClass:[NSPanel class]]) {
+    ((NSPanel *)window).becomesKeyOnlyIfNeeded = YES;
+  }
+  GhostexGpuiAttachChildWindow(nativeView, mainNativeView, NO);
+}
+
+// CDXC:SessionChat 2026-09-19 WHY:
+// A pane-sized chat overlay (the image preview) has to follow its pane when a divider or the main
+// window is resized. GPUI can resize a window but not move it, and a pane resized from its left or
+// top edge moves as well, so the frame is set here. The rect is in the main window's content
+// coordinates, top-left origin, which is what GPUI reports for the pane.
+void GhostexGpuiSetChildWindowContentFrame(void *childNativeView,
+                                          void *mainNativeView, double x,
+                                          double y, double width,
+                                          double height) {
+  @autoreleasepool {
+    if (childNativeView == NULL || mainNativeView == NULL) {
+      return;
+    }
+    NSWindow *child = ((__bridge NSView *)childNativeView).window;
+    NSWindow *mainWindow = ((__bridge NSView *)mainNativeView).window;
+    if (child == nil || mainWindow == nil || child == mainWindow) {
+      return;
+    }
+    NSRect content = [mainWindow contentRectForFrameRect:mainWindow.frame];
+    NSRect frame = NSMakeRect(content.origin.x + x,
+                              content.origin.y + content.size.height - y - height,
+                              width, height);
+    if (!NSEqualRects(child.frame, frame)) {
+      [child setFrame:frame display:YES];
+    }
   }
 }
 

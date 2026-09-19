@@ -2141,8 +2141,8 @@ impl GhostexGpuiApp {
                 CDXC:Sidebar 2026-06-26-10:04:
                 `toggleSidebarCollapsed` is shell chrome, not a modal command. Route it before app-modal fallback so the command-palette row and Cmd+B hide or restore the GPUI sidebar and divider while preserving the expanded sidebar width.
 
-                CDXC:CommandPalette 2026-06-26-23:20:
-                Numbered session-slot rows are delegated to SidebarApp as nativeHotkey messages because rendered sidebar slot order is the only safe owner for `focusSessionSlot1..9`. Previous/next session remains GPUI tab-cycle routing, and jump-to-project ids must not enter this bounce path because SidebarApp forwards those back to native.
+                CDXC:CommandPalette 2026-09-19 WHY:
+                Numbered session-slot rows are delegated to SidebarApp as nativeHotkey messages because its rendered sidebar row order resolves `focusSessionSlot1..9`. Previous/Next Session walk the native sidebar's rows in Rust (gx_store/session_walk.rs), which supersedes their delegation of 2026-06-26-23:20. Previous/Next Tab in Pane stays on GPUI tab-cycle routing, and jump-to-project ids must not enter this bounce path because SidebarApp forwards those back to native.
 
                 CDXC:Hotkeys 2026-06-26-23:42:
                 Project jump rows also depend on SidebarApp's rendered project order, but they must use the dedicated `gpuiProjectSlotHotkey` host message instead of `nativeHotkey` so SidebarApp resolves the slot locally without forwarding the same `jumpToProject*` id back to GPUI.
@@ -2162,6 +2162,7 @@ impl GhostexGpuiApp {
                     session directly instead of requiring a focused terminal
                     view like the other toolbar actions.
                     */
+                    gpui_component::Root::hide_tooltip(window, cx);
                     self.toggle_agents_session_chat_mode_for_focused_session(cx);
                     return;
                 }
@@ -2363,6 +2364,10 @@ impl GhostexGpuiApp {
                     }
                     None => {}
                 }
+                if let Some(reverse) = gpui_sidebar_session_walk_hotkey_reverse(action_id) {
+                    self.walk_native_sidebar_sessions(reverse, cx);
+                    return;
+                }
                 if let Some(sidebar_action_id) =
                     gpui_command_palette_sidebar_slot_hotkey_action_id(action_id)
                 {
@@ -2493,9 +2498,9 @@ impl GhostexGpuiApp {
                     cx,
                 );
             }
-            "installFable56OrchestrationSkill" => {
+            "installAgentsOrchestrationSkill" => {
                 self.run_gpui_ghostex_cli_settings_action(
-                    GpuiGhostexCliSettingsAction::InstallFable56OrchestrationSkill,
+                    GpuiGhostexCliSettingsAction::InstallAgentsOrchestrationSkill,
                     cx,
                 );
             }

@@ -88,6 +88,7 @@ impl GhostexGpuiApp {
                 &input,
                 move |this: &mut Self, input, event: &InputEvent, cx| match event {
                     InputEvent::Focus => {
+                        this.drop_pending_browser_keyboard_handoff();
                         this.reclaim_gpui_root_for_chrome_input_focus();
                         this.browser_address_input_editing.insert(pane_id);
                     }
@@ -245,7 +246,7 @@ impl GhostexGpuiApp {
         if let Some(tab_id) = self.pending_browser_find_focus.take()
             && let Some(input) = self.browser_find_inputs.get(&tab_id).cloned()
         {
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             cef::focus_gpui_root_view(self.parent_ns_view);
             input.update(cx, |input, cx| input.focus(window, cx));
         }
@@ -436,7 +437,10 @@ impl GhostexGpuiApp {
         self.mark_project_editor_mode_awake(TitlebarMode::Browser, cx);
         self.set_shell_focus(ShellFocusTarget::BrowserPane(pane_id));
         self.browser_address_input_editing.insert(pane_id);
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        self.drop_pending_browser_keyboard_handoff();
+        // CDXC:FocusRouting 2026-09-18 WHY:
+        // Linux keeps X input focus on the Chromium child when GPUI's logical input focus changes; reclaim the root on every address click, including when the input is already logically focused.
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         cef::focus_gpui_root_view(self.parent_ns_view);
         input.update(cx, |input, cx| input.focus(window, cx));
         true
@@ -650,6 +654,16 @@ impl GhostexGpuiApp {
             true,
         )
         .shows_cef_child_view();
+        /*
+        CDXC:Browser 2026-09-19 WHY:
+        GPUI paints this colour under the CEF child view, and it is what the
+        pane shows in the frames between the child view being hidden (a project
+        or Space switch parks it) and the next GPUI frame. A fixed white here
+        was the white flash on every switch away from a Browser page in dark
+        mode. Keep it in sync on theme changes (`refresh_workarea_page_themes`).
+        CDXC:Browser 2026-09-19 DECISION:
+        User: the colour behind a Browser page is #0d0d0d in dark mode, not black.
+        */
         let surface = match CefSurface::try_new(
             surface_id,
             parent_ns_view,
@@ -657,7 +671,7 @@ impl GhostexGpuiApp {
             profile,
             pane_prepaint_background_color(),
             true,
-            rgb(0xFFFFFF).into(),
+            chrome_color(0x0d0d0d, 0xffffff).into(),
             None,
             initially_visible,
             Some(popup_open_handler),

@@ -1,3 +1,16 @@
+import { computeSessionChatFiles } from '@/packages/shared/session-chat-controller/files';
+import { queuedModelSelection } from '@/packages/shared/session-chat-controller/model-selection';
+import { sendSessionChatOptionAware } from '@/packages/shared/session-chat-controller/option-command';
+import { terminalNoticeChoiceAnswer } from '@/packages/shared/session-chat-presentation/terminal-prompts';
+import {
+  sessionChatTranscriptMenuItems,
+  sessionChatTranscriptQuote,
+} from '@/packages/shared/session-chat-presentation/transcript-menu';
+import { sessionChatAccountIndicator } from '@/packages/shared/session-chat-presentation/option-pills';
+import {
+  sessionChatSendBlockedReason,
+  sessionChatComposerPlaceholder,
+} from '@/packages/shared/session-chat-controller/composer-policy';
 import { useAppScrollbars } from '@/packages/components/ui/app-scrollbars';
 import { AccountSwitchCard } from '../accounts/account-switch-card';
 import { useAccountSwitchStatus } from '../accounts/use-account-switch-status';
@@ -35,6 +48,11 @@ import { ghostexHotkeyTextFromKeyboardEvent, type ghostexHotkeySettings } from '
 import { useSessionChatScrollToBottom } from './use-session-chat-scroll-to-bottom';
 import { AppTooltip, TooltipProvider } from '../app-tooltip';
 import { displayAgentName, NewSessionWelcome } from './session-chat-new-session-welcome';
+import {
+  SESSION_CHAT_LOADING_INDICATOR_DELAY_MS,
+  SESSION_CHAT_LOADING_RETRY_DELAY_MS,
+  sessionChatShowsNewSessionWelcome,
+} from '@/packages/shared/session-chat-presentation/new-session-welcome';
 import { SessionChatComposer, type SessionChatComposerHandle } from './session-chat-composer';
 import { sessionChatKeyboardPopupOpen } from './session-chat-caret-navigation';
 import { sessionChatEditingShortcut, sessionChatHasTranscriptSelection } from './session-chat-edit-shortcuts';
@@ -89,6 +107,7 @@ import { sessionChatOptionCommandNames } from './session-chat-session-options';
 import { readStoredSessionChatVerbose, writeStoredSessionChatVerbose } from './session-chat-verbose-override';
 import { sessionChatSlashCommandsForAgent, sessionChatSlashHeadingForAgent } from './session-chat-slash-commands';
 import type { SessionChatTransport } from './session-chat-transport';
+import type { SessionChatArmedAction } from '@/packages/shared/session-chat-presentation/armed-actions';
 import {
   hasAppliedSessionChatReturnedPrompt,
   markSessionChatReturnedPromptApplied,
@@ -134,8 +153,8 @@ return below), but a stalled read must not leave the pane blank forever. These
 stage that hold: a short hold nobody perceives, then a quiet indicator, then
 the manual recycle once waiting has clearly stopped being normal.
 */
-const LOADING_INDICATOR_DELAY_MS = 600;
-const LOADING_RETRY_DELAY_MS = 12_000;
+const LOADING_INDICATOR_DELAY_MS = SESSION_CHAT_LOADING_INDICATOR_DELAY_MS;
+const LOADING_RETRY_DELAY_MS = SESSION_CHAT_LOADING_RETRY_DELAY_MS;
 
 /*
 CDXC:Drafts 2026-08-28:
@@ -271,6 +290,8 @@ export interface SessionChatViewProps {
   hostSessionNoteBridge?: SessionChatHostSessionNoteBridge;
   /** Open delayed actions for this session in the host-owned modal. */
   onDelayedActions?: () => void;
+  /** This session's armed Delayed Send / Close After Done, shown on the working row. */
+  armedActions?: readonly SessionChatArmedAction[];
   /** Opens an assistant reply in the host's Docs review so it can be annotated (desktop only). */
   onAnnotateMessage?: (markdown: string) => void;
   /*
@@ -363,14 +384,6 @@ function readTranscriptSelection(container: HTMLElement | null): string {
     return '';
   }
   return selection.toString().trim();
-}
-
-function asMarkdownQuote(text: string): string {
-  return text
-    .replace(/\r\n?/g, '\n')
-    .split('\n')
-    .map((line) => (line === '' ? '>' : `> ${line}`))
-    .join('\n');
 }
 
 /*
@@ -488,6 +501,7 @@ export function SessionChatView({
   nativeSelectionMenus = false,
   onSwitchToTerminalForAgentPicker,
   onDelayedActions,
+  armedActions,
   onChatBarBridgeRequest,
   onChatBarPanelStateChange,
   onSelectForkBranch,
@@ -726,7 +740,11 @@ export function SessionChatView({
     !accountsTransport ||
     !chat.accountSwitch?.toAccountId ||
     accountState.data?.session?.accountId === chat.accountSwitch.toAccountId;
-  const accountSwitchReady = accountSwitchConfirmed && !chat.pendingModelSelection;
+  // A failed selection stays only to explain itself; it is not work the switch has to wait for.
+  const accountSwitchReady =
+    accountSwitchConfirmed &&
+    chat.pendingModelSelection?.state !== 'queued' &&
+    chat.pendingModelSelection?.state !== 'applying';
   const accountSwitch = useAccountSwitchStatus(chat.accountSwitch, sessionKey, accountSwitchReady);
   const accountSwitchRefreshKey = chat.accountSwitch ? `${chat.accountSwitch.id}:${chat.accountSwitch.phase}` : null;
   useEffect(() => {
@@ -765,36 +783,14 @@ export function SessionChatView({
   use and the answer is cached for the rest of the mount; `undefined` means
   "not listed yet" and keeps the picker in its loading state.
   */
-  const [files, setFiles] = useState<readonly string[] | undefined>(undefined);
-  const [filesLoading, setFilesLoading] = useState(false);
-  const filesRequestedRef = useRef(false);
-  useEffect(() => {
-    filesRequestedRef.current = false;
-    setFiles(undefined);
-    setFilesLoading(false);
-  }, [transport]);
-  const requestFiles = useCallback(() => {
-    if (filesRequestedRef.current) {
-      return;
-    }
-    filesRequestedRef.current = true;
-    const readFiles = transport.readFiles?.bind(transport);
-    if (!readFiles) {
-      setFiles([]);
-      return;
-    }
-    setFilesLoading(true);
-    void readFiles()
-      .then((result) => {
-        setFiles(result.files);
-      })
-      .catch(() => {
-        setFiles([]);
-      })
-      .finally(() => {
-        setFilesLoading(false);
-      });
-  }, [transport]);
+  const { files, filesLoading, requestFiles } = computeSessionChatFiles(transport, {
+    useState,
+    useEffect,
+    useRef,
+    useCallback,
+    useMemo,
+    useLayoutEffect,
+  });
   const sessionOptions = useSessionChatSessionOptions({
     agent: resolvedAgentLabel,
     /*
@@ -1218,11 +1214,7 @@ export function SessionChatView({
   const answerNoticeChoice = useCallback(
     async (choiceIndex: number): Promise<void> => {
       try {
-        await chatAnswerPrompt(
-          chat.terminalNotice?.dialog
-            ? { choiceIndex, kind: 'terminalDialog', dialogId: chat.terminalNotice.dialog.id }
-            : { choiceIndex, kind: 'terminalChoice' }
-        );
+        await chatAnswerPrompt(terminalNoticeChoiceAnswer(chat.terminalNotice, choiceIndex));
         if (chat.terminalNotice?.kind === 'permissionPrompt' && chat.prompt?.kind === 'approval') {
           setAnsweredApprovalKey(sessionChatCardDismissKey(chat.prompt));
         }
@@ -1307,19 +1299,14 @@ export function SessionChatView({
   reason as `sendBlockedReason`, keeps the draft editable, dims Send, and
   raises a red toast with this sentence when a send is attempted.
   */
-  const composerSendBlockedReason = !canSend
-    ? 'Input is held by another device.'
-    : accountSwitch.busy
-      ? 'Wait for the account switch to complete.'
-      : chat.terminalNotice?.conversationLock
-        ? 'This conversation is open elsewhere. Use Continue here or close it in the other app and retry.'
-        : terminalChoicePending
-          ? noticeCardVisible
-            ? 'Answer the question above first.'
-            : 'Your answer is still being applied. Try again in a moment.'
-          : sessionOptionSwitching
-            ? 'Claude is still switching mode. Try again in a moment.'
-            : null;
+  const composerSendBlockedReason = sessionChatSendBlockedReason({
+    canSend,
+    accountSwitchBusy: accountSwitch.busy,
+    conversationLocked: !!chat.terminalNotice?.conversationLock,
+    terminalChoicePending,
+    noticeCardVisible,
+    sessionOptionSwitching,
+  });
   /*
   CDXC:SessionChat 2026-09-02:
   The transcript's "Rewind to here" action. Three gates, all of which have to
@@ -1359,22 +1346,7 @@ export function SessionChatView({
     return select &&
       chat.pendingModelSelection !== undefined &&
       modelPickerProvider(readStateAgent ?? undefined) !== undefined
-      ? async (params: {
-          model: string;
-          effort: string;
-          options?: import('@/packages/shared/session-chat').SessionChatSelectionOptions;
-        }) => {
-          const result = await select({ ...params, defer: true });
-          if (!result.queued || !result.pendingModelSelection)
-            throw new Error('The server has not accepted this selection into its queue.');
-          if (
-            Object.entries(params.options ?? {}).some(
-              ([key, value]) => result.pendingModelSelection?.options?.[key as 'mode' | 'fastMode'] !== value
-            )
-          )
-            throw new Error('Waiting for the server to support queued mode changes.');
-          return result.pendingModelSelection;
-        }
+      ? queuedModelSelection(select)
       : undefined;
   }, [readStateAgent, transport, chat.pendingModelSelection !== undefined]);
   /*
@@ -1411,8 +1383,12 @@ export function SessionChatView({
   const isDraft = draftAgents !== null;
   const send = useCallback(
     async (text: string, draftVersion?: SessionChatDraftVersion): Promise<void> => {
-      reconcileTypedCommand(text);
-      await chatSend(text, undefined, draftVersion);
+      await sendSessionChatOptionAware(text, draftVersion, {
+        reconcileTypedCommand,
+        send: (text, version) => chatSend(text, undefined, version),
+        isDraft,
+        refresh: chatRefresh,
+      });
       /*
       CDXC:Drafts 2026-08-28:
       A delivered prompt PROMOTES a draft server-side (option commands like
@@ -1421,9 +1397,6 @@ export function SessionChatView({
       draft is followed by a read, which is what retires the "Agents" section
       once the conversation exists.
       */
-      if (isDraft) {
-        chatRefresh();
-      }
     },
     [chatRefresh, chatSend, isDraft, reconcileTypedCommand]
   );
@@ -1639,7 +1612,7 @@ export function SessionChatView({
   */
   const addTranscriptTextToChat = useCallback((text: string): boolean => {
     const composer = composerRef.current;
-    return text !== '' && composer !== null && composer.appendText(`${asMarkdownQuote(text)}\n`);
+    return text !== '' && composer !== null && composer.appendText(sessionChatTranscriptQuote(text));
   }, []);
 
   const addTranscriptSelectionToChat = useCallback((): void => {
@@ -1656,10 +1629,7 @@ export function SessionChatView({
   const emptyKind =
     chat.view.kind === 'ready' ? null : chat.view.kind === 'error' ? ('error' as const) : chat.view.kind;
   const bottomCardVisible = noticeCardVisible || interactiveCardVisible;
-  const showNewSessionWelcome =
-    // A new agent reports `starting` until its first transcript file exists.
-    // Keep the designed welcome visible throughout that pre-transcript window.
-    emptyKind === 'starting' || emptyKind === 'empty';
+  const showNewSessionWelcome = sessionChatShowsNewSessionWelcome(emptyKind);
 
   return (
     <SessionChatPresentationProvider
@@ -1827,22 +1797,26 @@ export function SessionChatView({
                                   {transcriptWebUrl !== null ? (
                                     <SessionChatReferenceMenuItems href={transcriptWebUrl} />
                                   ) : null}
-                                  {(transcriptFilePath === null && transcriptWebUrl === null) ||
-                                  transcriptSelection !== '' ? (
+                                  {sessionChatTranscriptMenuItems({
+                                    selection: transcriptSelection,
+                                    onReference: transcriptFilePath !== null || transcriptWebUrl !== null,
+                                    questionActive,
+                                  }).map((item) => (
                                     <ContextMenuItem
-                                      disabled={transcriptSelection === ''}
-                                      onClick={copyTranscriptSelection}
+                                      disabled={item.disabled}
+                                      key={item.id}
+                                      onClick={
+                                        item.id === 'copy' ? copyTranscriptSelection : addTranscriptSelectionToChat
+                                      }
                                     >
-                                      <IconCopy aria-hidden='true' />
-                                      Copy
+                                      {item.id === 'copy' ? (
+                                        <IconCopy aria-hidden='true' />
+                                      ) : (
+                                        <IconBlockquote aria-hidden='true' />
+                                      )}
+                                      {item.label}
                                     </ContextMenuItem>
-                                  ) : null}
-                                  {transcriptSelection !== '' ? (
-                                    <ContextMenuItem disabled={questionActive} onClick={addTranscriptSelectionToChat}>
-                                      <IconBlockquote aria-hidden='true' />
-                                      Add to Chat
-                                    </ContextMenuItem>
-                                  ) : null}
+                                  ))}
                                 </ContextMenuGroup>
                               </ContextMenuContent>
                             </ContextMenu>
@@ -1927,6 +1901,7 @@ export function SessionChatView({
                             key={`async-questions:${sessionKey}`}
                             sessionKey={sessionKey}
                             messages={chat.messages}
+                            retiredIds={chat.retiredAsyncQuestionIds}
                             canSend={
                               composerEnabled && !questionActive && chat.status !== 'error' && chat.status !== 'loading'
                             }
@@ -1984,6 +1959,7 @@ export function SessionChatView({
                               workingStatus={{
                                 working: !accountSwitch.busy && chat.sessionWorking,
                                 activity: accountSwitch.busy ? null : chat.terminalActivity,
+                                ...(armedActions ? { armedActions } : {}),
                               }}
                               paneFocused={paneFocused}
                               agentFleet={chat.agentFleet}
@@ -2039,9 +2015,7 @@ export function SessionChatView({
                                     canSend={canSend}
                                     canSendKey={chat.sendKey !== undefined}
                                     controller={sessionOptions}
-                                    accountIndicator={
-                                      activeAccount ? activeAccount.indicator || activeAccount.selector : undefined
-                                    }
+                                    accountIndicator={sessionChatAccountIndicator(accountState.data)}
                                     detectedOptions={detectedOptions}
                                     {...(draftAgents ? { draftAgents } : {})}
                                     {...(chat.sessionAgentId !== null ? { draftAgentId: chat.sessionAgentId } : {})}
@@ -2070,19 +2044,13 @@ export function SessionChatView({
                                   />
                                 </>
                               }
-                              placeholder={
-                                !canSend
-                                  ? 'Input is held by another device.'
-                                  : terminalChoicePending
-                                    ? chat.terminalNotice?.dialog?.rows.length === 0
-                                      ? 'Use the controls above to continue.'
-                                      : noticeCardVisible
-                                        ? 'Answer the question above to continue.'
-                                        : 'Applying your answer…'
-                                    : sessionOptionSwitching
-                                      ? 'Switching Claude mode…'
-                                      : undefined
-                              }
+                              placeholder={sessionChatComposerPlaceholder({
+                                canSend,
+                                terminalChoicePending,
+                                controlsOnly: chat.terminalNotice?.dialog?.rows.length === 0,
+                                noticeCardVisible,
+                                sessionOptionSwitching,
+                              })}
                               ref={composerRef}
                               slashCommands={slashCommands}
                               slashHeading={sessionChatSlashHeadingForAgent(resolvedAgentLabel)}
@@ -2093,7 +2061,6 @@ export function SessionChatView({
                               files={files}
                               filesLoading={filesLoading}
                               onRequestFiles={requestFiles}
-                              fileHeading='Project files'
                               skillHeading={`${draftAgentRow?.name ?? displayAgentName(resolvedAgentLabel) ?? 'Agent'} skills`}
                             />
                             <SessionChatStatusLine

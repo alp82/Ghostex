@@ -773,6 +773,8 @@ function snapshotEventFromRead(result: GxserverReadSessionChatResult): GxserverS
     ...(result.agentFleet !== undefined ? { agentFleet: result.agentFleet } : {}),
     // CDXC:SessionChat 2026-09-03: Claude's task list, same rule.
     ...(result.agentTasks !== undefined ? { agentTasks: result.agentTasks } : {}),
+    ...(result.asyncQuestionsSince !== undefined ? { asyncQuestionsSince: result.asyncQuestionsSince } : {}),
+    ...(result.retiredAsyncQuestionIds !== undefined ? { retiredAsyncQuestionIds: result.retiredAsyncQuestionIds } : {}),
     /*
     CDXC:SessionChat 2026-08-23: commands Ghostex typed into the
     agent. Same pass-through, and the phone needs it most — it is the client

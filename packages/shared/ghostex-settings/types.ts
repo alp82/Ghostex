@@ -10,6 +10,7 @@ import { type SidebarSessionTagListItem } from '../session-tags';
 import { type SessionCardHoverButtonItem } from '../session-card-hover-actions';
 import type { ProjectViewTemplate } from './project-views';
 import { type GhostexCustomView } from './custom-views';
+import { type GhostexViewScopes } from './view-scopes';
 import { type DiagnosticLoggingSettings } from './diagnostic-logging';
 import { type RemoteMachineSettings } from './remote-machines';
 import { type SettingsModalNavigationState } from './settings-modal-navigation';
@@ -33,7 +34,6 @@ export type ChatFileOpenView = 'docs' | 'code';
 export type DefaultEditorCommand =
   'code' | 'code-insiders' | 'zed' | 'zeditor' | 'cursor' | 'windsurf' | 'codium' | 'subl' | 'other';
 export type CommandsPanelSide = 'bottom' | 'right';
-export type SidebarProjectGroupStyle = 'quiet' | 'header' | 'branched';
 export type SidebarSpaceSwitchBehavior = 'restore' | 'keep';
 export type SidebarVisibilityMemory = 'shared' | 'perView';
 export const MIN_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS = 0;
@@ -130,6 +130,9 @@ export const MAX_COMMANDS_PANEL_DEFAULT_HEIGHT_PX = 600;
 export const DEFAULT_SIDEBAR_DEFAULT_WIDTH_PX = 275;
 export const MIN_SIDEBAR_DEFAULT_WIDTH_PX = 150;
 export const MAX_SIDEBAR_DEFAULT_WIDTH_PX = 520;
+export const DEFAULT_PROJECT_SWITCH_KEEP_ALIVE_MINUTES = 10;
+export const MIN_PROJECT_SWITCH_KEEP_ALIVE_MINUTES = 0;
+export const MAX_PROJECT_SWITCH_KEEP_ALIVE_MINUTES = 60;
 export const DEFAULT_PROJECT_SESSION_LIST_COLLAPSED_COUNT = 13;
 export const MIN_PROJECT_SESSION_LIST_COLLAPSED_COUNT = 1;
 export const MAX_PROJECT_SESSION_LIST_COLLAPSED_COUNT = 50;
@@ -149,6 +152,16 @@ export function clampSidebarDefaultWidthPx(value: number): number {
     return DEFAULT_SIDEBAR_DEFAULT_WIDTH_PX;
   }
   return Math.min(MAX_SIDEBAR_DEFAULT_WIDTH_PX, Math.max(MIN_SIDEBAR_DEFAULT_WIDTH_PX, Math.round(value)));
+}
+
+export function clampProjectSwitchKeepAliveMinutes(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_PROJECT_SWITCH_KEEP_ALIVE_MINUTES;
+  }
+  return Math.min(
+    MAX_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
+    Math.max(MIN_PROJECT_SWITCH_KEEP_ALIVE_MINUTES, Math.round(value))
+  );
 }
 
 export function clampProjectSessionListCollapsedCount(value: number): number {
@@ -279,8 +292,8 @@ export type ghostexSettings = {
    * showBetaFeatures key. Experimental surfaces stay hidden by default, while
    * Agents Hub remains outside this gate and visible in the sidebar.
    *
-   * CDXC:Automations 2026-07-01-03:24:
-   * Automations Overview and project Automate are experimental macOS surfaces.
+   * CDXC:Automations 2026-09-17:
+   * All Automations and project Automate are experimental macOS surfaces.
    * Keep their real page content behind this gate; disabled users should see
    * only the coming-soon overlay for those pages.
    */
@@ -359,6 +372,11 @@ export type ghostexSettings = {
   copySound: boolean;
   showNotificationOnTerminalBell: boolean;
   createSessionOnSidebarDoubleClick: boolean;
+  /**
+   * CDXC:Hotkeys 2026-09-19 DECISION:
+   * User: Previous/Next Session gets a Settings toggle to jump over sleeping sessions, but sleeping sessions are not skipped by default.
+   */
+  sidebarSessionCycleSkipsSleeping: boolean;
   /**
    * Enables the Park session action and the collapsible Parked section at the
    * bottom of each project's session list. Parking is durable session state;
@@ -520,8 +538,6 @@ export type ghostexSettings = {
    * User: a Compact project list shows 13 rows by default, configurable up to 50, before its "Show all" row. The key keeps its 2026-06-13 name (then the Show less count, default ten) so saved settings carry over.
    */
   projectSessionListCollapsedCount: number;
-  /** Visual treatment for user-created project groups in the shared sidebar. */
-  sidebarProjectGroupStyle: SidebarProjectGroupStyle;
   /**
    * CDXC:Spaces 2026-08-28:
    * Spaces (saved per-gxserver sidebar filters) are opt-in. gxserver keeps
@@ -538,6 +554,12 @@ export type ghostexSettings = {
    * Only meaningful while `sidebarSpacesEnabled` is on.
    */
   sidebarSpaceSwitchBehavior: SidebarSpaceSwitchBehavior;
+  /**
+   * CDXC:Workarea 2026-09-19 DECISION:
+   * User: switching Spaces (which switches projects) must keep the previous project live in the background instead of closing and relaunching it every swap, with a slider for how long.
+   * What was visible when the project was left (its terminals, chat pages, and the open view page) stays running for this many minutes; 0 releases it right away as before.
+   */
+  projectSwitchKeepAliveMinutes: number;
   /**
    * CDXC:Spaces 2026-09-11 DECISION:
    * User: add a toggle, off by default for now, that switches the selected Space to the one owning a session activated from outside it (Back/Forward, Search by Prompt, notifications, Previous Sessions).
@@ -565,6 +587,8 @@ export type ghostexSettings = {
   sidebarTheme: SidebarThemeSetting;
   /** Follow the app theme, or override chat with Light, Dark, or System. */
   sessionChatTheme: SessionChatThemeSetting;
+  /** Desktop renderer feature flag, applied when the app starts. */
+  sessionChatUseGpui: boolean;
   /** CSS font-family used by chat messages and the prompt composer. */
   sessionChatFontFamily: string;
   /** Default zoom percentage for the desktop chat interface. */
@@ -587,6 +611,8 @@ export type ghostexSettings = {
    * User: file edits default to a single collapsed row; Chat settings can opt into seven-line previews.
    */
   sessionChatFileEditPreviews: boolean;
+  /** See the CDXC:SessionChat 2026-09-19 decision in session-chat-presentation/model-picker.ts. */
+  sessionChatModelPicksSessionOnly: boolean;
   /**
    * CDXC:Theming 2026-06-15-11:24:
    * Custom chrome colors are scoped to the sidebar and native titlebar only.
@@ -716,6 +742,13 @@ export type ghostexSettings = {
   showAgentsPaneTabBarWhenUnsplit: boolean;
   customViews: GhostexCustomView[];
   customViewTemplates: ProjectViewTemplate[];
+  /**
+   * CDXC:Extensions 2026-09-18 DECISION:
+   * User: built-in views and extensions get the same "Available in" picker as custom views, so each one can be
+   * limited to selected projects or selected spaces. Keyed by `officialViewScopeKey` / `extensionViewScopeKey`;
+   * a view with no entry is available everywhere.
+   */
+  viewScopes: GhostexViewScopes;
   titlebarViewOrder: string[];
   customWorkspaceOpenTargets: CustomWorkspaceOpenTarget[];
   workspaceOpenTargetAvailability: WorkspaceOpenTargetAvailability;

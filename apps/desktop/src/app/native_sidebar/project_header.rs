@@ -10,8 +10,9 @@ use gpui::{
     AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement,
     StatefulInteractiveElement, Styled, div, img, px,
 };
-use gpui_component::h_flex;
+use gpui_component::{ElementExt as _, h_flex};
 use serde_json::{Value, json};
+use std::{cell::Cell, rc::Rc};
 
 impl GhostexGpuiApp {
     /// CDXC:Projects 2026-09-17 DECISION:
@@ -29,6 +30,7 @@ impl GhostexGpuiApp {
             .or_else(|| self.native_sidebar_drop_position("targetId", &id));
         let hover_id = id.clone();
         let drag_id = id.clone();
+        let chevron_id = id.clone();
         let menu = group.menu.clone();
         let scale = appearance.scale;
         let hovered = self.native_sidebar.hovered_group.as_ref() == Some(&id);
@@ -108,21 +110,35 @@ impl GhostexGpuiApp {
         if group.show_list_toggle {
             actions.insert(0, json!({ "label": if group.expanded { "Compact" } else { "Full" }, "icon": if group.expanded { "chevron-up" } else { "chevron-down" }, "command": { "type": "toggleList", "groupId": group.storage_id } }));
         }
+        // CDXC:Projects 2026-09-18 DECISION:
+        // User: the project header row has the same insets, side padding, rounding, and hover fill as a session card.
         h_flex()
             .id(format!("native-sidebar-project-{id}"))
             .relative()
             .h(px(30.0 * scale))
-            .w_full()
-            .px(px(8.0 * scale))
+            .mx(px(3.0 * scale))
+            .pl(px(5.0 * scale))
+            .pr(px(6.0 * scale))
             .gap(px(10.0 * scale))
+            .rounded(px(5.0 * scale))
             .cursor_default()
             .when(group.is_stale, |row| row.opacity(0.55))
-            .hover(|row| row.bg(appearance.hover))
+            .hover(|row| row.bg(appearance.session_hover))
+            // CDXC:Projects 2026-09-19 DECISION:
+            // User: clicking the chevron left of the project header expands/collapses the project, same as clicking the header.
             .child(
                 div()
+                    .id(format!("native-project-chevron-{id}"))
                     .absolute()
-                    .left(px(-15.0 * scale))
+                    .left(px(-18.0 * scale))
                     .top(px(7.0 * scale))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        cx.stop_propagation();
+                        app.dispatch_native_sidebar_ui(
+                            json!({"type": "toggleGroup", "groupId": chevron_id}),
+                            cx,
+                        );
+                    }))
                     .child(
                         gpui::svg()
                             .path(COMMAND_ICON_CHEVRON_RIGHT)
@@ -152,7 +168,6 @@ impl GhostexGpuiApp {
             )
             .when(group.collapsed && group.is_active, |row| {
                 row.bg(appearance.selected)
-                    .rounded(px(5.0 * scale))
                     .child(super::decorations::selected_outline(appearance))
             })
             .when_some(drop_position, |row, position| {
@@ -174,6 +189,10 @@ impl GhostexGpuiApp {
                             let label = item["label"].as_str().unwrap_or("").to_owned();
                             let command = item.get("command").cloned();
                             let children = item.get("children").cloned();
+                            let trigger = Rc::new(Cell::new(None::<gpui::Bounds<gpui::Pixels>>));
+                            // CDXC:AgentLauncher 2026-09-18 DECISION:
+                            // User: no gap between the last-used agent button and the Select agent chevron; the two halves join into one split button like the React header (24px action, 17px chevron, only the outer corners rounded).
+                            let split = item["split"].as_str();
                             let image = item["imageDataUrl"].as_str().and_then(|value| {
                                 super::images::agent_image(
                                     value,
@@ -193,14 +212,30 @@ impl GhostexGpuiApp {
                             };
                             div()
                                 .id(format!("native-project-action-{id}-{index}"))
-                                .size(px(22.0 * scale))
+                                .h(px(22.0 * scale))
+                                .w(px(match split {
+                                    Some("start") => 24.0,
+                                    Some("end") => 17.0,
+                                    _ => 22.0,
+                                } * scale))
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded(px(4.0 * scale))
+                                .map(|button| match split {
+                                    Some("start") => button.rounded_l(px(4.0 * scale)),
+                                    Some("end") => {
+                                        button.rounded_r(px(4.0 * scale)).ml(px(-2.0 * scale))
+                                    }
+                                    _ => button.rounded(px(4.0 * scale)),
+                                })
                                 .cursor_pointer()
                                 .hover(|button| button.bg(appearance.hover))
                                 .child(glyph)
+                                .when(children.is_some(), |button| {
+                                    let trigger = trigger.clone();
+                                    button
+                                        .on_prepaint(move |bounds, _, _| trigger.set(Some(bounds)))
+                                })
                                 .when(
                                     self.native_sidebar.pointer_inside
                                         && self.native_sidebar.menu.is_none()
@@ -217,12 +252,18 @@ impl GhostexGpuiApp {
                                     move |app, event: &gpui::ClickEvent, window, cx| {
                                         cx.stop_propagation();
                                         if let Some(children) = &children {
+                                            // React opens project header menus 6px below the button, right-aligned to it (`getControlMenuPosition`).
+                                            let anchor = trigger
+                                                .get()
+                                                .map(|bounds| {
+                                                    gpui::Point::new(
+                                                        bounds.right(),
+                                                        bounds.bottom() + px(6.0 * scale),
+                                                    )
+                                                })
+                                                .unwrap_or_else(|| event.position());
                                             Self::show_native_sidebar_menu(
-                                                children,
-                                                event.position(),
-                                                scale,
-                                                window,
-                                                cx,
+                                                children, anchor, scale, window, cx,
                                             );
                                         } else if let Some(command) = &command {
                                             app.dispatch_native_sidebar_ui(command.clone(), cx);

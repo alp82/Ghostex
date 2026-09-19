@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::model::{NativeSidebarSnapshot, NativeSidebarUpdate};
 use crate::GhostexGpuiApp;
+use crate::app::project_views::PROJECT_VIEW_SCOPE_OPTION_HUD_KEYS;
 
 #[derive(Default)]
 pub(crate) struct NativeSidebarState {
@@ -35,6 +36,8 @@ pub(crate) struct NativeSidebarState {
     pub(crate) hovered_section: Option<String>,
     pub(crate) hovered_group: Option<String>,
     pub(crate) hovered_session: Option<String>,
+    /// Armed Delayed Send / Close After Done labels by sidebar session id, for every session rather than only the rows the snapshot shows (session_chat_armed_actions.rs).
+    pub(crate) armed_actions: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl NativeSidebarState {
@@ -112,6 +115,31 @@ impl GhostexGpuiApp {
                 if let Some(menu) = self.native_sidebar.menu.as_mut() {
                     menu.refresh(&snapshot);
                 }
+                if let Some(handle) = self.app_modal_window {
+                    let previous = self.native_sidebar.snapshot.as_ref().map(|s| &s.hud);
+                    let changed = PROJECT_VIEW_SCOPE_OPTION_HUD_KEYS
+                        .iter()
+                        .filter_map(|key| {
+                            let value = snapshot.hud.get(*key)?;
+                            (previous.and_then(|hud| hud.get(*key)) != Some(value))
+                                .then(|| (*key, value.clone()))
+                        })
+                        .collect::<Vec<_>>();
+                    if !changed.is_empty() {
+                        let _ = handle.update(cx, |host, _, cx| {
+                            host.refresh_project_view_scope_options(&changed, cx);
+                        });
+                    }
+                }
+                // The old runtime draws no session row focused while a browser tab of the active group owns focus; rows read that per frame, so it is derived here, once per snapshot (gx_store/local_focus.rs).
+                let browser_focus = snapshot.groups.iter().any(|group| {
+                    group.is_active
+                        && group
+                            .sessions
+                            .iter()
+                            .any(|session| session.is_focused && session.is_browser())
+                });
+                self.gx_store_note_sidebar_snapshot_browser_focus(browser_focus);
                 self.native_sidebar.snapshot = Some(Arc::new(snapshot));
             }
             NativeSidebarUpdate::Flash {
@@ -143,11 +171,20 @@ impl GhostexGpuiApp {
                 if close {
                     self.dismiss_native_sidebar_menu(cx);
                 } else if let Some(panel) = menu.panels.get_mut(*index) {
-                    panel.items = items;
-                    panel.selected = None;
+                    panel.replace_items(items);
                 }
             }
             NativeSidebarUpdate::Clock { version: 1, rows } => {
+                for row in &rows {
+                    match &row.armed_actions {
+                        Some(actions) => self
+                            .native_sidebar
+                            .armed_actions
+                            .insert(row.session_id.clone(), actions.clone()),
+                        None => self.native_sidebar.armed_actions.remove(&row.session_id),
+                    };
+                }
+                self.sync_session_chat_armed_actions(cx);
                 let Some(snapshot) = self.native_sidebar.snapshot.as_mut() else {
                     return;
                 };

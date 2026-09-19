@@ -1,3 +1,7 @@
+import { nativeChatSettings, subscribeNativeChatSettings } from './native-chat-settings';
+import { readSessionChatContextDetailsPreferences, subscribeSessionChatContextDetailsPreferences } from '@/packages/shared/session-chat-presentation/context-details';
+import { currentAgentModelCatalog, subscribeAgentModelCatalog, refreshAgentModelCatalog } from '@/packages/shared/agent-model-catalog-state';
+import { nativeComposerRequest, type NativeComposerRequest } from './native-composer';
 import type { SessionChatTransport } from '@/packages/core-ui/chat/session-chat-transport';
 import {
   registerDraftWriter,
@@ -23,18 +27,20 @@ type Request = {
     | 'release'
     | 'endpoint'
     | 'adoptDrafts'
+    | 'composer'
     | 'machineEndpoint';
   requestId?: string;
   clientId?: string;
   machineId?: string;
   identity?: SessionChatRuntimeIdentity;
   endpoint?: SessionChatRuntimeEndpoint;
-  params?: { limit?: number; beforeOffset?: number; drafts?: PendingDraft[] };
+  params?: { catalog?: boolean; limit?: number; beforeOffset?: number; drafts?: PendingDraft[]; composer?: NativeComposerRequest };
 };
 
 /** The existing sidebar is the single app-wide owner of transcript caches, followers and draft retries. */
 export function installSessionChatRuntimeBroker(): void {
   const epoch = crypto.randomUUID();
+  void refreshAgentModelCatalog();
   const namespace = window.ghostexGpui as typeof window.ghostexGpui & {
     onSessionChatRuntimeRequest?: (request: Request) => void;
   };
@@ -90,6 +96,17 @@ export function installSessionChatRuntimeBroker(): void {
         total,
         data: serialized.slice(index * chunkSize, (index + 1) * chunkSize),
       });
+  };
+  /**
+   * CDXC:SessionChat 2026-09-19 WHY:
+   * Each frame relayed to a chat runtime used to be serialized twice here, parsed and re-serialized on the UI thread, and parsed again in the runtime, once per subscribed view.
+   * A frame that fits one message travels as its JSON text: the UI thread hands the text to the runtime thread untouched and only that thread parses it. Oversized frames keep the chunked path.
+   */
+  const postEvent = (generation: string, event: unknown): void => {
+    const message = { type: 'sessionChatRuntimeBroker', epoch, kind: 'event', generation, event };
+    const raw = JSON.stringify(message);
+    if (raw.length <= 96 * 1024) send({ kind: 'event', generation, raw });
+    else post({ kind: 'event', generation, event });
   };
   const setupMachine = (machineId: string, candidate: SessionChatRuntimeEndpoint, originClientId?: string) => {
     const endpoint = retainSessionChatRuntimeEndpoint(machineId, candidate);
@@ -150,6 +167,14 @@ export function installSessionChatRuntimeBroker(): void {
     registerDraftWriter(`${prefix}${identity.projectId}:${identity.sessionId}`, (draft) =>
       writeDraft(draft, identity.projectId, identity.sessionId)
     );
+    if (request.method === 'composer' && request.params?.composer) {
+      const sessionKey = `${prefix}${identity.projectId}:${identity.sessionId}`;
+      void nativeComposerRequest(sessionKey, request.params.composer).then(
+        (result) => post({ kind: 'response', generation: request.generation, requestId: request.requestId, result }),
+        (error: unknown) => post({ kind: 'response', generation: request.generation, requestId: request.requestId, error: error instanceof Error ? error.message : String(error) })
+      );
+      return;
+    }
     if (request.method === 'adoptDrafts') {
       const sessionKey = `${prefix}${identity.projectId}:${identity.sessionId}`;
       for (const draft of request.params?.drafts ?? [])
@@ -171,10 +196,22 @@ export function installSessionChatRuntimeBroker(): void {
     if (request.method === 'subscribe') {
       const unsubscribe = transport.subscribe({
         currentLimit: () => request.params?.limit ?? 120,
-        onEvent: (event) => post({ kind: 'event', generation: request.generation, event }),
+        onEvent: (event) => postEvent(request.generation, event),
       });
       subscriptions.get(request.generation)?.();
-      subscriptions.set(request.generation, unsubscribe);
+      const unsubscribeCatalog = request.params?.catalog ? subscribeAgentModelCatalog(() =>
+        post({ kind: 'catalog', generation: request.generation, catalog: currentAgentModelCatalog() })) : undefined;
+      const sessionKey = `${prefix}${identity.projectId}:${identity.sessionId}`;
+      const publishSettings = (settings: ReturnType<typeof nativeChatSettings>) => post({kind:'chatSettings',generation:request.generation,settings});
+      const unsubscribeSettings = request.params?.catalog ? subscribeNativeChatSettings(sessionKey,publishSettings) : undefined;
+      if (request.params?.catalog) publishSettings(nativeChatSettings(sessionKey));
+      const publishContext = () => post({ kind: 'contextPreferences', generation: request.generation, preferences: {
+        claude: readSessionChatContextDetailsPreferences('claude'), codex: readSessionChatContextDetailsPreferences('codex'),
+      } });
+      const unsubscribeContext = request.params?.catalog ? subscribeSessionChatContextDetailsPreferences(publishContext) : undefined;
+      subscriptions.set(request.generation, () => { unsubscribe(); unsubscribeCatalog?.(); unsubscribeContext?.(); unsubscribeSettings?.(); });
+      if (request.params?.catalog) publishContext();
+      if (request.params?.catalog) post({ kind: 'catalog', generation: request.generation, catalog: currentAgentModelCatalog() });
       return;
     }
     if (request.method === 'reconnect') {

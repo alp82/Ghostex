@@ -2832,7 +2832,9 @@ export function SidebarApp({
         ? resolveAdjacentRenderedSidebarSessionSlotId({
             direction: slotNumber === 0 ? 1 : -1,
             focusedSessionId,
-            slots: readRenderedSidebarSessionSlots(root),
+            skipSleeping: effectiveSettings.sidebarSessionCycleSkipsSleeping,
+            // Like Cmd+N below: every rendered row counts, not only sessions already shown in a pane.
+            slots: readRenderedSidebarSessionSlots(root, { skipPaneHiddenRows: false }),
           })
         : resolveVisibleSidebarSessionSlotId({
             focusedSessionId,
@@ -2917,6 +2919,7 @@ export function SidebarApp({
      * through the same action-id-only bridge so renderer state stays private.
      */
     if (
+      action.kind === 'cyclePaneTab' ||
       action.kind === 'focusAdjacentGroup' ||
       action.kind === 'focusDirection' ||
       action.kind === 'focusedPaneAction' ||
@@ -4022,7 +4025,6 @@ export function SidebarApp({
         <div
           className='sidebar-reference-layout'
           data-project-reorder-drag={String(isProjectReorderDragActive)}
-          data-project-group-style={effectiveSettings.sidebarProjectGroupStyle}
           data-reference-sidebar='true'
           data-sidebar-machine-tabs={String(remoteMachines.length > 0)}
           ref={setReferenceLayoutElement}

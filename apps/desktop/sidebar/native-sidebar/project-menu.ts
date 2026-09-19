@@ -44,7 +44,7 @@ export function createNativeProjectMenu(group: SidebarSessionGroup, ui: NativeSi
   }
   const menu: NativeSidebarMenuItem[] = [
     row('Copy Path', 'copy', { type: 'copyWorkspaceProjectPathForGroup', groupId }),
-    row('Open File/Folder Location', 'folder-open', { type: 'openWorkspaceProjectInFinderForGroup', groupId }),
+    row('Open Folder', 'folder-open', { type: 'openWorkspaceProjectInFinderForGroup', groupId }),
   ];
   if (project.worktree) {
     menu.push(
@@ -89,7 +89,7 @@ export function createNativeProjectMenu(group: SidebarSessionGroup, ui: NativeSi
     menu.push(row('Full Reload', 'refresh', { type: 'fullReloadProjectZmxSessions', groupId }));
   menu.push(
     { separator: true },
-    row('Close inactive', 'x', { type: 'closeInactiveProjectSessions', groupId }, !hasInactive, true),
+    row('Close Inactive', 'x', { type: 'closeInactiveProjectSessions', groupId }, !hasInactive, true),
     row(
       'Close Project',
       'x',

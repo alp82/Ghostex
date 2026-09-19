@@ -54,13 +54,17 @@ fn set_extension_view_runtime_state(id: ExtensionId, state: ExtensionViewRuntime
 }
 
 impl GhostexGpuiApp {
+    /// Marks the shell layout dirty; one task serializes it at most every 250 ms while it is (gx_store/layout_persist.rs).
     pub(crate) fn persist_shell_layout_state(&self) {
-        persist_gpui_workspace_shell_state(self);
+        self.gx_store.layout_persist.mark_dirty();
     }
 
-    /// Synchronous variant for the quit path; see `flush_gpui_workspace_shell_state`.
+    /// Synchronous variant for the quit path; see `flush_gpui_workspace_shell_state`. It serializes the current state itself, so it never depends on the dirty mark, and it writes the focus state file a local selection may not have reached yet.
     pub(crate) fn flush_shell_layout_state(&self) {
         flush_gpui_workspace_shell_state(self);
+        persist_gpui_gxserver_presentation_focus_state(
+            &self.sidebar_gxserver_presentation_focus_state,
+        );
     }
 
     pub(crate) fn project_scoped_workarea_availability(&self) -> ProjectScopedWorkareaAvailability {
@@ -875,9 +879,9 @@ impl GhostexGpuiApp {
             stale_surface
                 .surface
                 .update(cx, |surface, _| surface.set_visible(false));
-            self.park_custom_project_view(stale_surface);
+            self.park_project_workarea_runtime_cef_surface(stale_surface, slot_key, true, cx);
         }
-        if let Some(owned) = self.take_custom_project_view(&runtime_url) {
+        if let Some(owned) = self.take_parked_project_workarea_runtime_cef_surface(&runtime_url) {
             let surface = owned.surface.clone();
             self.project_workarea_runtime_cef_surfaces
                 .insert(slot_key, owned);
@@ -1036,6 +1040,8 @@ impl GhostexGpuiApp {
         } else {
             None
         };
+        let page_loaded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let page_load_end_handler = self.project_workarea_page_load_end_handler(&page_loaded, cx);
         let creation_result = match slot_key {
             ProjectWorkareaCefSurfaceSlotKey::Extension(id) => {
                 if gpui_custom_view(id).is_some() {
@@ -1059,7 +1065,7 @@ impl GhostexGpuiApp {
                         None,
                         None,
                         None,
-                        None,
+                        Some(page_load_end_handler.clone()),
                         cx,
                     )
                 } else {
@@ -1082,6 +1088,7 @@ impl GhostexGpuiApp {
                         true,
                         bridge_surface,
                         self.extension_view_bridge_event_handler(slot_key, cx),
+                        Some(page_load_end_handler.clone()),
                         cx,
                     )
                 }
@@ -1106,7 +1113,7 @@ impl GhostexGpuiApp {
                 manage_docs_resource_scope,
                 None,
                 None,
-                None,
+                Some(page_load_end_handler),
                 cx,
             ),
         };
@@ -1128,10 +1135,50 @@ impl GhostexGpuiApp {
             ProjectWorkareaRuntimeCefSurface {
                 runtime_url,
                 surface: surface.clone(),
+                page_loaded,
+                created_at: Instant::now(),
             },
         );
         self.update_project_workarea_runtime_cef_surface_visibility(cx);
+        // The skeleton hold ends on its own if the page never reports a load end.
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(PROJECT_WORKAREA_PAGE_SKELETON_MAX)
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.update_project_workarea_runtime_cef_surface_visibility(cx);
+                cx.notify();
+            });
+        })
+        .detach();
         Some(surface)
+    }
+
+    /// CDXC:Workarea 2026-09-19 WHY:
+    /// A freshly created page painted its prepaint colour, then whatever the page drew first, for as long as it took to load; the view's skeleton has to stay in front until the page is really there.
+    /// GPUI cannot paint over a native child view, so the child stays hidden until its first main-frame load end (or the skeleton hold runs out) and the visibility reconcile shows it then.
+    fn project_workarea_page_load_end_handler(
+        &self,
+        page_loaded: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+        cx: &mut gpui::Context<Self>,
+    ) -> cef::PageLoadEndHandler {
+        let page_loaded = page_loaded.clone();
+        let app = cx.entity().downgrade();
+        let async_cx = cx.to_async();
+        let foreground = cx.foreground_executor().clone();
+        std::rc::Rc::new(move || {
+            page_loaded.store(true, std::sync::atomic::Ordering::Relaxed);
+            let app = app.clone();
+            let mut async_cx = async_cx.clone();
+            foreground
+                .spawn(async move {
+                    let _ = app.update(&mut async_cx, |this, cx| {
+                        this.update_project_workarea_runtime_cef_surface_visibility(cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
+        })
     }
 
     pub(crate) fn ensure_project_workarea_runtime_cef_surfaces_for_current_context(
@@ -1276,13 +1323,19 @@ impl GhostexGpuiApp {
             if surface_is_current {
                 continue;
             }
+            let was_visible = self.project_workarea_runtime_cef_surface_may_be_visible(slot_key);
             if let Some(owned_surface) =
                 self.project_workarea_runtime_cef_surfaces.remove(&slot_key)
             {
                 owned_surface
                     .surface
                     .update(cx, |surface, _| surface.set_visible(false));
-                self.park_custom_project_view(owned_surface);
+                self.park_project_workarea_runtime_cef_surface(
+                    owned_surface,
+                    slot_key,
+                    was_visible,
+                    cx,
+                );
                 pruned = true;
             }
         }
@@ -1311,6 +1364,7 @@ impl GhostexGpuiApp {
                 self.project_workarea_runtime_cef_surface_may_be_visible(slot_key);
             if let Some(owned_surface) = self.project_workarea_runtime_cef_surfaces.get(&slot_key) {
                 let surface_visible = surface_may_be_visible
+                    && owned_surface.page_ready()
                     && current_runtime_url
                         .as_ref()
                         .is_some_and(|runtime_url| owned_surface.matches_runtime_url(runtime_url));
@@ -1351,7 +1405,9 @@ impl GhostexGpuiApp {
                 .project_scoped_workarea_availability()
                 .titlebar_mode_available(mode),
         };
-        available && !gpui_titlebar_mode_hidden_from_settings(mode)
+        available
+            && !gpui_titlebar_mode_hidden_from_settings(mode)
+            && self.titlebar_mode_view_scope_allows(mode)
     }
 
     pub(crate) fn available_titlebar_mode_or_agents(&self, mode: TitlebarMode) -> TitlebarMode {
@@ -1365,7 +1421,10 @@ impl GhostexGpuiApp {
     pub(crate) fn titlebar_mode_switcher_items(&self) -> Vec<TitlebarModeSwitcherItem> {
         let mut items = titlebar_mode_switcher_items(self.project_scoped_workarea_availability())
             .into_iter()
-            .filter(|item| !gpui_titlebar_mode_hidden_from_settings(item.mode))
+            .filter(|item| {
+                !gpui_titlebar_mode_hidden_from_settings(item.mode)
+                    && self.titlebar_mode_view_scope_allows(item.mode)
+            })
             .collect::<Vec<_>>();
         let installed_extension_available = self
             .project_scoped_workarea_availability()
@@ -1383,6 +1442,9 @@ impl GhostexGpuiApp {
             .filter_map(|extension| {
                 let id = ExtensionId::new(&extension.id)?;
                 if gpui_custom_view(id).is_some() {
+                    return None;
+                }
+                if !self.view_scope_allows(&extension_view_scope_key(&extension.id)) {
                     return None;
                 }
                 let title = gpui_extension_view_presentation(id)?.title;

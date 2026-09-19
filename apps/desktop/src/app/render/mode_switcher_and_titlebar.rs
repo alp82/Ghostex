@@ -2,6 +2,8 @@
 // lines, itself moved verbatim out of main.rs) into descriptively named
 // modules; pure move, no logic changes. Cluster: titlebar shell (project slot, sidebar collapse, mode switcher/dropdown, mode tab) and the cross-platform titlebar double-click zoom action.
 
+use gpui::Animation;
+use gpui::AnimationExt as _;
 use gpui::FontWeight;
 use gpui::InteractiveElement as _;
 use gpui::IntoElement;
@@ -59,6 +61,7 @@ fn titlebar_panel_toggle_button(
     id: &'static str,
     icon: &'static str,
     size_reduction: f32,
+    enabled: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let button = div()
         .id(id)
@@ -69,23 +72,27 @@ fn titlebar_panel_toggle_button(
         .items_center()
         .justify_center()
         .cursor_default()
-        .hover(|this| this.bg(titlebar_button_hover_color()));
+        .when(enabled, |this| {
+            this.hover(|this| this.bg(titlebar_button_hover_color()))
+        });
     #[cfg(target_os = "macos")]
-    let button = button
-        .w(px(TITLEBAR_LEADING_BUTTON_WIDTH - size_reduction))
-        .child(
-            div()
-                .flex()
-                .ml(px(TITLEBAR_SIDEBAR_COLLAPSE_ICON_LEFT_OFFSET))
-                .mt(px(TITLEBAR_SIDEBAR_COLLAPSE_ICON_TOP_OFFSET))
-                .items_center()
-                .justify_center()
-                .child(titlebar_svg_icon(
-                    icon,
-                    TITLEBAR_SIDEBAR_COLLAPSE_ICON_SIZE - size_reduction,
-                    titlebar_active_text_color(),
-                )),
-        );
+    let button = button.px(px(TITLEBAR_BUTTON_HORIZONTAL_PADDING)).child(
+        div()
+            .flex()
+            .ml(px(TITLEBAR_SIDEBAR_COLLAPSE_ICON_LEFT_OFFSET))
+            .mt(px(TITLEBAR_SIDEBAR_COLLAPSE_ICON_TOP_OFFSET))
+            .items_center()
+            .justify_center()
+            .child(titlebar_svg_icon(
+                icon,
+                TITLEBAR_SIDEBAR_COLLAPSE_ICON_SIZE - size_reduction,
+                if enabled {
+                    titlebar_active_text_color()
+                } else {
+                    titlebar_disabled_text_color()
+                },
+            )),
+    );
     #[cfg(not(target_os = "macos"))]
     let button = button
         .w(px(TITLEBAR_BUTTON_WIDTH - size_reduction))
@@ -94,7 +101,11 @@ fn titlebar_panel_toggle_button(
         .child(titlebar_svg_icon(
             icon,
             TITLEBAR_SIDEBAR_COLLAPSE_ICON_SIZE - size_reduction,
-            titlebar_icon_color(),
+            if enabled {
+                titlebar_icon_color()
+            } else {
+                titlebar_disabled_text_color()
+            },
         ));
     button
 }
@@ -259,12 +270,7 @@ impl GhostexGpuiApp {
             .items_center()
             .window_control_area(WindowControlArea::Drag)
             .child(self.render_sidebar_collapse_button(cx))
-            .when(self.active_mode.is_project_editor_mode(), |this| {
-                this.child(self.render_titlebar_companion_toggle(cx))
-            })
-            .when(self.update_available || self.update_downloading, |this| {
-                this.child(self.render_titlebar_update_button(cx))
-            })
+            .child(self.render_titlebar_companion_toggle(cx))
             /*
             CDXC:Navigation 2026-08-19:
             Back/Forward sit LEFT of the project name, next to the sidebar
@@ -281,6 +287,11 @@ impl GhostexGpuiApp {
             })
             .when(show_compact_mode_dropdown, |this| {
                 this.child(self.render_compact_mode_dropdown(cx))
+            })
+            // CDXC:Titlebar 2026-09-19 DECISION:
+            // User: the Update button sits on the left just before the project name, after the bell and the compact view dropdown, so showing or hiding it only moves the project name and never shifts Back/Forward.
+            .when(self.update_available || self.update_downloading, |this| {
+                this.child(self.render_titlebar_update_button(cx))
             })
             .child(
                 h_flex()
@@ -312,14 +323,22 @@ impl GhostexGpuiApp {
             )
     }
 
-    /// CDXC:Workarea 2026-09-15 DECISION:
-    /// User: put the companion toggle next to Hide sidebar, make the chat control 2px smaller in both dimensions after two 1px reductions, and use the unfilled Side tail with text chat bubble in both the visible and hidden states.
-    /// This supersedes the 2026-09-11 placement after the Notifications bell and compact view dropdown; the toggle still replaces the minimized companion bar.
+    /// CDXC:Workarea 2026-09-19 DECISION:
+    /// User: keep the companion toggle next to Hide sidebar in every view and show it greyed out in Agents, so Back/Forward never shift when moving between views or projects with and without a companion. Make the chat control 2px smaller in both dimensions after two 1px reductions, and use the unfilled Side tail with text chat bubble in both the visible and hidden states.
+    /// This supersedes the 2026-09-15 rule that rendered the toggle only in companion views; the toggle still replaces the minimized companion bar.
     pub(crate) fn render_titlebar_companion_toggle(
         &self,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        let visible = self.project_editor_shell.left_companion_visible;
+        let enabled = self.active_mode.is_project_editor_mode();
+        let visible = enabled && self.project_editor_shell.left_companion_visible;
+        let tooltip = if !enabled {
+            "Companion is not available in Agents".into()
+        } else if visible {
+            titlebar_tooltip_label("Hide companion", "toggleCompanionPane")
+        } else {
+            titlebar_tooltip_label("Show companion", "toggleCompanionPane")
+        };
         titlebar_panel_toggle_button(
             "ghostex-gpui-titlebar-companion-toggle",
             if visible {
@@ -328,29 +347,21 @@ impl GhostexGpuiApp {
                 TITLEBAR_ICON_COMPANION_SHOW
             },
             2.0,
+            enabled,
         )
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
-                this.toggle_project_editor_companion_from_hotkey(window, cx);
-            }),
-        )
-        .managed_tooltip_with_placement(
-            ManagedTooltipPlacement::Right,
-            move |window, cx| {
-                titlebar_tooltip(
-                    if visible {
-                        "Hide companion"
-                    } else {
-                        "Show companion"
-                    },
-                    window,
-                    cx,
-                )
-            },
-        )
+        .when(enabled, |this| {
+            this.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    this.toggle_project_editor_companion_from_hotkey(window, cx);
+                }),
+            )
+        })
+        .managed_tooltip_with_placement(ManagedTooltipPlacement::Right, move |window, cx| {
+            titlebar_tooltip(tooltip.clone(), window, cx)
+        })
     }
 
     pub(crate) fn render_sidebar_collapse_button(
@@ -359,7 +370,7 @@ impl GhostexGpuiApp {
     ) -> impl IntoElement {
         /*
         CDXC:Titlebar 2026-06-22-19:39:
-        The visible sidebar toggle should match the macOS React titlebar's current flat layout-sidebar icon. Keep its 29px GPUI hit target 7px away from the native traffic lights (widened from 3px on 2026-08-23; macOS only, Windows/Linux keep their own frame). This margin is the left edge of the whole project slot, so it also sets where Back/Forward and the project name start. Do not render the old blue circular chevron visual.
+        The visible sidebar toggle should match the macOS React titlebar's current flat layout-sidebar icon. Keep its GPUI hit target 7px away from the native traffic lights (widened from 3px on 2026-08-23; macOS only, Windows/Linux keep their own frame). This margin is the left edge of the whole project slot, so it also sets where Back/Forward and the project name start. Do not render the old blue circular chevron visual.
 
         CDXC:Sidebar 2026-06-26-10:04:
         The GPUI titlebar sidebar button toggles the same in-shell collapsed chrome state as Cmd+B and the shared command-palette action. Collapse hides the sidebar and divider siblings without writing sidebarWidth, so the user's expanded width is restored on the next toggle.
@@ -373,6 +384,7 @@ impl GhostexGpuiApp {
             "ghostex-gpui-sidebar-collapse",
             TITLEBAR_ICON_LAYOUT_SIDEBAR,
             0.0,
+            true,
         )
         .on_mouse_down(
             MouseButton::Left,
@@ -382,8 +394,9 @@ impl GhostexGpuiApp {
                 this.toggle_gpui_sidebar_collapsed(cx);
             }),
         )
-        .managed_tooltip_with_placement(ManagedTooltipPlacement::Right, |window, cx| {
-            titlebar_tooltip("Hide sidebar", window, cx)
+        .managed_tooltip_with_placement(ManagedTooltipPlacement::Right, {
+            let tooltip = titlebar_tooltip_label("Hide sidebar", "toggleSidebarCollapsed");
+            move |window, cx| titlebar_tooltip(tooltip.clone(), window, cx)
         });
         #[cfg(target_os = "macos")]
         let button = button.ml(px(-9.0));
@@ -392,13 +405,74 @@ impl GhostexGpuiApp {
 
     pub(crate) fn render_mode_switcher(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let items = self.titlebar_mode_switcher_items();
-        let mode_count = items.len();
+        let modes = items.iter().map(|item| item.mode).collect::<Vec<_>>();
+        let highlighted_mode = items
+            .iter()
+            .find(|item| item.is_available && item.mode == self.active_mode)
+            .map(|item| item.mode);
+        let highlight_state = self.titlebar_mode_highlight.clone();
+        let (slide_from, generation, target) = {
+            let mut state = highlight_state.borrow_mut();
+            let (from, generation) = state.begin_frame(highlighted_mode);
+            let target = highlighted_mode.and_then(|mode| state.span_for(mode));
+            (from, generation, target)
+        };
+        let highlight_layer = div()
+            .absolute()
+            .top(px(TITLEBAR_MODE_TAB_TOP_INSET
+                + (TITLEBAR_CONTROL_HEIGHT
+                    - TITLEBAR_MODE_TAB_TOP_INSET
+                    - TITLEBAR_MODE_TAB_HEIGHT)
+                    / 2.0))
+            .h(px(TITLEBAR_MODE_TAB_HEIGHT))
+            .rounded(px(TITLEBAR_MODE_TAB_RADIUS))
+            .bg(titlebar_active_segment_color());
+        let highlight_layer = match (target, slide_from) {
+            (Some(to), Some(from)) => {
+                let state = highlight_state.clone();
+                highlight_layer
+                    .with_animation(
+                        format!("ghostex-gpui-titlebar-mode-highlight-{generation}"),
+                        Animation::new(TITLEBAR_MODE_TAB_SLIDE_DURATION)
+                            .with_easing(gpui::ease_out_quint()),
+                        move |layer, delta| {
+                            let span = from.lerp(to, delta);
+                            state.borrow_mut().note_painted(span);
+                            layer.left(px(span.left)).w(px(span.width))
+                        },
+                    )
+                    .into_any_element()
+            }
+            (Some(to), None) => highlight_layer
+                .left(px(to.left))
+                .w(px(to.width))
+                .into_any_element(),
+            // Keep the child index stable for `record_spans` even before the
+            // first prepaint has produced a span to draw.
+            (None, _) => div().absolute().size_0().into_any_element(),
+        };
 
+        // `on_children_prepainted` lives on `Div`, so it must precede `.id()`.
         let mut switcher = h_flex()
+            .on_children_prepainted({
+                let state = highlight_state.clone();
+                move |children: Vec<gpui::Bounds<gpui::Pixels>>, window, _cx| {
+                    let mut state = state.borrow_mut();
+                    let had_spans = modes.first().is_some_and(|m| state.span_for(*m).is_some());
+                    state.record_spans(&modes, &children);
+                    let has_spans = modes.first().is_some_and(|m| state.span_for(*m).is_some());
+                    if !had_spans && has_spans {
+                        window.request_animation_frame();
+                    }
+                }
+            })
             .id("ghostex-gpui-titlebar-mode-switcher")
             .relative()
             .h(px(TITLEBAR_CONTROL_HEIGHT))
-            .items_center();
+            .pt(px(TITLEBAR_MODE_TAB_TOP_INSET))
+            .gap(px(TITLEBAR_MODE_TAB_GAP))
+            .items_center()
+            .child(highlight_layer);
         for (index, item) in items.into_iter().enumerate() {
             let presentation = match item.mode {
                 TitlebarMode::Extension(id) => gpui_extension_view_presentation(id),
@@ -412,7 +486,7 @@ impl GhostexGpuiApp {
                 item.mode,
                 label,
                 index,
-                index + 1 == mode_count,
+                target.is_some(),
                 item.is_available,
                 item.disabled_reason,
                 cx,
@@ -439,26 +513,26 @@ impl GhostexGpuiApp {
                 gpui_configured_hotkey_label(&format!("switchTitlebarView{}", index + 1))
             });
         /*
-        CDXC:Titlebar 2026-09-06 DECISION:
-        User: the compact view dropdown is a full-height square titlebar
-        segment that looks like a mode tab - no corner rounding, no boxed
-        outline, just the left/right hairlines the mode tabs use.
+        CDXC:Titlebar 2026-09-19 DECISION:
+        User: the compact view dropdown keeps looking like a mode tab, so it
+        follows the soft segment (rounded, no hairlines, mode-tab height).
+        This supersedes the 2026-09-06 square-with-hairlines wording, which
+        only mirrored the tab look of that time.
         */
         h_flex()
             .id("ghostex-gpui-titlebar-compact-mode-dropdown")
             .flex_shrink_0()
-            .h(px(TITLEBAR_CONTROL_HEIGHT))
+            .h(px(TITLEBAR_MODE_TAB_HEIGHT))
+            .mt(px(TITLEBAR_MODE_TAB_TOP_INSET))
             .min_w(px(108.0))
             .items_center()
             .justify_center()
             .gap(px(7.0))
-            .border_l_1()
-            .border_r_1()
-            .border_color(titlebar_button_border_color())
-            .px(px(9.0))
+            .rounded(px(TITLEBAR_MODE_TAB_RADIUS))
+            .px(px(TITLEBAR_MODE_TAB_HORIZONTAL_PADDING))
             .text_size(px(12.5))
             .font_weight(FontWeight::NORMAL)
-            .line_height(px(TITLEBAR_CONTROL_HEIGHT))
+            .line_height(px(TITLEBAR_MODE_TAB_HEIGHT))
             .text_color(titlebar_active_text_color())
             .cursor_default()
             .hover(|this| this.bg(titlebar_button_hover_color()))
@@ -497,12 +571,15 @@ impl GhostexGpuiApp {
         mode: TitlebarMode,
         label: String,
         position: usize,
-        is_last: bool,
+        highlight_layer_visible: bool,
         is_available: bool,
         _disabled_reason: Option<&'static str>,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let is_active = is_available && self.active_mode == mode;
+        // The sliding layer paints the active fill; the tab paints it itself
+        // only on the first frame, before any span has been captured.
+        let paints_own_active_fill = is_active && !highlight_layer_visible;
         // CDXC:Hotkeys 2026-09-09 DECISION:
         // User: hovering a titlebar view shows only its shortcut at its current position, including after reordering.
         let shortcut = gpui_configured_hotkey_label(&format!("switchTitlebarView{}", position + 1));
@@ -517,17 +594,14 @@ impl GhostexGpuiApp {
             ))
             .relative()
             .flex()
-            .h(px(TITLEBAR_CONTROL_HEIGHT))
-            .min_w(px(70.0))
+            .h(px(TITLEBAR_MODE_TAB_HEIGHT))
             .items_center()
             .justify_center()
-            .border_l_1()
-            .when(is_last, |this| this.border_r_1())
-            .border_color(titlebar_button_border_color())
-            .px(px(14.0))
+            .rounded(px(TITLEBAR_MODE_TAB_RADIUS))
+            .px(px(TITLEBAR_MODE_TAB_HORIZONTAL_PADDING))
             .text_size(px(13.55))
             .font_weight(FontWeight::NORMAL)
-            .line_height(px(TITLEBAR_CONTROL_HEIGHT))
+            .line_height(px(TITLEBAR_MODE_TAB_HEIGHT))
             .text_color(if !is_available {
                 titlebar_disabled_text_color()
             } else if is_active {
@@ -536,7 +610,9 @@ impl GhostexGpuiApp {
                 titlebar_inactive_text_color()
             })
             .cursor_default()
-            .when(is_active, |this| this.bg(titlebar_active_segment_color()))
+            .when(paints_own_active_fill, |this| {
+                this.bg(titlebar_active_segment_color())
+            })
             .when(!is_available, |this| {
                 this.bg(titlebar_disabled_segment_color())
             })
@@ -546,7 +622,7 @@ impl GhostexGpuiApp {
                 }
                 let this = this.text_color(titlebar_active_text_color());
                 if is_active {
-                    this.bg(titlebar_active_segment_color())
+                    this
                 } else {
                     this.bg(titlebar_button_hover_color())
                 }

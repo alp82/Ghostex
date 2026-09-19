@@ -43,6 +43,15 @@ pub(crate) fn titlebar_svg_icon(
     svg().size(px(icon_size)).path(path).text_color(color)
 }
 
+/// CDXC:Titlebar 2026-09-19 DECISION:
+/// User: a titlebar button tooltip names the button and then the hotkey assigned to it in Settings > Hotkeys, so rebinding the action there changes the tooltip too. Actions left unassigned show the label alone.
+pub(crate) fn titlebar_tooltip_label(label: &str, action_id: &str) -> gpui::SharedString {
+    match gpui_configured_hotkey_label(action_id) {
+        Some(shortcut) if !shortcut.is_empty() => format!("{label} ({shortcut})").into(),
+        _ => label.to_string().into(),
+    }
+}
+
 /// Tooltip sized to sit fully inside the titlebar strip rather than
 /// overflowing it, for the left/right placements that center on the trigger.
 pub(crate) fn titlebar_tooltip(
@@ -1547,7 +1556,12 @@ pub(crate) fn apply_gpui_component_theme(cx: &mut App) {
     theme.scrollbar_show = gpui_component::scroll::ScrollbarShow::Hover;
     // CDXC:DesignSystem 2026-09-16 SEE-ALSO:
     // Exact app scrollbar colors are shared with packages/components/ui/scrollbar-theme.css.
-    let thumb: Hsla = gpui::rgb(if titlebar_uses_light_theme() { 0xbcbcbd } else { 0x424346 }).into();
+    let thumb: Hsla = gpui::rgb(if titlebar_uses_light_theme() {
+        0xbcbcbd
+    } else {
+        0x424346
+    })
+    .into();
     theme.tokens.scrollbar_thumb = thumb.into();
     theme.tokens.scrollbar_thumb_hover = thumb.into();
 }

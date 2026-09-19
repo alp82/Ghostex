@@ -1,6 +1,7 @@
 use super::drag::SidebarDrag;
 use super::drag::SidebarDropTarget;
 use super::drag_source::SidebarDragSource;
+use super::session_list::{SESSION_HEIGHT, SESSION_INSET_X, SESSION_SPACING};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement,
@@ -62,7 +63,13 @@ impl GhostexGpuiApp {
         let drop_position = self.native_sidebar_drop_position("targetSessionId", &session_id);
         let scale = appearance.scale;
         let hovered = self.native_sidebar.hovered_session.as_deref() == Some(&session_id);
-        let hover_id = session_id.clone();
+        // CDXC:Sidebar 2026-09-19 WHY: sidebar clicks and tab selections must show in the same frame (user decision in gx_store/local_focus.rs). The focused and visible fills of a local session row read the Rust store, which a selection changes in the same frame; the snapshot's flags arrive a sidebar projection later. This supersedes the click-only `optimistic_focus` mark and its 1.5 second timeout of earlier the same day.
+        let (focused, visible) = self.gx_store_sidebar_row_focus(
+            &session_id,
+            session.is_browser(),
+            session.is_focused,
+            session.is_visible,
+        );
         let stale = group.is_stale && !session.is_browser();
         let sleeping = session.lifecycle_state.as_deref() == Some("sleeping");
         let icon = super::icons::session_icon(session, hud, appearance, hovered);
@@ -70,6 +77,7 @@ impl GhostexGpuiApp {
             == Some(true)
             && !session.is_browser();
         let context_id = session_id.clone();
+        let close_id = session_id.clone();
         let context_session = session.clone();
         let tooltip = session
             .details
@@ -98,37 +106,45 @@ impl GhostexGpuiApp {
             })
             .unwrap_or("")
             .to_owned();
-        div().on_children_prepainted(move |bounds, window, cx| { if completion.is_some_and(|start| start.elapsed().as_secs_f32() < 3.0) { window.request_animation_frame(); cx.notify(view.entity_id()); } if let Some(bounds) = bounds.first() { view.update(cx, |app, cx| app.reveal_native_session_bounds(&reveal_id, *bounds, scale, window, cx)); } }).w_full().pb(px(scale)).px(px(3.0 * scale))
+        div().on_children_prepainted(move |bounds, window, cx| { if completion.is_some_and(|start| start.elapsed().as_secs_f32() < 3.0) { window.request_animation_frame(); cx.notify(view.entity_id()); } if let Some(bounds) = bounds.first() { view.update(cx, |app, cx| app.reveal_native_session_bounds(&reveal_id, *bounds, scale, window, cx)); } }).w_full().pb(px(SESSION_SPACING * scale)).px(px(SESSION_INSET_X * scale))
             .child(h_flex()
                 .id(format!("native-sidebar-session-{session_id}"))
-                .relative().h(px(34.0 * scale)).w_full().min_w_0().pl(px(5.0 * scale)).pr(px(6.0 * scale)).gap(px(6.0 * scale)).rounded(px(5.0 * scale))
+                .relative().h(px(SESSION_HEIGHT * scale)).w_full().min_w_0().pl(px(5.0 * scale)).pr(px(6.0 * scale)).gap(px(6.0 * scale)).rounded(px(5.0 * scale))
                 .cursor_default()
                 .when(stale, |row| row.opacity(0.55))
                 .when(self.native_sidebar.is_dragging("session", &session_id), |row| row.opacity(0.2))
                 .when_some(completion, |row, start| row.opacity(super::status::completion_opacity(start)))
-                .when(session.is_visible && !session.is_focused, |row| row.bg(appearance.visible))
-                .when(session.is_focused, |row| row.bg(appearance.session_selected))
-                .when(session.is_visible || session.is_focused, |row| row.text_color(chrome_color(0xd8d8d8, 0x292929)))
+                .when(visible && !focused, |row| row.bg(appearance.visible))
+                .when(focused, |row| row.bg(appearance.session_selected))
+                .when(visible || focused, |row| row.text_color(chrome_color(0xd8d8d8, 0x292929)))
                 .when(selected, |row| row.border_1().border_color(rgb(0x2f8cff)))
                 .when(drop_position == Some("before"), |row| row.border_t_1().border_color(rgb(0x60a5fa)))
                 .when(drop_position == Some("after"), |row| row.border_b_1().border_color(rgb(0x60a5fa)))
-                .when(!session.is_focused, |row| row.hover(|row| row.bg(appearance.session_hover)))
-                .on_hover(cx.listener(move |app, hovered, _, cx| {
-                    if *hovered { app.native_sidebar.hovered_session = Some(hover_id.clone()); }
-                    else if app.native_sidebar.hovered_session.as_deref() == Some(&hover_id) { app.native_sidebar.hovered_session = None; }
-                    cx.notify();
-                }))
-                .when(session.is_focused, |row| row.child(super::decorations::session_outline(appearance)))
+                .when(!focused, |row| row.hover(|row| row.bg(appearance.session_hover)))
+                .when(focused, |row| row.child(super::decorations::session_outline(appearance)))
                 .child(self.render_native_session_identity(session, icon, appearance, cx))
                 .children(self.render_native_session_decorations(session, appearance, cx))
                 .when_some(self.native_sidebar.reveal_flash.as_ref().filter(|(id, _)| id == &session.session_id).map(|(_, start)| *start), |row, start| row.child(super::scroll::reveal_flash(start, scale)))
-                .child(div().id(format!("native-session-title-{session_id}")).flex_1().min_w_0().text_ellipsis().child(session.title().to_owned()).when(self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag(), |row| row.tooltip_show_delay(appearance.tooltip_delay).tooltip(move |window, cx| super::tooltips::sidebar_tooltip(tooltip.clone(), scale, window, cx))))
+                .child(div().id(format!("native-session-title-{session_id}")).flex_1().min_w_0().truncate().child(session.title().to_owned()).when(self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag(), |row| row.tooltip_show_delay(appearance.tooltip_delay).tooltip(move |window, cx| super::tooltips::sidebar_tooltip(tooltip.clone(), scale, window, cx))))
                 .when(!hovered && !question, |row| row.children(super::status::activity_indicator(&session.activity, scale)))
                 .when(!hovered && !question && (timer.is_some() || (show_time && session.activity != "working" && session.activity != "attention")), |row| row.child(div().text_size(px(13.55 * scale)).text_color(if sleeping { chrome_color(0x686868, 0x959595) } else { chrome_color(0xa6a6a6, 0x424242) }).child(time)))
                 .when(hovered, |row| row.child(self.render_native_session_hover_actions(group, session, appearance, cx)))
                 .when(question, |row| row.child(super::status::question_indicator(session.activity == "working", scale)))
                 .when(can_drag && self.native_sidebar.menu.is_none(), |row| row.sidebar_drag_source(dragged, cx))
 .sidebar_drop_target("session", drag_id, Some(drag_group_id), cx)
+                .on_mouse_down(MouseButton::Middle, |_, window, _| {
+                    window.prevent_default();
+                })
+                .on_aux_click(cx.listener(move |app, event: &gpui::ClickEvent, window, cx| {
+                    if !event.is_middle_click() { return; }
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    app.close_native_sidebar_menu(window, cx);
+                    app.dispatch_native_sidebar_command(
+                        json!({"type": "closeSession", "sessionId": close_id}),
+                        cx,
+                    );
+                }))
                 .on_click(cx.listener(move |app, event: &gpui::ClickEvent, _, cx| {
                     cx.stop_propagation();
                     if event.click_count() == 2 && double_click_rename {
@@ -139,6 +155,9 @@ impl GhostexGpuiApp {
                     let modifiers = event.modifiers();
                     let mode = if modifiers.shift { "range" } else if modifiers.platform || modifiers.control { "additive" } else { "focus" };
                     app.dispatch_native_sidebar_ui(json!({"type": "selectSession", "sessionId": session_id, "mode": mode}), cx);
+                    if mode == "focus" {
+                        let _ = app.react_to_native_sidebar_session_click(&session_id, cx);
+                    }
                 }))
                 .on_mouse_down(MouseButton::Right, cx.listener(move |app, event: &gpui::MouseDownEvent, window, cx| {
                     cx.stop_propagation();

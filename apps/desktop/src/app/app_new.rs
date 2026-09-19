@@ -70,6 +70,9 @@ impl GhostexGpuiApp {
                 ));
         shell_layout_state
             .project_editor_shell
+            .sleep_all_modes_for_launch(shell_layout_state.active_mode);
+        shell_layout_state
+            .project_editor_shell
             .left_companion_visible = restored_panes.companion_visible;
         shell_layout_state.command_pane.mode = restored_panes.command_mode;
         shell_layout_state.command_pane.last_expanded_mode =
@@ -177,10 +180,13 @@ impl GhostexGpuiApp {
                 titlebar_actions_snapshot: Vec::new(),
                 titlebar_actions_refresh_in_flight: false,
                 project_views: crate::app::project_views::ProjectViews::default(),
+                parked_project_workarea_surfaces: Vec::new(),
+                project_keep_alive_expiry_scheduled: false,
                 extensions_snapshot: GpuiExtensionsSnapshot::default(),
                 extension_projects: HashMap::new(),
                 extension_session_details: HashMap::new(),
                 extensions_refresh_in_flight: false,
+                extensions_refreshed_at: None,
                 titlebar_accounts: Vec::new(),
                 titlebar_accounts_refresh_in_flight: Default::default(),
                 titlebar_accounts_revision: 0,
@@ -259,9 +265,21 @@ impl GhostexGpuiApp {
                 agents_chat_page_states: HashMap::new(),
                 session_chat_diagnostics: Default::default(),
                 agents_chat_eviction_running: false,
+                agents_chat_prewarm_scheduled: false,
+                native_chat_visible_sessions: HashSet::new(),
+                session_chat_subscribe_requests: HashMap::new(),
+                session_chat_paused_generations: HashSet::new(),
+                native_chat_pool_pass_scheduled: false,
+                agent_launch_placeholders: Default::default(),
                 agents_chat_eviction_retry_scheduled: false,
                 agents_chat_reconcile_scheduled: false,
                 agents_chat_eviction_requested: false,
+                session_chat_use_gpui: shared_settings_snapshot
+                    .object()
+                    .get("sessionChatUseGpui")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true),
+                native_chat_views: HashMap::new(),
                 agents_chat_surfaces: HashMap::new(),
                 session_chat_broker_endpoints: HashMap::new(),
                 session_chat_broker_epoch: None,
@@ -337,6 +355,8 @@ impl GhostexGpuiApp {
                 zmx_persistence_last_focused_terminal_slot: None,
                 cef_sidebar_creation_retried: false,
                 cef_context_initialization_waiting: false,
+                cef_runtime_requested: false,
+                app_modal_open_deferred_for_cef: None,
                 agents_terminal_zmx_refresh_recorded_bounds: HashMap::new(),
                 command_terminal_zmx_refresh_recorded_bounds: HashMap::new(),
                 project_editor_companion_zmx_refresh_recorded_bounds: HashMap::new(),
@@ -504,6 +524,7 @@ impl GhostexGpuiApp {
                 context_menu: None,
                 titlebar_popup_window: None,
                 titlebar_help_button_bounds: Rc::new(std::cell::Cell::new(None)),
+                titlebar_mode_highlight: Rc::new(std::cell::RefCell::new(Default::default())),
                 titlebar_extension_popup_generation: 0,
                 titlebar_extension_popup: None,
                 titlebar_tips_panel_open: false,
@@ -519,6 +540,7 @@ impl GhostexGpuiApp {
                 agent_hook_status_request_in_flight: false,
                 sidebar: None,
                 native_sidebar: Default::default(),
+                gx_store: Default::default(),
                 browser_surfaces: HashMap::new(),
                 browser_address_inputs: HashMap::new(),
                 browser_address_input_subscriptions: HashMap::new(),
@@ -620,6 +642,7 @@ impl GhostexGpuiApp {
             this.start_agents_chat_surface_eviction_polling(cx);
             this.start_prompt_editor_daemon_polling(cx);
             this.start_gpui_remote_gxserver_watchdog(cx);
+            this.sync_gx_store_transport(cx);
             this.refresh_titlebar_actions_in_background(cx);
             this.refresh_extensions_in_background(cx);
             this.start_titlebar_account_polling(cx);

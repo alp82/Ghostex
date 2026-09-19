@@ -41,11 +41,7 @@ impl SidebarAppearance {
                 rgb(0xffffff).opacity(0.12).into()
             },
             session_outline: chrome_ink().opacity(if light { 0.22 } else { 0.08 }).into(),
-            tooltip_delay: std::time::Duration::from_millis(
-                hud["settings"]["sidebarTooltipDelayMs"]
-                    .as_u64()
-                    .unwrap_or(500),
-            ),
+            tooltip_delay: tooltip_delay_from_hud(hud),
             foreground: chrome_color(0xb4b8c0, 0x262626).into(),
             muted: chrome_color(0x7c828c, 0x6b7280).into(),
             selected: rgb(0xffffff).opacity(if light { 1.0 } else { 0.12 }).into(),
@@ -60,6 +56,25 @@ impl SidebarAppearance {
                     .blend(rgb(0).opacity(0.40).into())
             },
             scale,
+        }
+    }
+}
+
+fn tooltip_delay_from_hud(hud: &Value) -> std::time::Duration {
+    std::time::Duration::from_millis(
+        hud["settings"]["sidebarTooltipDelayMs"]
+            .as_u64()
+            .unwrap_or(500),
+    )
+}
+
+impl crate::GhostexGpuiApp {
+    /// The user's Tooltip Delay setting, for native chrome outside the sidebar
+    /// that must wait as long as the sidebar's own tooltips do.
+    pub(crate) fn configured_tooltip_delay(&self) -> std::time::Duration {
+        match self.native_sidebar.snapshot.as_ref() {
+            Some(snapshot) => tooltip_delay_from_hud(&snapshot.hud),
+            None => tooltip_delay_from_hud(&Value::Null),
         }
     }
 }
@@ -80,9 +95,17 @@ fn sidebar_content_scale(window: &Window) -> f32 {
             width: (bounds.size.width.as_f32() * scale).round() as i32,
             height: (bounds.size.height.as_f32() * scale).round() as i32,
         };
-        let display = ::cef::display_get_matching_bounds(Some(&bounds), 1)
-            .expect("native sidebar requires an initialized CEF display");
-        display.device_scale_factor() / scale
+        // A missing display (CEF not initialised yet, or a window off every known screen) falls back to
+        // GPUI's own scale: a panic here would take the whole render pass down with it.
+        let Some(display) = ::cef::display_get_matching_bounds(Some(&bounds), 1) else {
+            return 1.0;
+        };
+        let content_scale = display.device_scale_factor() / scale;
+        if content_scale.is_finite() && content_scale > 0.0 {
+            content_scale
+        } else {
+            1.0
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {

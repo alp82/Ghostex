@@ -2429,11 +2429,10 @@ impl GhostexGpuiApp {
 
     pub(crate) fn record_project_editor_companion_split_layout_metrics(
         &mut self,
+        axis: WorkspaceSplitAxis,
         child_bounds: &[Bounds<Pixels>],
     ) {
-        let Some(content_span) =
-            split_resize_content_span(child_bounds, WorkspaceSplitAxis::Vertical)
-        else {
+        let Some(content_span) = split_resize_content_span(child_bounds, axis) else {
             return;
         };
 
@@ -2451,7 +2450,7 @@ impl GhostexGpuiApp {
     ) {
         /*
         CDXC:Workarea 2026-06-22-06:45:
-        Agents workspace split handles are real five-pixel layout siblings with one-pixel visual separators. Dragging a horizontal handle updates the left/right split ratio and dragging a vertical handle updates the top/bottom ratio while persisting shell layout state.
+        Agents workspace split handles are real two-pixel layout siblings painted in the neutral pane border colour. Dragging a horizontal handle updates the left/right split ratio and dragging a vertical handle updates the top/bottom ratio while persisting shell layout state.
         */
         window.prevent_default();
         cx.stop_propagation();
@@ -2728,7 +2727,7 @@ impl GhostexGpuiApp {
     ) {
         /*
         CDXC:Browser 2026-06-22-09:05:
-        Browser split handles use the same normal-layout resize contract as Agents workspace and command-pane splits. The visible five-pixel divider is the only grab target; dragging updates the targeted Browser split ratio from that branch's rendered first/handle/second child metrics, double-click resets to 0.5, and finished mutations persist through sanitized GPUI shell state while Browser leaf bodies keep existing tab-owned CEF surfaces keyed by BrowserTabId.
+        Browser split handles use the same normal-layout resize contract as Agents workspace and command-pane splits. The visible two-pixel divider is the only grab target; dragging updates the targeted Browser split ratio from that branch's rendered first/handle/second child metrics, double-click resets to 0.5, and finished mutations persist through sanitized GPUI shell state while Browser leaf bodies keep existing tab-owned CEF surfaces keyed by BrowserTabId.
         */
         window.prevent_default();
         cx.stop_propagation();
@@ -2825,7 +2824,7 @@ impl GhostexGpuiApp {
     ) {
         /*
         CDXC:CodeEditor 2026-06-22-06:53:
-        Source, Browser, Kanban, and Manage companion panes use the visible five-pixel divider as the real resize control. Dragging adjusts the stored companion width ratio, double-click resets toward the 0.32 default within practical width clamps, and shell-state persistence happens after reset or finished drag without hidden overlays or root hit-test routing.
+        Source, Browser, Kanban, and Manage companion panes use the visible two-pixel divider as the real resize control. Dragging adjusts the stored companion width ratio, double-click resets toward the 0.32 default within practical width clamps, and shell-state persistence happens after reset or finished drag without hidden overlays or root hit-test routing.
         */
         window.prevent_default();
         cx.stop_propagation();
@@ -2838,14 +2837,17 @@ impl GhostexGpuiApp {
 
         self.set_project_editor_companion_divider_hovering(mode, true, cx);
 
+        let columns_active = self.project_editor_companion_columns_split_active();
         if event.click_count >= 2 {
             let content_span = self
                 .project_editor_companion_layout_metrics
                 .map(|metrics| metrics.content_span);
             if self
                 .project_editor_shell
-                .reset_left_companion_width_ratio(content_span)
+                .reset_left_companion_width_ratio(content_span, columns_active)
             {
+                self.project_editor_shell
+                    .left_companion_width_ratio_before_columns = None;
                 self.persist_shell_layout_state();
                 cx.notify();
             }
@@ -2884,10 +2886,12 @@ impl GhostexGpuiApp {
 
         let next_ratio =
             drag.start_ratio + (event.position.x.as_f32() - drag.start_x) / drag.content_span;
-        if self
-            .project_editor_shell
-            .set_left_companion_width_ratio(next_ratio, drag.content_span)
-        {
+        let columns_active = self.project_editor_companion_columns_split_active();
+        if self.project_editor_shell.set_left_companion_width_ratio(
+            next_ratio,
+            drag.content_span,
+            columns_active,
+        ) {
             cx.notify();
         }
     }
@@ -2910,15 +2914,21 @@ impl GhostexGpuiApp {
         cx: &mut gpui::Context<Self>,
     ) {
         if self.project_editor_companion_drag.take().is_some() {
+            self.project_editor_shell
+                .left_companion_width_ratio_before_columns = None;
             self.clear_project_editor_companion_divider_hover_state();
             self.persist_shell_layout_state();
             cx.notify();
         }
     }
 
+    /// `axis` is the arrangement the divider was rendered for, not the stored one:
+    /// a persisted state whose axis and slot occupancy disagree could otherwise
+    /// drive a horizontal ratio from a vertical handle's pointer axis.
     pub(crate) fn handle_project_editor_companion_split_divider_mouse_down(
         &mut self,
         mode: TitlebarMode,
+        axis: WorkspaceSplitAxis,
         event: &MouseDownEvent,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
@@ -2941,10 +2951,15 @@ impl GhostexGpuiApp {
             let content_span = self
                 .project_editor_companion_split_layout_metrics
                 .map(|metrics| metrics.content_span);
-            if self
-                .project_editor_shell
-                .reset_left_companion_split_ratio(content_span)
-            {
+            let reset = match axis {
+                WorkspaceSplitAxis::Horizontal => self
+                    .project_editor_shell
+                    .reset_left_companion_columns_ratio(content_span),
+                WorkspaceSplitAxis::Vertical => self
+                    .project_editor_shell
+                    .reset_left_companion_split_ratio(content_span),
+            };
+            if reset {
                 self.persist_shell_layout_state();
                 cx.notify();
             }
@@ -2956,8 +2971,16 @@ impl GhostexGpuiApp {
         };
         self.project_editor_companion_split_drag =
             Some(ProjectEditorCompanionSplitResizeDragState {
-                start_y: event.position.y.as_f32(),
-                start_ratio: self.project_editor_shell.left_companion_split_ratio,
+                axis,
+                start_position: split_resize_event_position(axis, event.position),
+                start_ratio: match axis {
+                    WorkspaceSplitAxis::Horizontal => {
+                        self.project_editor_shell.left_companion_columns_ratio
+                    }
+                    WorkspaceSplitAxis::Vertical => {
+                        self.project_editor_shell.left_companion_split_ratio
+                    }
+                },
                 content_span: metrics.content_span.max(1.0),
             });
         cx.notify();
@@ -2979,12 +3002,18 @@ impl GhostexGpuiApp {
 
         window.prevent_default();
         cx.stop_propagation();
-        let next_ratio =
-            drag.start_ratio + (event.position.y.as_f32() - drag.start_y) / drag.content_span;
-        if self
-            .project_editor_shell
-            .set_left_companion_split_ratio(next_ratio, drag.content_span)
-        {
+        let next_ratio = drag.start_ratio
+            + (split_resize_event_position(drag.axis, event.position) - drag.start_position)
+                / drag.content_span;
+        let changed = match drag.axis {
+            WorkspaceSplitAxis::Horizontal => self
+                .project_editor_shell
+                .set_left_companion_columns_ratio(next_ratio, drag.content_span),
+            WorkspaceSplitAxis::Vertical => self
+                .project_editor_shell
+                .set_left_companion_split_ratio(next_ratio, drag.content_span),
+        };
+        if changed {
             cx.notify();
         }
     }

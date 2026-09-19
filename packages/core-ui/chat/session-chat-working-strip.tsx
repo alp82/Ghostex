@@ -14,45 +14,85 @@ in use-session-chat/hook.ts), not the transcript's settled or held working, so t
 strip and the sidebar always agree.
 */
 
+import { IconClock } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import type { SessionChatTerminalActivity } from '../../shared/session-chat';
 import { SessionChatActivityRow } from './session-chat-activity-row';
-import { pickSessionChatWorkingWord } from './session-chat-working-words';
+import { computeSessionChatWorkingStrip } from '@/packages/shared/session-chat-controller/working-strip';
+import type { SessionChatArmedAction } from '@/packages/shared/session-chat-presentation/armed-actions';
+import visual from '@/packages/shared/session-chat-presentation/working-strip.json';
+import type { CSSProperties } from 'react';
 
 export interface SessionChatWorkingStripProps {
   working: boolean;
   activity: SessionChatTerminalActivity | null;
+  /** Armed Delayed Send / Close After Done, drawn at the right of the working row (armed-actions.ts). */
+  armedActions?: readonly SessionChatArmedAction[];
 }
 
-export function SessionChatWorkingStrip({ working, activity }: SessionChatWorkingStripProps) {
-  // One whimsical word per working stint: re-picked on each false→true edge,
-  // stable for the whole stint so the label doesn't churn mid-turn.
-  const [word, setWord] = useState(pickSessionChatWorkingWord);
-  useEffect(() => {
-    if (working) {
-      setWord(pickSessionChatWorkingWord());
-    }
-  }, [working]);
+const ARMED_ICON_COLORS: Record<SessionChatArmedAction['id'], string> = {
+  delayedSend: visual.delayedSendColor,
+  closeAfterDone: visual.closeAfterDoneColor,
+};
 
-  // An activity keeps the strip visible even when the session isn't "working"
-  // in the sidebar sense, and it replaces the whimsical word entirely.
-  if (activity) {
-    return <SessionChatActivityRow activity={activity} className='my-0' />;
-  }
-  if (!working) {
-    return null;
-  }
+export function SessionChatWorkingStrip({ working, activity, armedActions = [] }: SessionChatWorkingStripProps) {
+  const status = computeSessionChatWorkingStrip(working, activity, { useEffect, useState });
+  const activityRow = status.activity ? <SessionChatActivityRow activity={status.activity} className='my-0' /> : null;
+  const label = status.activity ? null : status.label;
+  if (!label && !armedActions.length) return activityRow;
 
-  return (
-    <div aria-live='polite' className='ghostex-chat-working-strip' role='status'>
+  const row = (
+    <div
+      aria-live='polite'
+      className='ghostex-chat-working-strip'
+      role='status'
+      style={
+        {
+          '--working-min-height': `${visual.minHeight / 16}rem`,
+          '--working-padding-x': `${visual.paddingX / 16}rem`,
+          '--working-gap': `${visual.gap / 16}rem`,
+          '--working-spark-box': `${visual.sparkBox / 16}rem`,
+          '--working-spark-size': `${visual.sparkSize / 16}rem`,
+          '--working-font-size': `${visual.fontSize / 16}rem`,
+          '--working-pulse': `${visual.pulseMs}ms`,
+          '--working-spin': `${visual.spinMs}ms`,
+          '--working-armed-icon-gap': `${visual.armedIconGap / 16}rem`,
+          '--working-armed-column-gap': `${visual.armedColumnGap / 16}rem`,
+          '--working-armed-row-gap': `${visual.armedRowGap / 16}rem`,
+        } as CSSProperties
+      }
+    >
       <div className='ghostex-chat-working-strip-row'>
-        <span aria-hidden='true' className='ghostex-chat-working-strip-spark'>
-          <svg viewBox='0 0 24 24'>
-            <path d='M12 0.8c.5 4.6 1.8 7.4 3.6 9.1 1.6 1.6 4.2 2.5 7.6 2.1-3.4-.4-6 .5-7.6 2.1-1.8 1.7-3.1 4.5-3.6 9.1-.5-4.6-1.8-7.4-3.6-9.1C6.8 12.5 4.2 11.6.8 12c3.4.4 6-.5 7.6-2.1C10.2 8.2 11.5 5.4 12 .8z' />
-          </svg>
-        </span>
-        <span className='ghostex-chat-working-strip-text'>{word}…</span>
+        {/* The lead's auto right margin pins the armed items right on the first line; wrapped items start at the left. */}
+        <div className='ghostex-chat-working-strip-lead'>
+          {label ? (
+            <>
+              <span aria-hidden='true' className='ghostex-chat-working-strip-spark'>
+                <svg viewBox='0 0 24 24'>
+                  <path d={visual.sparkPath} />
+                </svg>
+              </span>
+              <span className='ghostex-chat-working-strip-text'>{label}</span>
+            </>
+          ) : null}
+        </div>
+        {armedActions.map((action) => (
+          <span className='ghostex-chat-working-strip-armed' data-armed-action={action.id} key={action.id}>
+            <span aria-hidden='true' className='ghostex-chat-working-strip-armed-icon'>
+              <IconClock color={ARMED_ICON_COLORS[action.id]} />
+            </span>
+            <span className='ghostex-chat-working-strip-armed-text'>{action.label}</span>
+          </span>
+        ))}
       </div>
     </div>
+  );
+  return activityRow ? (
+    <>
+      {activityRow}
+      {row}
+    </>
+  ) : (
+    row
   );
 }

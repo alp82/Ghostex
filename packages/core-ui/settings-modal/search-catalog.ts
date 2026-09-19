@@ -19,7 +19,6 @@ import {
   PREFERRED_AGENT_INTERFACE_OPTIONS,
   PROMPT_EDITOR_BACKEND_OPTIONS,
   SESSION_CHAT_THEME_OPTIONS,
-  SIDEBAR_PROJECT_GROUP_STYLE_OPTIONS,
   SIDEBAR_SETTINGS_PRESETS,
   SIDEBAR_THEME_SETTING_OPTIONS,
   SIDEBAR_SPACES_ENABLED_OPTIONS,
@@ -326,12 +325,6 @@ export function getSettingsSearchSectionDefinitions() {
           title: 'Preset',
         },
         {
-          key: 'sidebarProjectGroupStyle',
-          options: SIDEBAR_PROJECT_GROUP_STYLE_OPTIONS,
-          subtitle: 'Choose how project groups are marked in the sidebar.',
-          title: 'Project group style',
-        },
-        {
           key: 'sidebarSpacesEnabled',
           options: SIDEBAR_SPACES_ENABLED_OPTIONS,
           subtitle: "Show a row of Space filter buttons in each server's sidebar section.",
@@ -349,6 +342,12 @@ export function getSettingsSearchSectionDefinitions() {
           subtitle:
             'Switch the selected Space to the one that owns a session you open from outside it, such as through Back/Forward or Search by Prompt. Requires Spaces.',
           title: "Follow the active session's Space",
+        },
+        {
+          key: 'projectSwitchKeepAliveMinutes',
+          subtitle:
+            'After you switch to another project or Space, keep the terminals, chats, and view that were open in the previous project running for this many minutes so switching back is instant. 0 releases them right away.',
+          title: 'Keep the previous project live for',
         },
         {
           key: 'sidebarVisibilityMemory',
@@ -550,6 +549,11 @@ export function getSettingsSearchSectionDefinitions() {
       title: 'Chat',
       settings: [
         {
+          key: 'sessionChatUseGpui',
+          subtitle: 'Use native GPUI chat on desktop. Turn off to use React chat. Restart the desktop app to apply; mobile and web are unchanged.',
+          title: 'Use GPUI chat',
+        },
+        {
           key: 'preferredAgentInterface',
           options: PREFERRED_AGENT_INTERFACE_OPTIONS,
           subtitle: 'Automatically switch to chat as soon as Ghostex detects that an agent session supports it.',
@@ -659,7 +663,7 @@ export function getSettingsSearchSectionDefinitions() {
                 subtitle:
                   'PowerShell (default) runs native Windows projects and agents. WSL runs Linux projects. Changing environments prompts you to restart Ghostex.',
                 options: [
-                  { label: 'PowerShell (native Windows)', value: 'powershell' },
+                  { label: 'PowerShell (Native)', value: 'powershell' },
                   { label: 'WSL (Linux)', value: 'wsl' },
                 ],
               },

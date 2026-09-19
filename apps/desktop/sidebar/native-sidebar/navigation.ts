@@ -6,7 +6,8 @@ import {
 } from '@/packages/core-ui/sidebar-app/collapse-state';
 import { formatSidebarHotkeyLabel } from '@/packages/core-ui/hotkey-label';
 import { sidebarStore } from '@/packages/core-ui/sidebar-store-model';
-import { KEEP_AWAKE_DURATION_OPTIONS, normalizeghostexSettings } from '@/packages/shared/ghostex-settings';
+import { KEEP_AWAKE_DURATION_OPTIONS } from '@/packages/shared/ghostex-settings';
+import { nativeSidebarSettings } from './settings';
 import { normalizeghostexHotkeySettings } from '@/packages/shared/ghostex-hotkeys';
 import { GHOSTEX_DISCORD_URL } from '@/packages/shared/sidebar-commands';
 import {
@@ -22,7 +23,7 @@ import { describeNativeSidebarMachine } from './space-navigation';
 
 export function createNativeNavigation(ui: NativeSidebarUiState) {
   const state = sidebarStore.getState();
-  const settings = normalizeghostexSettings(state.hud.settings);
+  const settings = nativeSidebarSettings();
   const hotkeys = normalizeghostexHotkeySettings(settings.hotkeys);
   const intent = (
     label: string,
@@ -38,7 +39,7 @@ export function createNativeNavigation(ui: NativeSidebarUiState) {
   const groups = section.groupIds.filter((id) => section.isVisible(id) && !state.groupsById[id]?.isChatCollection);
   const sort: NativeSidebarMenuItem[] = [];
   if (ui.selectedMachineId === 'local')
-    sort.push({ ...intent('Show hidden', 'eye', 'showHidden'), checked: ui.showHidden }, { separator: true });
+    sort.push({ ...intent('Show Hidden', 'eye', 'showHidden'), checked: ui.showHidden }, { separator: true });
   sort.push(
     {
       ...intent('Last Active Sorting', 'clock', 'sortLastActivity'),
@@ -91,7 +92,7 @@ export function createNativeNavigation(ui: NativeSidebarUiState) {
     runtime('Search by Prompt', 'file-search', { type: 'searchPreviousSessionsByText' }),
     { separator: true },
     intent('Agents Hub', 'users-group', 'agentsHub'),
-    runtime('Automations Overview', 'clock', { type: 'openAutomationsPage' }),
+    runtime('All Automations', 'clock', { type: 'openAutomationsPage' }),
     { separator: true },
     intent('Mobile & Remote', 'devices', 'remoteSetup')
   );
@@ -108,10 +109,10 @@ export function createNativeNavigation(ui: NativeSidebarUiState) {
     const children: NativeSidebarMenuItem[] = awake;
     if (active)
       children.push(
-        runtime("Don't keep awake", 'square-minus', { type: 'runTitlebarKeepAwakeCommand', action: 'stop' })
+        runtime("Don't Keep Awake", 'square-minus', { type: 'runTitlebarKeepAwakeCommand', action: 'stop' })
       );
     children.push({ separator: true }, intent('Power Settings', 'settings', 'powerSettings'));
-    more.push({ label: 'Keep awake', icon: active ? 'coffee' : 'moon', children });
+    more.push({ label: 'Keep Awake', icon: active ? 'coffee' : 'moon', children });
   }
   more.push(
     runtime('Join Discord', 'users-group', { type: 'openExternalUrl', url: GHOSTEX_DISCORD_URL }),
@@ -137,7 +138,7 @@ export function runNativeSidebarAction(
   if (action === 'sortManual' || action === 'sortLastActivity') {
     const sortMode = action === 'sortManual' ? 'manual' : 'lastActivity';
     const layout = createDisplaySessionLayout({
-      enableSessionParking: normalizeghostexSettings(state.hud.settings).enableSessionParking,
+      enableSessionParking: nativeSidebarSettings().enableSessionParking,
       sessionIdsByGroup: state.sessionIdsByGroup,
       sessionsById: state.sessionsById,
       sortMode: state.hud.activeSessionsSortMode,

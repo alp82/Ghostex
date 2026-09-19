@@ -317,7 +317,20 @@ pub(crate) fn route_gpui_native_keyboard_event(
                         Some(&action_id),
                         owner,
                     );
-                    Some((target.app.clone(), target.async_app.clone(), None))
+                    /*
+                    CDXC:Hotkeys 2026-09-19 DECISION:
+                    User: holding the "next tab" hotkey must fly through tabs.
+                    A repeat of a captured hotkey is claimed here and used to be dropped for every action, so a held Previous/Next Tab in Pane or Previous/Next Session moved one step and stopped whenever the router owned the key (a terminal or a CEF page has the keyboard, the usual case). Those four actions now repeat, marked as held so the app treats every repeat as part of one burst (gx_store/burst.rs). Every other hotkey still fires once per press: repeating "new session" or "close tab" would be destructive.
+                    */
+                    let repeats = gpui_command_palette_tab_cycle_hotkey_action(&action_id)
+                        .is_some()
+                        || gpui_sidebar_session_walk_hotkey_reverse(&action_id).is_some();
+                    let dispatch = repeats.then(|| GpuiNativeKeyboardDispatch::GhostexHotkey {
+                        action_id,
+                        owner,
+                        held: true,
+                    });
+                    Some((target.app.clone(), target.async_app.clone(), dispatch))
                 }
                 None => {
                     if keycode == TAB_KEYCODE {
@@ -454,7 +467,11 @@ pub(crate) fn route_gpui_native_keyboard_event(
             return Some((
                 target.app.clone(),
                 target.async_app.clone(),
-                Some(GpuiNativeKeyboardDispatch::GhostexHotkey { action_id, owner }),
+                Some(GpuiNativeKeyboardDispatch::GhostexHotkey {
+                    action_id,
+                    owner,
+                    held: false,
+                }),
             ));
         }
 
@@ -586,8 +603,14 @@ pub(crate) fn route_gpui_native_keyboard_event(
                 GpuiNativeKeyboardDispatch::ApplicationCommand(command) => {
                     this.dispatch_window_scoped_application_keyboard_command(command, window, cx);
                 }
-                GpuiNativeKeyboardDispatch::GhostexHotkey { action_id, owner } => {
+                GpuiNativeKeyboardDispatch::GhostexHotkey {
+                    action_id,
+                    owner,
+                    held,
+                } => {
+                    this.gx_store_set_key_held(held);
                     this.dispatch_window_scoped_ghostex_hotkey(&action_id, owner, window, cx);
+                    this.gx_store_set_key_held(false);
                 }
             });
         })

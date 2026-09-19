@@ -22,9 +22,17 @@ impl GhostexGpuiApp {
         let Some(snapshot) = self.native_sidebar.snapshot.clone() else {
             return div().size_full().into_any_element();
         };
+        // The list keeps showing the outgoing Space while its exit fade runs; the selector row above it already shows the new one.
+        let content = self
+            .native_sidebar
+            .space_gesture
+            .exiting_snapshot()
+            .cloned()
+            .unwrap_or_else(|| snapshot.clone());
         let view = cx.entity().clone();
         let bounds_view = view.clone();
         let wheel_view = view.clone();
+        let presence_view = view.clone();
         let (space_offset, space_opacity) = self.native_sidebar.space_gesture.presentation();
         let appearance = SidebarAppearance::from_hud(&snapshot.hud, window);
         v_flex()
@@ -45,16 +53,6 @@ impl GhostexGpuiApp {
             })
             .id("native-sidebar-root")
             .relative()
-            .on_hover(cx.listener(|app, inside, _, cx| {
-                app.native_sidebar.pointer_inside = *inside;
-                if !inside {
-                    app.native_sidebar.hovered_collection = None;
-                    app.native_sidebar.hovered_group = None;
-                    app.native_sidebar.hovered_session = None;
-                    app.native_sidebar.hovered_section = None;
-                }
-                cx.notify();
-            }))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|app, _, window, cx| app.close_native_sidebar_menu(window, cx)),
@@ -126,29 +124,29 @@ impl GhostexGpuiApp {
                             .relative()
                             .left(px(space_offset * appearance.scale))
                             .opacity(space_opacity)
-                            .when(snapshot.order.is_empty(), |column| {
+                            .when(content.order.is_empty(), |column| {
                                 column.child(self.render_native_sidebar_empty(
-                                    &snapshot,
+                                    &content,
                                     &appearance,
                                     cx,
                                 ))
                             })
-                            .children(snapshot.order.iter().filter_map(|item| {
+                            .children(content.order.iter().filter_map(|item| {
                                 if item.kind == "collection" {
-                                    snapshot
+                                    content
                                         .collections
                                         .iter()
                                         .find(|collection| collection.collection_id == item.id)
                                         .map(|collection| {
                                             self.render_native_collection(
                                                 collection,
-                                                &snapshot,
+                                                &content,
                                                 &appearance,
                                                 cx,
                                             )
                                         })
                                 } else {
-                                    snapshot
+                                    content
                                         .groups
                                         .iter()
                                         .find(|group| group.group_id == item.id)
@@ -159,7 +157,7 @@ impl GhostexGpuiApp {
                                                 .mb(px(10.0 * appearance.scale))
                                                 .child(self.render_native_sidebar_group(
                                                     group,
-                                                    &snapshot.hud,
+                                                    &content.hud,
                                                     &appearance,
                                                     cx,
                                                 ))
@@ -180,8 +178,9 @@ impl GhostexGpuiApp {
             .child(self.render_native_sidebar_navigation(&appearance, true, cx))
             .child(
                 gpui::canvas(
-                    |_, _, _| {},
-                    move |bounds, _, window, _| {
+                    |bounds, window, _| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+                    move |bounds, hitbox, window, _| {
+                        track_pointer_presence(presence_view, hitbox, window);
                         let view = wheel_view.clone();
                         window.on_mouse_event(
                             move |event: &gpui::ScrollWheelEvent, phase, window, cx| {
@@ -199,8 +198,44 @@ impl GhostexGpuiApp {
                 .absolute()
                 .inset_0(),
             )
-            .children(self.render_native_sticky_project(&snapshot, &appearance, cx))
+            .children(self.render_native_sticky_project(&content, &appearance, cx))
             .children(self.render_native_sidebar_menu(cx))
             .into_any_element()
     }
+}
+
+/// CDXC:Sidebar 2026-09-19 WHY:
+/// GPUI `on_hover` reports "not hovered" while a mouse button is held, so a click that moved by a pixel marked the pointer as outside the sidebar and cleared the hovered card mid-click; its X vanished and the release landed on the card.
+/// Presence follows the hit test alone and still goes false during a drag and when the pointer leaves the window.
+fn track_pointer_presence(
+    view: gpui::Entity<GhostexGpuiApp>,
+    hitbox: gpui::Hitbox,
+    window: &mut gpui::Window,
+) {
+    let set_inside = move |inside: bool, cx: &mut gpui::App| {
+        view.update(cx, |app, cx| {
+            if app.native_sidebar.pointer_inside == inside {
+                return;
+            }
+            app.native_sidebar.pointer_inside = inside;
+            if !inside {
+                app.native_sidebar.hovered_collection = None;
+                app.native_sidebar.hovered_group = None;
+                app.native_sidebar.hovered_session = None;
+                app.native_sidebar.hovered_section = None;
+            }
+            cx.notify();
+        })
+    };
+    let set_outside = set_inside.clone();
+    window.on_mouse_event(move |_: &gpui::MouseMoveEvent, phase, window, cx| {
+        if phase == gpui::DispatchPhase::Bubble {
+            set_inside(!cx.has_active_drag() && hitbox.is_hovered(window), cx);
+        }
+    });
+    window.on_mouse_event(move |_: &gpui::MouseExitEvent, phase, _, cx| {
+        if phase == gpui::DispatchPhase::Bubble {
+            set_outside(false, cx);
+        }
+    });
 }

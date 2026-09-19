@@ -27,15 +27,18 @@ impl GhostexGpuiApp {
         let section_id = section.id.clone();
         let key = format!("{}-{}", group.group_id, section.id);
         let hovered = self.native_sidebar.hovered_section.as_ref() == Some(&key);
+        // CDXC:Sidebar 2026-09-19 DECISION:
+        // User: the working, attention and question dots next to a section title show only while that section is collapsed, not always; an expanded section already shows the state on its rows.
+        let summarize = section.collapsed;
         let indicator = h_flex()
             .gap(px(4.0 * scale))
-            .when(section.working_count > 0, |row| {
+            .when(summarize && section.working_count > 0, |row| {
                 row.child(div().size(px(8.0 * scale)).rounded_full().bg(rgb(0xffb454)))
             })
-            .when(section.attention_count > 0, |row| {
+            .when(summarize && section.attention_count > 0, |row| {
                 row.child(div().size(px(8.0 * scale)).rounded_full().bg(rgb(0x95d7f6)))
             })
-            .when(section.question_count > 0, |row| {
+            .when(summarize && section.question_count > 0, |row| {
                 row.child(div().size(px(8.0 * scale)).rounded_full().bg(rgb(0xf472b6)))
             })
             .when(
@@ -50,18 +53,22 @@ impl GhostexGpuiApp {
                     )
                 },
             );
+        // CDXC:Sidebar 2026-09-18 DECISION:
+        // User: a section heading is exactly as wide as a session card (the same 3px insets) with the card's 5px/6px side padding, and it has bottom padding too so the label sits centred in its rounded hover fill.
+        // This supersedes the 2026-09-16 rule of letting the heading run through the sidebar's right edge for the native sidebar.
         h_flex()
             .id(format!("native-sidebar-section-{key}"))
-            .ml(px(3.0 * scale))
-            .mr(px(-5.0 * scale))
-            .h(px(17.0 * scale))
-            .pt(px(3.0 * scale))
+            .mx(px(3.0 * scale))
+            .h(px(20.0 * scale))
+            .py(px(3.0 * scale))
             .pl(px(5.0 * scale))
-            .pr(px(18.0 * scale))
+            .pr(px(6.0 * scale))
             .gap(px(5.0 * scale))
             .text_size(px(12.0 * scale))
             .font_weight(FontWeight::LIGHT)
             .text_color(chrome_color(0xd8d8d8, 0x292929).opacity(0.34))
+            // CDXC:Sidebar 2026-09-18 DECISION: User: the section heading's hover fill has rounded corners, like the session rows; this supersedes the 2026-09-16 square-corner decision for the native sidebar.
+            .rounded(px(5.0 * scale))
             .hover(|row| {
                 row.bg(chrome_ink().opacity(0.06))
                     .text_color(chrome_color(0xd8d8d8, 0x292929).opacity(0.58))

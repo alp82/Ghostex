@@ -64,6 +64,7 @@ import {
   MIN_TERMINAL_PANE_PADDING_PX,
   MIN_TERMINAL_VIEW_WIDTH_PERCENT,
   MIN_PROJECT_SESSION_LIST_COLLAPSED_COUNT,
+  MIN_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   MIN_SESSION_CHAT_TRANSCRIPT_WIDTH_PERCENT,
   MIN_SESSION_CHAT_ZOOM_PERCENT,
   PROMPT_EDITOR_BACKEND_OPTIONS,
@@ -77,6 +78,7 @@ import {
   COMMANDS_PANEL_AUTO_MINIMIZE_DELAY_OPTIONS,
   MAX_COMMANDS_PANEL_DEFAULT_HEIGHT_PX,
   MAX_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS,
+  MAX_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   MAX_SIDEBAR_DEFAULT_WIDTH_PX,
   MAX_SIDEBAR_TOOLTIP_DELAY_MS,
   MIN_COMMANDS_PANEL_DEFAULT_HEIGHT_PX,
@@ -133,7 +135,6 @@ import {
   SettingsSelect,
   SettingsSelectContent,
   SidebarPresetField,
-  SidebarProjectGroupStyleField,
   SidebarSpacesField,
   SidebarTagListSettingsField,
   SliderNumberField,
@@ -295,7 +296,7 @@ export type SettingsModalProps = {
   onInstallBrowserUseSkill?: () => void;
   onInstallComputerUseSkill?: () => void;
   onInstallCuaDriver?: () => void;
-  onInstallFable56OrchestrationSkill?: () => void;
+  onInstallAgentsOrchestrationSkill?: () => void;
   onInstallManageBeadsSkill?: () => void;
   onInstallGenerateTitleSkill?: () => void;
   onInstallGhostexCli?: () => void;
@@ -323,6 +324,7 @@ export type SettingsModalProps = {
   onTestAgentTaskCompletion?: () => void;
   projects?: SidebarProjectSettingsItem[];
   projectViewSpaces?: import('@/packages/shared/ghostex-settings/project-views').ProjectViewSpace[];
+  projectViewProjects?: import('@/packages/shared/ghostex-settings/project-views').ProjectViewProject[];
   settings?: ghostexSettings;
   /**
    * Talks to the gxserver that owns Easy Connect and SSH access. Absent where
@@ -383,7 +385,7 @@ export function SettingsModal({
   onInstallBrowserUseSkill,
   onInstallComputerUseSkill,
   onInstallCuaDriver,
-  onInstallFable56OrchestrationSkill,
+  onInstallAgentsOrchestrationSkill,
   onInstallManageBeadsSkill,
   onInstallGenerateTitleSkill,
   onInstallGhostexCli,
@@ -405,6 +407,7 @@ export function SettingsModal({
   onTestAgentTaskCompletion,
   projects = [],
   projectViewSpaces = [],
+  projectViewProjects = [],
   settings,
   tailcatRpc,
   theme = 'dark-blue',
@@ -779,17 +782,16 @@ export function SettingsModal({
   const settingsSearch = getSettingsSearchSections(settingsSearchQuery, draft);
   const mainSettingsGroupSearch = getMainSettingsGroupSearch(settingsSearchQuery, settingsSearch);
   const mainSettingsSectionNavigation = getMainSettingsSectionNavigation(mainSettingsGroupSearch);
-  const { mainSectionVisible, mainSettingVisible, mainSubsectionVisible } =
-    createMainSettingsVisibility({
-      appIconPickerUnavailable,
-      draft,
-      firstLaunchSetupVisibleSettings,
-      isFirstLaunchSetup,
-      mainSettingsGroupSearch,
-      settingsSearch,
-      settingsSearchQuery,
-      showAdvancedSettings,
-    });
+  const { mainSectionVisible, mainSettingVisible, mainSubsectionVisible } = createMainSettingsVisibility({
+    appIconPickerUnavailable,
+    draft,
+    firstLaunchSetupVisibleSettings,
+    isFirstLaunchSetup,
+    mainSettingsGroupSearch,
+    settingsSearch,
+    settingsSearchQuery,
+    showAdvancedSettings,
+  });
   const mainSettingsSectionRefs: MainSettingsSectionRefs = {
     agents: agentsOnboardingSectionRef,
     advanced: betaSectionRef,
@@ -1353,20 +1355,11 @@ export function SettingsModal({
                                 onResetToDefault={() => updateSidebarSettingsPreset('recommended')}
                               />
                             ) : null}
-                            {mainSettingVisible(settingsSearch.sidebar, 'sidebarProjectGroupStyle') ? (
-                              <SidebarProjectGroupStyleField
-                                description='Choose how project groups are marked without adding group or project card borders.'
-                                label='Project group style'
-                                {...getSettingModificationProps('sidebarProjectGroupStyle')}
-                                onChange={(value) => updateDraft('sidebarProjectGroupStyle', value)}
-                                value={draft.sidebarProjectGroupStyle}
-                              />
-                            ) : null}
                             {/*
                              * CDXC:Spaces 2026-08-28:
                              * Spaces is off until the user asks for it, so the switch sits
-                             * directly under Project group style where the other sidebar
-                             * structure controls are.
+                             * directly under Preset where the other sidebar structure
+                             * controls are.
                              */}
                             {mainSettingVisible(settingsSearch.sidebar, 'sidebarSpacesEnabled') ? (
                               <SidebarSpacesField
@@ -1406,6 +1399,19 @@ export function SettingsModal({
                                 label="Follow the active session's Space"
                                 {...getSettingModificationProps('sidebarSpaceFollowActiveSession')}
                                 onChange={(checked) => updateDraft('sidebarSpaceFollowActiveSession', checked)}
+                              />
+                            ) : null}
+                            {mainSettingVisible(settingsSearch.sidebar, 'projectSwitchKeepAliveMinutes') ? (
+                              <SliderNumberField
+                                description='After you switch to another project or Space, keep the terminals, chats, and view that were open in the previous project running for this many minutes so switching back is instant. 0 releases them right away.'
+                                label='Keep the previous project live for (minutes)'
+                                {...getSettingModificationProps('projectSwitchKeepAliveMinutes')}
+                                max={MAX_PROJECT_SWITCH_KEEP_ALIVE_MINUTES}
+                                min={MIN_PROJECT_SWITCH_KEEP_ALIVE_MINUTES}
+                                onCommit={(value) => updateDraft('projectSwitchKeepAliveMinutes', value)}
+                                onChange={(value) => updateDraftDebounced('projectSwitchKeepAliveMinutes', value)}
+                                step={1}
+                                value={draft.projectSwitchKeepAliveMinutes}
                               />
                             ) : null}
                             {mainSettingVisible(settingsSearch.sidebar, 'sidebarVisibilityMemory') ? (
@@ -1765,6 +1771,15 @@ export function SettingsModal({
 
                         {mainSectionVisible('chat', settingsSearch.chat) ? (
                           <SettingsSection sectionRef={chatSectionRef} title='Chat'>
+                            {mainSettingVisible(settingsSearch.chat, 'sessionChatUseGpui') ? (
+                              <ToggleField
+                                checked={draft.sessionChatUseGpui}
+                                description='Use native GPUI chat on desktop. Turn off to use React chat. Restart the desktop app to apply; mobile and web are unchanged.'
+                                label='Use GPUI chat'
+                                {...getSettingModificationProps('sessionChatUseGpui')}
+                                onChange={(checked) => updateDraft('sessionChatUseGpui', checked)}
+                              />
+                            ) : null}
                             {mainSettingVisible(settingsSearch.chat, 'preferredAgentInterface') ? (
                               <PreferredAgentInterfaceField
                                 description='Chat switches on automatically as soon as Ghostex detects a compatible agent. The terminal stays live in the background, and you can switch back at any time. Settings > Agents can override this for one agent at a time.'
@@ -2051,8 +2066,8 @@ export function SettingsModal({
                                     The Ghostty controls also apply to your external Ghostty terminal because this
                                     Ghostty terminal uses the same settings file. ghostex reloads its embedded Ghostty
                                     terminal about 3 seconds after you stop changing these controls; external Ghostty
-                                    windows may still need {formatSidebarHotkeyLabel('cmd+shift+,')} to reload. Theme overrides and the terminal light
-                                    palette apply only to Ghostex.
+                                    windows may still need {formatSidebarHotkeyLabel('cmd+shift+,')} to reload. Theme
+                                    overrides and the terminal light palette apply only to Ghostex.
                                   </p>
                                 </div>
                                 <GhosttySettingsActions
@@ -2828,14 +2843,14 @@ export function SettingsModal({
                                  * CDXC:Automations 2026-07-26:
                                  * GPUI has graduated project Automate from this gate. The
                                  * shared macOS host still inventories Automate here, while
-                                 * GPUI lists only the Quick Automations Overview preview.
+                                 * GPUI lists only the Quick All Automations preview.
                                  */}
                                 <ToggleField
                                   checked={draft.showBetaFeatures}
                                   description={
                                     automateIsExperimental
-                                      ? 'Show experimental settings, Automations and Automate pages, and the Keep Awake title-bar button.'
-                                      : 'Show experimental settings, Automations Overview, and the Keep Awake title-bar button.'
+                                      ? 'Show experimental settings, All Automations and Automate pages, and the Keep Awake title-bar button.'
+                                      : 'Show experimental settings, All Automations, and the Keep Awake title-bar button.'
                                   }
                                   label='Enable Experimental Features'
                                   {...getSettingModificationProps('showBetaFeatures')}
@@ -2847,8 +2862,8 @@ export function SettingsModal({
                                     <li>OS Integration settings tab</li>
                                     <li>
                                       {automateIsExperimental
-                                        ? 'Automations Overview and project Automate pages'
-                                        : 'Automations Overview'}
+                                        ? 'All Automations and project Automate pages'
+                                        : 'All Automations'}
                                     </li>
                                     <li>Title bar and Power settings: Keep Awake</li>
                                   </ul>
@@ -2914,7 +2929,7 @@ export function SettingsModal({
                       onInstallBrowserUseSkill={onInstallBrowserUseSkill}
                       onInstallComputerUseSkill={onInstallComputerUseSkill}
                       onInstallCuaDriver={onInstallCuaDriver}
-                      onInstallFable56OrchestrationSkill={onInstallFable56OrchestrationSkill}
+                      onInstallAgentsOrchestrationSkill={onInstallAgentsOrchestrationSkill}
                       onInstallManageBeadsSkill={onInstallManageBeadsSkill}
                       onInstallGenerateTitleSkill={onInstallGenerateTitleSkill}
                       onInstallGhostexCli={onInstallGhostexCli}
@@ -2934,6 +2949,7 @@ export function SettingsModal({
                   <TabsContent className='mt-0 min-h-0 flex-1 overflow-hidden' value='extensions'>
                     <ExtensionsSettingsTab
                       initialCustomViewId={initialCustomViewId}
+                      projects={projectViewProjects}
                       spaces={projectViewSpaces}
                       isActive={isOpen && activeTab === 'extensions'}
                       onRequestStatus={onRequestPluginSettingsStatus}
@@ -3016,6 +3032,10 @@ export function SettingsModal({
                       preferredAgentInterfaceOverrides={draft.preferredAgentInterfaceOverrides}
                       sessionTitleGenerationAgent={draft.sessionTitleGenerationAgent}
                       onAgentAcceptAllEnabledChange={(checked) => updateDraft('agentAcceptAllEnabled', checked)}
+                      onSessionChatModelPicksSessionOnlyChange={(checked) =>
+                        updateDraft('sessionChatModelPicksSessionOnly', checked)
+                      }
+                      sessionChatModelPicksSessionOnly={draft.sessionChatModelPicksSessionOnly}
                       onDefaultPromptAgentIdChange={(agentId) => updateDraft('defaultPromptAgentId', agentId)}
                       onCustomSessionTitleGenerationCommandChange={(command) =>
                         updateDraft('customSessionTitleGenerationCommand', command)
@@ -3079,6 +3099,10 @@ export function SettingsModal({
                       showLessForExpandedProjectJumpsModification={getSettingModificationProps(
                         'showLessForExpandedProjectJumps'
                       )}
+                      sidebarSessionCycleSkipsSleeping={draft.sidebarSessionCycleSkipsSleeping}
+                      sidebarSessionCycleSkipsSleepingModification={getSettingModificationProps(
+                        'sidebarSessionCycleSkipsSleeping'
+                      )}
                       visibleSections={visibleHotkeySections}
                       searchQuery={settingsSearchQuery}
                       onChange={(hotkeys) => updateDraft('hotkeys', hotkeys)}
@@ -3092,6 +3116,9 @@ export function SettingsModal({
                       }
                       onShowLessForExpandedProjectJumpsChange={(checked) =>
                         updateDraft('showLessForExpandedProjectJumps', checked)
+                      }
+                      onSidebarSessionCycleSkipsSleepingChange={(checked) =>
+                        updateDraft('sidebarSessionCycleSkipsSleeping', checked)
                       }
                     />
                   </TabsContent>

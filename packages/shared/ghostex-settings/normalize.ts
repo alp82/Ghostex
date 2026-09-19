@@ -19,6 +19,7 @@ import { normalizeSidebarSessionTagListItems } from '../session-tags';
 import { DEFAULT_ghostex_SETTINGS } from './defaults';
 import { normalizeGhostexCustomViews } from './custom-views';
 import { normalizeTitlebarViewOrder } from './titlebar-view-order';
+import { normalizeGhostexViewScopes } from './view-scopes';
 import { normalizeDiagnosticLoggingSettings } from './diagnostic-logging';
 import {
   AUTO_SLEEP_IDLE_MINUTE_OPTIONS,
@@ -59,7 +60,6 @@ import {
   type PortlessProtocol,
   type PreferredAgentInterface,
   type PromptEditorBackend,
-  type SidebarProjectGroupStyle,
   type SidebarSpaceSwitchBehavior,
   type SidebarVisibilityMemory,
   type SidebarSettingsPresetId,
@@ -74,6 +74,7 @@ import {
   clampTerminalViewWidthPercent,
   clampSidebarCollapseAnimationDurationMs,
   clampSidebarDefaultWidthPx,
+  clampProjectSwitchKeepAliveMinutes,
   clampSidebarTooltipDelayMs,
   clampTerminalPanePaddingPx,
   type ghostexSettings,
@@ -357,6 +358,11 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
       'createSessionOnSidebarDoubleClick',
       DEFAULT_ghostex_SETTINGS.createSessionOnSidebarDoubleClick
     ),
+    sidebarSessionCycleSkipsSleeping: readBoolean(
+      source,
+      'sidebarSessionCycleSkipsSleeping',
+      DEFAULT_ghostex_SETTINGS.sidebarSessionCycleSkipsSleeping
+    ),
     enableSessionParking: readBoolean(source, 'enableSessionParking', DEFAULT_ghostex_SETTINGS.enableSessionParking),
     sleepSessionWhenParking: readBoolean(
       source,
@@ -602,12 +608,12 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     projectSessionListCollapsedCount: clampProjectSessionListCollapsedCount(
       readNumber(source, 'projectSessionListCollapsedCount', DEFAULT_ghostex_SETTINGS.projectSessionListCollapsedCount)
     ),
-    sidebarProjectGroupStyle: normalizeSidebarProjectGroupStyle(
-      readString(source, 'sidebarProjectGroupStyle', DEFAULT_ghostex_SETTINGS.sidebarProjectGroupStyle)
-    ),
     sidebarSpacesEnabled: readBoolean(source, 'sidebarSpacesEnabled', DEFAULT_ghostex_SETTINGS.sidebarSpacesEnabled),
     sidebarSpaceSwitchBehavior: normalizeSidebarSpaceSwitchBehavior(
       readString(source, 'sidebarSpaceSwitchBehavior', DEFAULT_ghostex_SETTINGS.sidebarSpaceSwitchBehavior)
+    ),
+    projectSwitchKeepAliveMinutes: clampProjectSwitchKeepAliveMinutes(
+      readNumber(source, 'projectSwitchKeepAliveMinutes', DEFAULT_ghostex_SETTINGS.projectSwitchKeepAliveMinutes)
     ),
     sidebarSpaceFollowActiveSession: readBoolean(
       source,
@@ -629,6 +635,7 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     ),
     sidebarTheme: clampSidebarThemeSetting(readString(source, 'sidebarTheme', DEFAULT_ghostex_SETTINGS.sidebarTheme)),
     sessionChatTheme: normalizeSessionChatTheme(source.sessionChatTheme),
+    sessionChatUseGpui: readBoolean(source, 'sessionChatUseGpui', DEFAULT_ghostex_SETTINGS.sessionChatUseGpui),
     sessionChatFontFamily: readString(
       source,
       'sessionChatFontFamily',
@@ -653,6 +660,11 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
       source,
       'sessionChatFileEditPreviews',
       DEFAULT_ghostex_SETTINGS.sessionChatFileEditPreviews
+    ),
+    sessionChatModelPicksSessionOnly: readBoolean(
+      source,
+      'sessionChatModelPicksSessionOnly',
+      DEFAULT_ghostex_SETTINGS.sessionChatModelPicksSessionOnly
     ),
     sessionChatVerboseMode: readBoolean(
       source,
@@ -902,6 +914,7 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     ),
     customViews: normalizeGhostexCustomViews(source.customViews),
     customViewTemplates: normalizeProjectViewTemplates(source.customViewTemplates),
+    viewScopes: normalizeGhostexViewScopes(source.viewScopes),
     titlebarViewOrder: normalizeTitlebarViewOrder(source.titlebarViewOrder),
     /**
      * CDXC:Titlebar 2026-05-11-00:22
@@ -1129,12 +1142,6 @@ export function getDefaultEditorCommandForSettings(settings: ghostexSettings): s
 
 function normalizeCommandsPanelSide(value: string | undefined): CommandsPanelSide {
   return value === 'right' ? 'right' : DEFAULT_ghostex_SETTINGS.commandsPanelSide;
-}
-
-function normalizeSidebarProjectGroupStyle(value: string | undefined): SidebarProjectGroupStyle {
-  return value === 'quiet' || value === 'header' || value === 'branched'
-    ? value
-    : DEFAULT_ghostex_SETTINGS.sidebarProjectGroupStyle;
 }
 
 function normalizeSidebarSpaceSwitchBehavior(value: string | undefined): SidebarSpaceSwitchBehavior {

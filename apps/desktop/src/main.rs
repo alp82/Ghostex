@@ -12,6 +12,7 @@ mod browser_history;
 mod cef;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 mod cef_component_window;
+mod chat_preview;
 mod component_store;
 mod ghostty_kit;
 mod ghostty_vt;
@@ -160,8 +161,15 @@ pub(crate) use crate::app::model::*;
 // crate-root re-export keeps `crate::GhostexGpuiApp` resolving for main(),
 // the sibling modules that hold `Entity<GhostexGpuiApp>`, and the FFI bridge.
 pub(crate) use crate::app::core::*;
+// CDXC:Extensions 2026-09-18 SEE-ALSO:
+// The per-view "Available in" scope keys are read from workarea.rs and the titlebar modules.
+pub(crate) use crate::app::view_scopes::*;
 
 fn main() {
+    if std::env::var_os("GHOSTEX_CHAT_PREVIEW_STATE").is_some() {
+        chat_preview::run();
+        return;
+    }
     #[cfg(target_os = "windows")]
     windows_updater::run_startup_hooks();
 
@@ -301,8 +309,6 @@ fn main() {
                 gpui::NoAction {},
                 Some(terminal_element::TERMINAL_KEY_CONTEXT),
             ),
-            KeyBinding::new("ctrl-tab", CycleFocusedTabForward, None),
-            KeyBinding::new("ctrl-shift-tab", CycleFocusedTabBackward, None),
             gpui_key_binding_from_shared_hotkey("cmd+w", CloseFocusedSurface, None),
             gpui_key_binding_from_shared_hotkey("cmd+b", ToggleGpuiSidebarCollapsed, None),
             gpui_key_binding_from_shared_hotkey("cmd+alt+b", ToggleProjectEditorCompanion, None),
@@ -342,10 +348,16 @@ fn main() {
         // Window frame persistence (macOS persistMainWindowChrome parity):
         // restore the saved frame with multi-monitor rules, else the
         // historical centered default.
-        let window_bounds = restored_gpui_window_bounds(cx)
-            .unwrap_or_else(|| WindowBounds::centered(size(px(1280.0), px(820.0)), cx));
+        let (window_bounds, display_id) = match restored_gpui_window_bounds(cx) {
+            Some((window_bounds, display_id)) => (window_bounds, Some(display_id)),
+            None => (
+                WindowBounds::centered(size(px(1280.0), px(820.0)), cx),
+                None,
+            ),
+        };
         let options = WindowOptions {
             window_bounds: Some(window_bounds),
+            display_id,
             window_min_size: Some(size(
                 px(GPUI_WINDOW_FRAME_MIN_WIDTH),
                 px(GPUI_WINDOW_FRAME_MIN_HEIGHT),
@@ -395,7 +407,7 @@ fn main() {
                             target_os = "windows",
                             target_os = "linux"
                         ))]
-                        app.begin_cef_startup(cx);
+                        app.begin_deferred_cef_startup(cx);
                         #[cfg(not(any(
                             target_os = "macos",
                             target_os = "windows",
@@ -440,6 +452,7 @@ fn main() {
                         let current_frame_state =
                             GPUI_LATEST_WINDOW_FRAME_STATE.with(|latest| latest.borrow().clone());
                         if previous_frame_state != current_frame_state {
+                            schedule_gpui_window_frame_state_persist(cx);
                             if let Some(state) = app.titlebar_popup_menu.as_ref() {
                                 log_gpui_titlebar_popup_repro(
                                     "gpui.titlebarPopup.mainWindowBoundsChanged",
@@ -724,11 +737,9 @@ impl RenderOnce for GpuiTitlebarTipsTrigger {
             .relative()
             .flex()
             .h(px(TITLEBAR_CONTROL_HEIGHT))
-            .w(px(TITLEBAR_BUTTON_WIDTH))
+            .px(px(TITLEBAR_BUTTON_HORIZONTAL_PADDING))
             .items_center()
             .justify_center()
-            .border_l_1()
-            .border_color(titlebar_button_border_color())
             .text_color(icon_color)
             .cursor_default()
             .when(self.selected, |this| this.bg(titlebar_button_hover_color()))
@@ -741,7 +752,7 @@ impl RenderOnce for GpuiTitlebarTipsTrigger {
                 this.child(
                     div()
                         .absolute()
-                        .right(px(8.0))
+                        .right(px(2.0))
                         .top(px(5.0))
                         .size(px(7.5))
                         .rounded_full()

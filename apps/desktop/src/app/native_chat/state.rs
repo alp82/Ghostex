@@ -1,0 +1,695 @@
+use super::runtime_worker::{ChatRuntimeOutput, ChatRuntimeWorker};
+use crate::app::{helpers::*, model::*};
+use futures::StreamExt as _;
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Focusable as _, Subscription, Window};
+use gpui_component::input::{InputEvent, InputState};
+use serde_json::{Value, json};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
+
+#[derive(Clone)]
+pub(crate) struct NativeChatConfig {
+    pub(crate) project_id: String,
+    pub(crate) session_id: String,
+    pub(crate) sidebar_session_id: String,
+    pub(crate) shell_session_id: TerminalSessionId,
+    pub(crate) client_id: String,
+    pub(crate) remote: Option<GpuiRemoteGxserverRequestTarget>,
+    pub(crate) app: Option<gpui::WeakEntity<crate::GhostexGpuiApp>>,
+    pub(crate) preview: Option<Value>,
+    pub(crate) parent_native_view: *mut std::ffi::c_void,
+    pub(crate) initial_snapshot: Option<Value>,
+    pub(crate) initial_presentation: Option<Value>,
+}
+
+#[derive(Clone)]
+pub(crate) enum NativeChatEvent {
+    Broker(Value),
+    Host(Value),
+    DraftState(bool),
+    /// The composer input took GPUI focus by any route (click, handoff, draft insert).
+    ComposerFocused,
+}
+
+pub(crate) struct NativeChatView {
+    pub(crate) config: NativeChatConfig,
+    pub(crate) runtime: Option<ChatRuntimeWorker>,
+    pub(crate) snapshot: Arc<Value>,
+    pub(crate) items: Arc<Vec<Value>>,
+    /// The open subagent transcript's items, projected and spliced on their own channel.
+    pub(crate) subagent_items: Arc<Vec<Value>>,
+    pub(crate) error: Option<String>,
+    pub(crate) input: Option<Entity<InputState>>,
+    input_subscription: Option<Subscription>,
+    input_observer: Option<Subscription>,
+    pub(super) suggestions: super::suggestions::SuggestionWindowState,
+    pub(super) composer_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    pub(super) suggestion_selection: Option<(String, usize)>,
+    input_window: Option<gpui::WindowId>,
+    pub(super) option_menu: Option<Entity<super::option_menu::ChatOptionMenu>>,
+    /// Which trigger owns the open menu, so pressing it again shuts it (`menu_toggle.rs`).
+    pub(super) menu_toggle: super::menu_toggle::ChatMenuToggle,
+    pub(super) save_markdown_window: super::save_markdown::SaveMarkdownWindowState,
+    pub(super) rewind_window: super::rewind::RewindWindowState,
+    pub(super) image_viewer: super::image_viewer::ImageViewerState,
+    /// Bytes for the transcript's pictures, read once and shared by the thumbnails and the viewer.
+    pub(super) images: super::images::ChatImageCache,
+    /// True while a completed turn's work rows render, which is where answered question cards are suppressed.
+    pub(super) in_work_fold: bool,
+    /// True while any row of a completed turn renders: its writes belong to that turn's "N files changed" fold.
+    pub(super) hide_file_changes: bool,
+    /// True while a row of the subagent viewer's transcript renders, where a rewind would act on the wrong conversation.
+    pub(super) in_subagent: bool,
+    pub(super) context_editor_window: super::context_editor::ContextEditorWindowState,
+    pub(super) model_picker_window: super::model_picker::window::ModelPickerWindowState,
+    pub(crate) maximized_window: Option<gpui::WindowHandle<gpui_component::Root>>,
+    pub(crate) main_window: Option<gpui::AnyWindowHandle>,
+    pub(crate) window_subscription: Option<Subscription>,
+    pub(crate) send_hold_task: Option<gpui::Task<()>>,
+    pub(crate) send_hold_fired: bool,
+    pub(crate) stop_cooldown_task: Option<gpui::Task<()>>,
+    pub(super) context_status_measurements: Option<Value>,
+    pub(crate) composer_measurements: Option<Value>,
+    pub(super) composer_held_key: Option<String>,
+    /// The chat box's height tween and the arrival fade of the controls an expansion brings back.
+    pub(super) composer_animation: super::composer_animation::ComposerAnimation,
+    /// Whether this session's status line holds its row of space, remembered across view
+    /// re-creations so a chat that is going to show one never paints a frame without it.
+    pub(super) status_line_reserved: bool,
+    pub(crate) bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    /// The transcript scrollbar's measured track: from the top of the transcript region to the
+    /// bottom of the pane, so the composer's height never shortens it (scrollbar.rs).
+    pub(super) scrollbar_track: std::rc::Rc<std::cell::Cell<gpui::Pixels>>,
+    input_needs_sync: bool,
+    input_placeholder: String,
+    input_undoable: bool,
+    pub(super) input_caret: Option<usize>,
+    /// The draft's markdown references, and the draft they were parsed from.
+    pub(super) composer_references: Vec<super::composer_references::ComposerReference>,
+    pub(super) composer_reference_draft: Option<String>,
+    pub(super) composer_reference_click: u64,
+    pub(super) composer_reference_task: Option<gpui::Task<()>>,
+    /// Re-asks the shared parser after a paint found the runtime thread busy.
+    pub(super) composer_reference_retry: Option<gpui::Task<()>>,
+    /// Path of the image pill under the pointer.
+    pub(super) composer_image_hover: Option<String>,
+    /// Image the caret last sat against, so a caret move repaints the thumbnails only when it matters.
+    pub(super) composer_caret_image: Option<String>,
+    pub(super) async_answer_input: Option<(String, Entity<InputState>)>,
+    pub(super) async_answer_subscription: Option<Subscription>,
+    pub(crate) answer_input: Option<(String, Entity<InputState>)>,
+    pub(crate) answer_subscription: Option<Subscription>,
+    pub(super) terminal_dialog_input: Option<super::terminal_dialog::TerminalDialogInput>,
+    pub(super) terminal_dialog_key_focus: gpui::FocusHandle,
+    pub(crate) note_input: Option<Entity<InputState>>,
+    pub(crate) note_subscription: Option<Subscription>,
+    /// Transcript search (Cmd+F): the field, and the navigation it last scrolled to.
+    pub(super) search_input: Option<Entity<InputState>>,
+    pub(super) search_subscription: Option<Subscription>,
+    pub(super) search_scrolled_revision: i64,
+    /// Keyboard zoom (Cmd+= / Cmd+- / Cmd+0): this pane's temporary size (zoom.rs).
+    pub(super) zoom: super::zoom::ChatZoomState,
+    pub(crate) draft: String,
+    pub(crate) draft_revision: u64,
+    pub(crate) draft_id: String,
+    pub(crate) pending_send: bool,
+    pub(crate) composer_ready: bool,
+    pub(crate) expanded: HashSet<String>,
+    /// Armed Delayed Send / Close After Done labels drawn on the working row, set by the app (session_chat_armed_actions.rs).
+    pub(crate) armed_actions: Value,
+    pub(crate) collapsed: HashSet<String>,
+    /// How each fenced block the reader has touched wraps; the rest follow `code_wrap_default`.
+    pub(super) code_wrap: HashMap<String, bool>,
+    /// React's remembered last choice (session-chat-code-wrap.ts): the blocks that
+    /// scroll into view after a toggle start the way the reader last asked for.
+    pub(super) code_wrap_default: bool,
+    /// The tables whose cells the reader capped back to one line (React's collapsed table).
+    pub(super) table_collapsed: HashSet<String>,
+    pub(crate) list: gpui::ListState,
+    /// The transcript minimap's dashes, hover and measured column (minimap.rs).
+    pub(super) minimap: super::minimap::MinimapState,
+    /// The subagent viewer's list, kept apart so opening it never disturbs the main transcript's scroll.
+    pub(crate) subagent_list: gpui::ListState,
+    /// The subagent viewer's own focus, so its Escape works without the composer having been focused first.
+    pub(super) subagent_focus: gpui::FocusHandle,
+    /// Whether the open viewer has already taken focus, so a redraw does not steal it back every frame.
+    pub(super) subagent_focused: bool,
+    pub(crate) pane_focused: bool,
+    /// Whether this chat's composer field itself holds the keyboard, which is what the `@`, `$` and
+    /// `/` picker window keys off (`suggestions/window.rs`).
+    pub(super) composer_focused: bool,
+    pub(crate) focus_requested: bool,
+    pub(crate) subscriptions: Vec<Subscription>,
+    /// When this view last rendered; a parked chat keeps applying frames without redrawing the window.
+    pub(crate) last_render: Option<std::time::Instant>,
+    last_notified: Option<std::time::Instant>,
+    notify_scheduled: bool,
+}
+
+impl EventEmitter<NativeChatEvent> for NativeChatView {}
+
+impl NativeChatView {
+    pub(crate) fn new(config: NativeChatConfig, cx: &mut Context<Self>) -> Self {
+        super::fonts::register(cx);
+        super::keyboard::register(cx);
+        let (wake, mut wakes) = futures::channel::mpsc::unbounded::<()>();
+        let runtime = ChatRuntimeWorker::start(
+            json!({"clientId":config.client_id,"projectId":config.project_id,"initialSnapshot":config.initial_snapshot,"initialPresentation":config.initial_presentation,"preview":config.preview}),
+            move || {
+                let _ = wake.unbounded_send(());
+            },
+        );
+        cx.spawn(async move |this, cx| {
+            while wakes.next().await.is_some() {
+                if this.update(cx, |this, cx| this.pump(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        let (runtime, error) = (Some(runtime), None);
+        let list = gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.0));
+        list.set_follow_mode(gpui::FollowMode::Tail);
+        let subagent_list = gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.0));
+        subagent_list.set_follow_mode(gpui::FollowMode::Tail);
+        let chat = cx.weak_entity();
+        list.set_scroll_handler(move |_, _, cx| {
+            let chat = chat.clone();
+            cx.defer(move |cx| {
+                let _ = chat.update(cx, |chat, cx| {
+                    if chat.list.is_following_tail() && chat.snapshot["composerCollapsed"] == true {
+                        chat.invoke(json!({"type":"composerExpand"}), cx);
+                    }
+                    chat.load_earlier_if_near_top(cx);
+                    cx.notify();
+                });
+            });
+        });
+        Self {
+            draft_id: format!(
+                "{}-{}",
+                config.client_id,
+                SessionChatPageState::next_identity()
+            ),
+            status_line_reserved: super::context_meter::remembered_status_line_reservation(
+                &config.session_id,
+            ),
+            config,
+            runtime,
+            error,
+            snapshot: Arc::new(Value::Null),
+            items: Arc::default(),
+            subagent_items: Arc::default(),
+            input: None,
+            input_subscription: None,
+            input_observer: None,
+            suggestions: Default::default(),
+            composer_bounds: Default::default(),
+            suggestion_selection: None,
+            input_window: None,
+            option_menu: None,
+            menu_toggle: Default::default(),
+            model_picker_window: Default::default(),
+            context_editor_window: Default::default(),
+            save_markdown_window: Default::default(),
+            rewind_window: Default::default(),
+            image_viewer: Default::default(),
+            images: Default::default(),
+            in_work_fold: false,
+            hide_file_changes: false,
+            in_subagent: false,
+            maximized_window: None,
+            main_window: None,
+            window_subscription: None,
+            send_hold_task: None,
+            send_hold_fired: false,
+            stop_cooldown_task: None,
+            composer_measurements: None,
+            composer_held_key: None,
+            composer_animation: Default::default(),
+            context_status_measurements: None,
+            bounds: Default::default(),
+            scrollbar_track: Default::default(),
+            input_needs_sync: false,
+            input_placeholder: String::new(),
+            input_undoable: false,
+            input_caret: None,
+            composer_references: Vec::new(),
+            composer_reference_draft: None,
+            composer_reference_click: 0,
+            composer_reference_task: None,
+            composer_reference_retry: None,
+            composer_image_hover: None,
+            composer_caret_image: None,
+            async_answer_input: None,
+            async_answer_subscription: None,
+            answer_input: None,
+            answer_subscription: None,
+            terminal_dialog_input: None,
+            terminal_dialog_key_focus: cx.focus_handle(),
+            note_input: None,
+            note_subscription: None,
+            search_input: None,
+            search_subscription: None,
+            search_scrolled_revision: -1,
+            zoom: Default::default(),
+            draft: String::new(),
+            draft_revision: 0,
+            pending_send: false,
+            composer_ready: false,
+            expanded: HashSet::new(),
+            armed_actions: Value::Array(Vec::new()),
+            collapsed: HashSet::new(),
+            code_wrap: HashMap::new(),
+            code_wrap_default: false,
+            table_collapsed: HashSet::new(),
+            list,
+            minimap: Default::default(),
+            subagent_list,
+            subagent_focus: cx.focus_handle(),
+            subagent_focused: false,
+            pane_focused: false,
+            composer_focused: false,
+            focus_requested: false,
+            subscriptions: Vec::new(),
+            last_render: None,
+            last_notified: None,
+            notify_scheduled: false,
+        }
+    }
+
+    pub(crate) fn ensure_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.input.is_none() {
+            let draft = self.draft.clone();
+            let input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .multi_line(true)
+                    .submit_on_enter(true)
+                    .auto_grow(3, 7)
+                    .default_value(draft)
+            });
+            self.input = Some(input);
+        }
+        let placeholder = self.snapshot["composerPlaceholder"]
+            .as_str()
+            .unwrap_or_default();
+        if self.input_placeholder != placeholder {
+            self.input_placeholder = placeholder.to_owned();
+            self.input.as_ref().unwrap().update(cx, |input, cx| {
+                input.set_placeholder(self.input_placeholder.clone(), window, cx)
+            });
+        }
+        if self.input_window != Some(window.window_handle().window_id()) {
+            self.input_window = Some(window.window_handle().window_id());
+            let input = self.input.as_ref().unwrap().clone();
+            self.input_observer = Some(cx.observe_in(&input, window, |this, input, window, cx| {
+                if input.read(cx).focus_handle(cx).is_focused(window) {
+                    this.update_suggestion_selection(cx);
+                }
+                let caret_image = this.composer_caret_image(cx);
+                if this.composer_caret_image != caret_image {
+                    this.composer_caret_image = caret_image;
+                    cx.notify();
+                }
+            }));
+            self.input_subscription = Some(cx.subscribe_in(
+                &input,
+                window,
+                |this, input, event: &InputEvent, window, cx| match event {
+                    InputEvent::Change => {
+                        let draft = input.read(cx).value().to_string();
+                        if draft == this.draft {
+                            return;
+                        }
+                        this.invoke(json!({"type":"composerExpand","editor":true}), cx);
+                        this.draft = draft;
+                        this.draft_revision += 1;
+                        this.persist_draft(cx);
+                        cx.emit(NativeChatEvent::DraftState(this.draft.is_empty()));
+                        cx.notify();
+                    }
+                    InputEvent::Focus => {
+                        super::focus::reclaim_keyboard_focus(window);
+                        this.composer_focused = true;
+                        this.sync_suggestion_window(cx);
+                        this.invoke(json!({"type":"composerExpand","editor":true}), cx);
+                        cx.emit(NativeChatEvent::ComposerFocused);
+                    }
+                    InputEvent::Blur => {
+                        this.composer_focused = false;
+                        this.sync_suggestion_window(cx);
+                        this.save_draft(cx);
+                    }
+                    _ => {}
+                },
+            ));
+        }
+        if self.input_needs_sync {
+            self.input_needs_sync = false;
+            let undoable = std::mem::take(&mut self.input_undoable);
+            let caret = self
+                .input_caret
+                .take()
+                .map(|utf16| {
+                    let mut offset = 0;
+                    self.draft
+                        .char_indices()
+                        .find_map(|(index, ch)| {
+                            if offset >= utf16 {
+                                return Some(index);
+                            }
+                            offset += ch.len_utf16();
+                            None
+                        })
+                        .unwrap_or(self.draft.len())
+                })
+                .unwrap_or(self.draft.len());
+            if let Some(input) = &self.input {
+                input.update(cx, |input, cx| {
+                    if undoable {
+                        input.replace_all(self.draft.clone(), window, cx);
+                    } else {
+                        input.set_value(self.draft.clone(), window, cx);
+                    }
+                    input.set_selected_range(caret..caret, cx);
+                });
+            }
+        }
+        if self.focus_requested {
+            self.focus_requested = false;
+            if let Some(input) = &self.input {
+                input.read(cx).focus_handle(cx).focus(window, cx);
+            }
+        }
+    }
+
+    pub(crate) fn invoke(&mut self, mut action: Value, cx: &mut Context<Self>) {
+        if action["type"] == "toggleModelPicker" {
+            let scale = super::appearance::ChatAppearance::current(&self.snapshot).scale;
+            let size = self.bounds.get().size;
+            action["size"] =
+                json!({"width":size.width.as_f32()/scale,"height":size.height.as_f32()/scale});
+        }
+        if let Some(runtime) = &self.runtime {
+            runtime.call("action", vec![action]);
+        }
+        let _ = cx;
+    }
+
+    pub(crate) fn receive_callback(
+        &mut self,
+        callback: &str,
+        payload: &Value,
+        cx: &mut Context<Self>,
+    ) {
+        if callback == "onSessionChatRuntimeMessage" {
+            if let Some(runtime) = &self.runtime {
+                runtime.call("brokerMessage", vec![payload.clone()]);
+            }
+        }
+        if callback == "onSessionChatAttachmentsPicked" {
+            self.invoke(json!({"type":"attachPaths","paths":payload["paths"]}), cx);
+        }
+    }
+
+    pub(crate) fn insert_prompt(&mut self, content: &str, cx: &mut Context<Self>) {
+        self.replace_draft(content, false, cx);
+    }
+
+    fn replace_draft(&mut self, content: &str, history: bool, cx: &mut Context<Self>) {
+        self.draft = content.to_string();
+        self.draft_revision += 1;
+        self.input_needs_sync = true;
+        self.input_undoable = true;
+        self.focus_requested = true;
+        if self.composer_ready {
+            self.invoke(json!({"type":"editDraft", "text":self.draft, "draftVersion":{"draftId":self.draft_id,"revision":self.draft_revision.max(1)},"history":history}),cx);
+        }
+        self.save_draft(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn persist_draft(&mut self, cx: &mut Context<Self>) {
+        if self.composer_ready {
+            self.invoke(json!({"type":"editDraft", "text":self.draft, "draftVersion":{"draftId":self.draft_id,"revision":self.draft_revision.max(1)}}), cx);
+        }
+    }
+
+    pub(crate) fn save_draft(&mut self, cx: &mut Context<Self>) {
+        if !self.composer_ready {
+            return;
+        }
+        self.invoke(json!({"type":"saveDraft","content":self.draft,"draftVersion":{"draftId":self.draft_id,"revision":self.draft_revision}}), cx);
+    }
+
+    pub(crate) fn host(&self, action: &str, fields: Value, cx: &mut Context<Self>) {
+        let mut message = fields.as_object().cloned().unwrap_or_default();
+        message.insert("type".into(), "sessionChatHostAction".into());
+        message.insert("action".into(), action.into());
+        cx.emit(NativeChatEvent::Host(Value::Object(message)));
+    }
+
+    /// Apply everything the runtime thread has drained since the last wake.
+    pub(crate) fn pump(&mut self, cx: &mut Context<Self>) {
+        let Some(runtime) = &self.runtime else {
+            return;
+        };
+        for output in runtime.take_outputs() {
+            match output {
+                ChatRuntimeOutput::Drained(output) => self.apply_output(output, cx),
+                ChatRuntimeOutput::Error(error) => {
+                    self.error = Some(error);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    /// CDXC:SessionChat 2026-09-18 WHY:
+    /// Retained chat views stay subscribed while parked, and every state frame (several a second across working sessions) notified, which redraws the whole window for a view nobody sees.
+    /// The state is applied either way; only a view that rendered recently asks for a redraw, and a parked one paints the latest state when it comes back.
+    /// CDXC:SessionChat 2026-09-19 WHY:
+    /// A streaming agent produced a runtime output several times a frame, and each one redrew the whole window, which re-lays out every visible transcript row; with a few agents streaming that was most of the UI thread.
+    /// Redraws from runtime output are coalesced to one per 50ms; the last output in a burst still paints, only never sooner than that.
+    fn notify_if_shown(&mut self, cx: &mut Context<Self>) {
+        const NOTIFY_MIN_INTERVAL: Duration = Duration::from_millis(50);
+        if !self
+            .last_render
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if let Some(at) = self.last_notified
+            && now.duration_since(at) < NOTIFY_MIN_INTERVAL
+        {
+            if !self.notify_scheduled {
+                self.notify_scheduled = true;
+                let wait = NOTIFY_MIN_INTERVAL - now.duration_since(at);
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(wait).await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.notify_scheduled = false;
+                        this.last_notified = Some(std::time::Instant::now());
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            return;
+        }
+        self.last_notified = Some(now);
+        cx.notify();
+    }
+
+    /// A broker event as JSON text; the runtime thread parses it, so the UI thread never builds the value.
+    pub(crate) fn receive_broker_raw(&mut self, raw: String) {
+        if let Some(runtime) = &self.runtime {
+            runtime.call_raw("brokerMessage", raw);
+        }
+    }
+
+    fn apply_output(&mut self, mut output: Value, cx: &mut Context<Self>) {
+        if let Some(mut splice) = output
+            .as_object_mut()
+            .and_then(|output| output.remove("itemsSplice"))
+            .filter(Value::is_object)
+        {
+            // The host ships only the changed window of transcript items (see transcriptItemsSplice in native-host.ts).
+            let inserted = splice
+                .get_mut("items")
+                .and_then(Value::as_array_mut)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            let items = Arc::make_mut(&mut self.items);
+            let start = (splice["start"].as_u64().unwrap_or(0) as usize).min(items.len());
+            let end = start
+                .saturating_add(splice["deleteCount"].as_u64().unwrap_or(0) as usize)
+                .min(items.len());
+            let inserted_len = inserted.len();
+            items.splice(start..end, inserted);
+            self.splice_transcript(start, end, inserted_len);
+            self.notify_if_shown(cx);
+        }
+        if let Some(markers) = output
+            .as_object_mut()
+            .and_then(|output| output.remove("minimap"))
+        {
+            self.minimap.adopt(&markers);
+            self.notify_if_shown(cx);
+        }
+        if let Some(mut splice) = output
+            .as_object_mut()
+            .and_then(|output| output.remove("subagentSplice"))
+            .filter(Value::is_object)
+        {
+            self.apply_subagent_splice(&mut splice);
+            self.notify_if_shown(cx);
+        }
+        if let Some(mut snapshot) = output
+            .as_object_mut()
+            .and_then(|output| output.remove("snapshot"))
+        {
+            // The pane's keyboard zoom is its own, and outlives the snapshots the host publishes.
+            self.apply_chat_zoom(&mut snapshot);
+            self.snapshot = Arc::new(snapshot);
+            self.adopt_status_line_reservation();
+            self.sync_model_picker_window(cx);
+            self.sync_context_editor_window(cx);
+            self.sync_save_markdown_window(cx);
+            self.sync_rewind_window(cx);
+            self.sync_suggestion_window(cx);
+            self.load_earlier_if_near_top(cx);
+            self.notify_if_shown(cx);
+        }
+        for request in output["requests"].as_array().into_iter().flatten() {
+            match request["kind"].as_str() {
+                Some("rpc") => self.rpc(request.clone(), cx),
+                Some("broker") => cx.emit(NativeChatEvent::Broker(request.clone())),
+                Some("composerClearExpected") => {
+                    if request["params"]["text"].as_str() == Some(self.draft.as_str()) { self.replace_draft("",false,cx); }
+                }
+                Some("returnedPrompt") => self.invoke(json!({"type":"applyReturned","text":request["params"]["text"],"current":self.draft}),cx),
+                Some("composerInit") => {
+                    let entry = &request["params"]["entry"];
+                    self.config.client_id = request["params"]["clientId"].as_str().unwrap_or_default().to_string();
+                    self.draft_id = entry["version"]["draftId"].as_str().unwrap_or_default().to_string();
+                    self.draft_revision = entry["version"]["revision"].as_u64().unwrap_or(1);
+                    self.draft = if entry["parked"] == true || entry["submitted"] == true { String::new() } else { entry["text"].as_str().unwrap_or_default().to_string() };
+                    self.input_needs_sync = true;
+                    self.composer_ready = true;
+                    self.host("composerReady", json!({}), cx);
+                    // The stash badge and the session-note dot need their first read (native-composer-chrome.ts).
+                    self.invoke(json!({"type":"refreshComposerChrome","sessionId":self.config.session_id}), cx);
+                    cx.emit(NativeChatEvent::DraftState(self.draft.is_empty()));
+                    cx.notify();
+                }
+                Some("draftSubmitted") => {
+                    self.pending_send = false;
+                    if request["method"] == "handoff" && request["params"]["version"]["draftId"].as_str() == Some(&self.draft_id) && request["params"]["version"]["revision"].as_u64() == Some(self.draft_revision) {
+                        self.draft.clear();
+                        self.draft_id = request["params"]["nextVersion"]["draftId"].as_str().unwrap_or_default().to_string();
+                        self.draft_revision = 1;
+                        self.input_needs_sync = true;
+                        self.focus_requested = true;
+                        cx.emit(NativeChatEvent::DraftState(true));
+                    }
+                    cx.notify();
+                }
+                Some("submissionFailed") => {
+                    self.pending_send = false;
+                    self.invoke(json!({"type":"restoreSubmission","text":request["params"]["text"],"current":self.draft}),cx);
+                }
+                Some("draftReceived") => {
+                    if request["params"]["previous"].as_str() == Some(self.draft.as_str()) {
+                        self.draft = request["params"]["content"].as_str().unwrap_or_default().to_owned();
+                        self.draft_id = request["params"]["version"]["draftId"].as_str().unwrap_or_default().to_owned();
+                        self.draft_revision = request["params"]["version"]["revision"].as_u64().unwrap_or(1);
+                        self.input_needs_sync = true;
+                        self.focus_requested = true;
+                        cx.emit(NativeChatEvent::DraftState(self.draft.is_empty()));
+                    }
+                    cx.notify();
+                }
+                Some("attachmentReferences") => {
+                    let selection = self.input.as_ref().map(|input|input.read(cx).selected_range()).unwrap_or(self.draft.len()..self.draft.len());
+                    let start = self.draft[..selection.start].encode_utf16().count();
+                    let end = self.draft[..selection.end].encode_utf16().count();
+                    self.invoke(json!({"type":"insertAttachments","paths":request["params"]["paths"],"text":self.draft,"start":start,"end":end}), cx);
+                }
+                Some("markdownSaved") => {
+                    let path = request["params"]["path"].as_str().unwrap_or_default().to_string();
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(path.clone()));
+                    crate::app::helpers::gpui_play_copy_sound();
+                    if let Some(main) = self.main_window {
+                        cx.defer(move |cx| {
+                            let _ = main.update(cx, |_, window, cx| {
+                                use gpui_component::WindowExt as _;
+                                window.push_notification(gpui_component::notification::Notification::success(format!("Saved to Markdown\n{path} was copied to the clipboard.")), cx);
+                            });
+                        });
+                    }
+                }
+                Some("host") => self.host(request["method"].as_str().unwrap_or_default(), request["params"].clone(), cx),
+                Some("chatImage") => self.receive_chat_image(request, cx),
+                Some("actionError") => { cx.notify(); }
+                Some("composer") => {
+                    self.replace_draft(request["params"]["content"].as_str().unwrap_or_default(), request["method"] == "history", cx);
+                    self.input_caret = request["params"]["caret"].as_u64().map(|caret|caret as usize);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn rpc(&mut self, request: Value, cx: &mut Context<Self>) {
+        let config = self.config.clone();
+        let Some(method) = request["method"].as_str() else {
+            return;
+        };
+        if method == "readNativeComposer" {
+            if let Some(runtime) = &self.runtime {
+                runtime.call(
+                    "resolve",
+                    vec![
+                        request["id"].clone(),
+                        self.draft.clone().into(),
+                        Value::Null,
+                    ],
+                );
+            }
+            return;
+        }
+        let endpoint = format!("/api/{method}");
+        let import_attachments = method == "importNativeAttachments";
+        let mut params = request["params"].as_object().cloned().unwrap_or_default();
+        params.insert("projectId".into(), config.project_id.into());
+        params.insert("sessionId".into(), config.session_id.into());
+        let params = Value::Object(params);
+        let id = request["id"].clone();
+        let task = cx.background_executor().spawn(async move {
+            if import_attachments {
+                return super::attachments::import_paths(&config.remote, &params)
+                    .map_err(|message| json!({"message":message,"endpoint":endpoint}));
+            }
+            super::rpc::request(config.remote, &endpoint, &params)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let (value, error) = match result {
+                    Ok(value) => (value, Value::Null),
+                    Err(error) => (Value::Null, error),
+                };
+                if let Some(runtime) = &this.runtime {
+                    runtime.call("resolve", vec![id, value, error]);
+                }
+                let _ = cx;
+            });
+        })
+        .detach();
+    }
+}

@@ -1,4 +1,5 @@
 import type { SidebarHudState, SidebarSessionGroup, SidebarToExtensionMessage } from './session-grid-contract';
+import type { SessionChatArmedAction } from './session-chat-presentation/armed-actions';
 
 export type NativeSidebarSection = {
   id: 'browser' | 'pinned' | 'sessions' | 'drafts' | 'parked' | 'snoozed';
@@ -209,9 +210,21 @@ export type NativeSidebarMenuItem = {
   separator?: boolean;
   command?: NativeSidebarCommand;
   children?: NativeSidebarMenuItem[];
+  /** Header actions that form one split button: the `start` half is the action, the `end` half opens its menu. */
+  split?: 'start' | 'end';
+  /** Panel-level, read from the first item: render the panel with the React agent launcher menu's layout. */
+  menuStyle?: 'agentLauncher';
+  /** The last-used agent in the agent launcher, shown highlighted with a semibold label. */
+  primary?: boolean;
 };
 
-export type NativeSidebarClockRow = { sessionId: string; timerLabel?: string; lastInteractionLabel?: string };
+export type NativeSidebarClockRow = {
+  sessionId: string;
+  timerLabel?: string;
+  lastInteractionLabel?: string;
+  /** Every session's armed Delayed Send / Close After Done, not only visible rows: the chat working row reads these. */
+  armedActions?: SessionChatArmedAction[];
+};
 export type NativeSidebarClockUpdate = { kind: 'clock'; version: 1; rows: NativeSidebarClockRow[] };
 
 export type NativeSidebarPatch = {

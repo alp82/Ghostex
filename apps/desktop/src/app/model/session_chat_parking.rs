@@ -27,14 +27,41 @@ pub(crate) struct ParkedAgentsChatRuntime {
     pub(crate) page_states: HashMap<TerminalSessionId, SessionChatPageState>,
     /// Pending sends and handoffs remain protected until the owning project restores their runtime state.
     pub(crate) protected_sessions: HashSet<TerminalSessionId>,
+    pub(crate) native_views:
+        HashMap<TerminalSessionId, Entity<crate::app::native_chat::state::NativeChatView>>,
     pub(crate) surfaces: HashMap<TerminalSessionId, Entity<CefSurface>>,
     pub(crate) surface_hidden_since: HashMap<TerminalSessionId, Instant>,
     pub(crate) composer_ready_sessions: HashSet<TerminalSessionId>,
     pub(crate) composer_empty_reports: HashMap<TerminalSessionId, bool>,
     pub(crate) pending_composer_insert: HashMap<TerminalSessionId, String>,
+    /// Pages that were on screen when the project was left; they skip pooling while the keep-alive window is open.
+    pub(crate) kept_alive_sessions: HashSet<TerminalSessionId>,
+    pub(crate) parked_at: Option<Instant>,
 }
 
 impl ParkedAgentsChatRuntime {
+    pub(crate) fn session_kept_alive(
+        &self,
+        session_id: TerminalSessionId,
+        keep: Option<Duration>,
+    ) -> bool {
+        self.kept_alive_sessions.contains(&session_id)
+            && crate::app::project_keep_alive::project_keep_alive_active(self.parked_at, keep)
+    }
+
+    pub(crate) fn keep_alive_remaining(
+        &self,
+        session_id: TerminalSessionId,
+        keep: Option<Duration>,
+    ) -> Option<Duration> {
+        if !self.kept_alive_sessions.contains(&session_id) {
+            return None;
+        }
+        keep?
+            .checked_sub(self.parked_at?.elapsed())
+            .filter(|remaining| !remaining.is_zero())
+    }
+
     pub(crate) fn surface_evictable(
         &self,
         session_id: TerminalSessionId,
@@ -61,6 +88,8 @@ pub(crate) struct SessionChatPageState {
     pub(crate) pending_native_requests: usize,
     pub(crate) account_key: Option<GpuiWorkspaceTerminalSessionKey>,
     pub(crate) pending_probe: Option<(u64, Option<futures::channel::oneshot::Sender<bool>>)>,
+    /// The armed Delayed Send / Close After Done labels last pushed to this page.
+    pub(crate) armed_actions_sent: Option<serde_json::Value>,
 }
 
 impl SessionChatPageState {
@@ -79,6 +108,7 @@ impl SessionChatPageState {
             pending_native_requests: 0,
             account_key: None,
             pending_probe: None,
+            armed_actions_sent: None,
         }
     }
 }

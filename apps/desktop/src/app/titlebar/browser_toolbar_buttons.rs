@@ -22,6 +22,7 @@ use gpui::IntoElement;
 use gpui::KeyDownEvent;
 use gpui::MouseButton;
 use gpui::MouseDownEvent;
+use gpui::MouseUpEvent;
 use gpui::ParentElement as _;
 use gpui::Styled as _;
 use gpui::div;
@@ -35,6 +36,7 @@ use gpui_component::tooltip::ManagedTooltipExt as _;
 use gpui_component::tooltip::ManagedTooltipPlacement;
 
 use crate::app::consts::*;
+use crate::app::context_menu::GpuiContextMenu;
 use crate::app::helpers::*;
 use crate::app::model::*;
 use crate::*;
@@ -53,11 +55,9 @@ impl GhostexGpuiApp {
             .flex()
             .flex_shrink_0()
             .h(px(BROWSER_TOOLBAR_HEIGHT - 1.0))
-            .w(px(BROWSER_TOOLBAR_BUTTON_WIDTH))
+            .px(px(TITLEBAR_BUTTON_HORIZONTAL_PADDING))
             .items_center()
             .justify_center()
-            .border_l_1()
-            .border_color(titlebar_button_border_color())
             .cursor_default()
             .hover(|this| this.bg(chrome_color(0x212121, 0xe5e5e5)))
             .on_mouse_down(
@@ -85,6 +85,8 @@ impl GhostexGpuiApp {
         self.render_browser_pane_actions_button(pane_id, true, cx)
     }
 
+    /// CDXC:ContextMenus 2026-09-17 DECISION:
+    /// User: the address bar right-click menu must use the GPUI context menu instead of the system menu.
     pub(crate) fn render_browser_address_field(
         &self,
         pane_id: BrowserPaneId,
@@ -120,6 +122,37 @@ impl GhostexGpuiApp {
                     this.cancel_browser_address_edit_for_pane(pane_id, window, cx);
                 }
             }))
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                    cx.stop_propagation();
+                    if !this.focus_browser_address_input_for_pane(pane_id, window, cx) {
+                        return;
+                    }
+                    let input = this.browser_address_inputs[&pane_id].read(cx);
+                    let has_selection = !input.selected_range().is_empty();
+                    let has_paste = cx.read_from_clipboard().is_some();
+                    GpuiContextMenu::new()
+                        .menu_with_disabled(
+                            "Cut",
+                            !has_selection,
+                            Box::new(gpui_component::input::Cut),
+                        )
+                        .menu_with_disabled(
+                            "Copy",
+                            !has_selection,
+                            Box::new(gpui_component::input::Copy),
+                        )
+                        .menu_with_disabled(
+                            "Paste",
+                            !has_paste,
+                            Box::new(gpui_component::input::Paste),
+                        )
+                        .separator()
+                        .menu("Select All", Box::new(gpui_component::input::SelectAll))
+                        .show(event.position, window, cx);
+                }),
+            )
             .child(titlebar_svg_icon(
                 browser_security_icon_path(&address_value),
                 14.0,
@@ -134,6 +167,9 @@ impl GhostexGpuiApp {
                     .overflow_hidden()
                     .child(
                         Input::new(&address_input)
+                            // Keep Input's right-click caret/selection handling; an empty
+                            // native menu lets the parent show the shared GPUI popup on release.
+                            .context_menu(|menu, _, _| menu)
                             .with_size(ComponentSize::XSmall)
                             .appearance(false)
                             .bordered(false)
@@ -176,16 +212,9 @@ impl GhostexGpuiApp {
             .flex()
             .flex_shrink_0()
             .h(px(BROWSER_TOOLBAR_HEIGHT - 1.0))
-            .w(px(if id == "back" {
-                BROWSER_TOOLBAR_BUTTON_WIDTH - 1.0
-            } else {
-                BROWSER_TOOLBAR_BUTTON_WIDTH
-            }))
+            .px(px(TITLEBAR_BUTTON_HORIZONTAL_PADDING))
             .items_center()
             .justify_center()
-            .when(id != "back", |this| this.border_l_1())
-            .when(id == "home", |this| this.border_r_1())
-            .border_color(titlebar_button_border_color())
             .cursor_default()
             .text_color(if enabled {
                 titlebar_icon_color()

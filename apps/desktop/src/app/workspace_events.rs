@@ -842,12 +842,20 @@ impl GhostexGpuiApp {
         CDXC:FocusRouting 2026-06-24-21:07:
         React may return only the gxserver presentation session ids it already owns from daemon create/focus/fork/restore flows. Store the parsed focus state in runtime memory, refresh only the sidebar bootstrap bridge on changes, and ignore malformed payloads without logging raw renderer JSON or deriving ids from terminal tabs, labels, paths, project names, or command text.
         */
-        let Ok(next_state) =
-            gpui_gxserver_presentation_focus_state_from_sidebar_contract_json(payload)
+        let Ok((next_state, focus_stamp)) =
+            gpui_gxserver_presentation_focus_state_and_stamp_from_sidebar_contract_json(payload)
         else {
             return;
         };
-        self.set_sidebar_gxserver_presentation_focus_state(next_state, cx);
+        // CDXC:FocusRouting 2026-09-19 WHY: the sidebar runtime must never override a newer local selection (user decision in gx_store/local_focus.rs). A payload produced against an older focus stamp keeps its tab list and loses its selection, active project and visible set before anything below reads it (gx_store/local_focus.rs).
+        let (next_state, stale) =
+            self.gx_store_admit_old_runtime_focus_state(next_state, focus_stamp, cx);
+        if stale {
+            // Tab membership only. The workspace project is not this payload's to choose: a swap here would undo whatever project the app is on now.
+            self.apply_sidebar_gxserver_presentation_focus_state(next_state, cx);
+        } else {
+            self.set_sidebar_gxserver_presentation_focus_state(next_state, cx);
+        }
     }
 
     pub(crate) fn receive_sidebar_workspace_terminal_focus_payload(
@@ -862,6 +870,11 @@ impl GhostexGpuiApp {
         let Ok(message) = gpui_sidebar_workspace_terminal_focus_from_json(payload) else {
             return;
         };
+        // CDXC:FocusRouting 2026-09-19 WHY: the sidebar runtime must never override a newer local selection (user decision in gx_store/local_focus.rs). This replaces the time-based drop of an in-process click's echo (three second window) with the store's stamp order (gx_store/local_focus.rs).
+        if self.gx_store_focus_request_lost_to_local_selection(&message) {
+            return;
+        }
+        self.adopt_agent_launch_placeholder(&message);
         support_logs::append_temporary(
             support_logs::GpuiSupportLog::TerminalFocus,
             "TEMP.gpui.sessionSwitchLatency.bridgeReceived",

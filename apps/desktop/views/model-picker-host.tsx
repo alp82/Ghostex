@@ -20,8 +20,12 @@ import {
   getghostexHotkeyActionIdForKey,
   normalizeghostexHotkeySettings,
 } from '@/packages/shared/ghostex-hotkeys';
-import type { GxserverReadSessionChatResult } from '@/packages/shared/session-chat';
+import type {
+  GxserverReadSessionChatResult,
+  SessionChatModelSelectionScope,
+} from '@/packages/shared/session-chat';
 import type { GxserverSelectSessionChatModelResult } from '@/packages/shared/gxserver-protocol';
+import { adoptModelPicksSessionOnly } from '@/packages/shared/session-chat-presentation/model-picker';
 import './model-picker-host.css';
 
 const clientStorage = storageScope(["terminalModel"]);
@@ -33,6 +37,8 @@ interface PickerOpen {
   projectId: string;
   sessionId: string;
   hotkeys: unknown;
+  /** The saved Session-only model picks setting, read when the window opens. */
+  modelPicksSessionOnly?: boolean;
   connection: { baseUrl: string; authToken: string; protocolVersion: number };
 }
 
@@ -100,6 +106,7 @@ function ModelPickerHost() {
       if (message?.type !== 'open' || message.modal !== 'modelPicker') return;
       if (!modelPickerProvider(message.provider)) return;
       interacted.current = false;
+      adoptModelPicksSessionOnly(message.modelPicksSessionOnly === true);
       setCancelRequested(false);
       setError(undefined);
       const selected = readSelection(message);
@@ -165,15 +172,19 @@ function ModelPickerHost() {
     return () => abort.abort();
   }, [context]);
 
-  const save = async (selection: ModelPickerSelection) => {
+  const save = async (selection: ModelPickerSelection, scope: SessionChatModelSelectionScope) => {
     if (!context) return;
     interacted.current = true;
     setError(undefined);
     try {
       const result = await request<GxserverSelectSessionChatModelResult>(context, '/api/selectSessionChatModel', {
         ...selection,
+        scope,
         defer: true,
       });
+      // An older daemon drops the field and would apply a session-only pick as the saved default.
+      if (scope === 'session' && result.pendingModelSelection?.scope !== 'session')
+        throw new Error('This computer\u2019s Ghostex cannot apply a model to one session yet.');
       if (!result.queued || !result.pendingModelSelection)
         throw new Error('The server has not accepted the selection.');
       remember(context, selection);

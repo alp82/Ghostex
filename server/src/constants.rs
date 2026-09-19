@@ -128,4 +128,6 @@ pub const GXSERVER_MIGRATION_IDS: &[&str] = &[
     "0036_custom_session_tags",
     "0037_session_fork_revision",
     "0038_delayed_send_watched_session",
+    "0039_session_chat_selection_scope",
+    "0040_prune_consumed_draft_recovery",
 ];

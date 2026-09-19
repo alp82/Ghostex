@@ -714,6 +714,13 @@ impl GhostexGpuiApp {
                 .to_string(),
             ),
             (
+                "modelPicksSessionOnly",
+                gpui_session_chat_model_picks_session_only_from_settings(
+                    shared_settings::shared_sidebar_settings_snapshot().object(),
+                )
+                .to_string(),
+            ),
+            (
                 "fileEditPreviews",
                 gpui_session_chat_file_edit_previews_from_settings(
                     shared_settings::shared_sidebar_settings_snapshot().object(),
@@ -896,7 +903,13 @@ impl GhostexGpuiApp {
     /// One session switch used to run the chat reconcile four times back to back (bootstrap refresh, keyboard handoff, text-focus handoff, CEF visibility sync), each re-walking every surface.
     /// Requests through this entry coalesce into a single pass at the end of the current effect cycle, which still lands before the next frame paints.
     /// Callers that read the surface map right after reconciling must call `reconcile_agents_chat_surfaces` directly.
+    /// CDXC:SessionChat 2026-09-19 WHY:
+    /// While a held "next tab" key moves through tabs the pass waits until the selection settles (gx_store/burst.rs), so a chat view is not created for a tab the user only passes. A chat view that already exists is drawn by the pane body without this pass.
     pub(crate) fn reconcile_agents_pane_surfaces(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.gx_store_selection_is_settling() {
+            self.gx_store_defer_chat_reconcile();
+            return;
+        }
         if self.agents_chat_reconcile_scheduled {
             return;
         }
@@ -919,6 +932,19 @@ impl GhostexGpuiApp {
     }
 
     pub(crate) fn ensure_agents_chat_surface(
+        &mut self,
+        session_id: TerminalSessionId,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<Entity<CefSurface>> {
+        if self.session_chat_use_gpui {
+            self.ensure_native_chat(session_id, cx);
+            None
+        } else {
+            self.create_legacy_react_chat_surface(session_id, cx)
+        }
+    }
+
+    fn create_legacy_react_chat_surface(
         &mut self,
         session_id: TerminalSessionId,
         cx: &mut gpui::Context<Self>,
@@ -1075,6 +1101,15 @@ impl GhostexGpuiApp {
             .collect::<HashSet<_>>();
         self.agents_chat_mode_sessions
             .retain(|session_id| live_session_ids.contains(session_id));
+        let stale_native = self
+            .native_chat_views
+            .keys()
+            .copied()
+            .filter(|id| !live_session_ids.contains(id))
+            .collect::<Vec<_>>();
+        for id in stale_native {
+            self.remove_agents_chat_surface_for_session(id, cx);
+        }
         /*
         CDXC:Diagnostics 2026-08-28:
         Only surfaces whose SESSION is gone are destroyed here. A live session
@@ -1150,6 +1185,10 @@ impl GhostexGpuiApp {
         for session_id in &visible_session_ids {
             let _ = self.ensure_agents_chat_surface(*session_id, cx);
         }
+        self.dismiss_native_chat_windows_leaving_view(&visible_session_ids, cx);
+        self.native_chat_visible_sessions = visible_session_ids.clone();
+        self.resume_visible_native_chat_runtimes(cx);
+        self.schedule_native_chat_prewarm(cx);
         let mut visibility_changed = false;
         for (session_id, surface) in &self.agents_chat_surfaces {
             let visible = visible_session_ids.contains(session_id)
@@ -1306,6 +1345,7 @@ impl GhostexGpuiApp {
         session_id: TerminalSessionId,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.native_chat_views.remove(&session_id);
         let caller = std::panic::Location::caller();
         let file = std::path::Path::new(caller.file())
             .file_name()
@@ -1393,12 +1433,25 @@ impl GhostexGpuiApp {
             )
             .copied()
             .collect();
+        // Captured before the loop below stamps every page as hidden.
+        let kept_alive_sessions = if self.project_switch_keep_alive().is_some() {
+            self.agents_chat_surfaces
+                .keys()
+                .copied()
+                .filter(|id| !self.agents_chat_surface_hidden_since.contains_key(id))
+                .collect()
+        } else {
+            HashSet::new()
+        };
         self.agents_chat_mode_sessions.clear();
         self.pending_agents_chat_launch_intents.clear();
         self.pending_session_terminal_composer_insert.clear();
         self.pending_session_chat_draft_handoffs.clear();
         self.session_chat_draft_capture_in_flight.clear();
         self.pending_session_chat_received_drafts.clear();
+        for view in self.native_chat_views.values() {
+            view.update(cx, |view, cx| view.dismiss_windows_for_hidden_pane(cx));
+        }
         for (session_id, surface) in &self.agents_chat_surfaces {
             self.record_session_chat_lifecycle(
                 *session_id,
@@ -1420,11 +1473,14 @@ impl GhostexGpuiApp {
             ),
             page_states: std::mem::take(&mut self.agents_chat_page_states),
             protected_sessions,
+            native_views: std::mem::take(&mut self.native_chat_views),
             surfaces: std::mem::take(&mut self.agents_chat_surfaces),
             surface_hidden_since: std::mem::take(&mut self.agents_chat_surface_hidden_since),
             composer_ready_sessions: std::mem::take(&mut self.session_chat_composer_ready_sessions),
             composer_empty_reports: std::mem::take(&mut self.session_chat_composer_empty_reports),
             pending_composer_insert: std::mem::take(&mut self.pending_session_chat_composer_insert),
+            kept_alive_sessions,
+            parked_at: Some(Instant::now()),
         }
     }
 
@@ -1440,6 +1496,7 @@ impl GhostexGpuiApp {
     ) {
         self.agents_chat_auto_switch_observed_sessions = parked.auto_switch_observed_sessions;
         self.agents_chat_page_states = parked.page_states;
+        self.native_chat_views = parked.native_views;
         self.agents_chat_surfaces = parked.surfaces;
         self.agents_chat_surface_hidden_since = parked.surface_hidden_since;
         self.session_chat_composer_ready_sessions = parked.composer_ready_sessions;

@@ -648,10 +648,28 @@ impl GhostexGpuiApp {
         CDXC:Workarea 2026-06-29-00:02:
         Active-project changes no longer reconcile Source/Browser/Kanban/Automate/Manage readiness stores. The stored snapshot immediately feeds titlebar availability and the direct runtime URL/CEF gates, so stale proof state cannot keep or block a workarea surface.
         */
-        match store_latest_gpui_project_snapshot_from_sidebar_contract_json(
+        let local_stamp = self.gx_store_local_focus_stamp();
+        let workspace_project_id = self.agents_workspace_project_id.clone();
+        let mut refused_stamp = None;
+        let stored = store_latest_gpui_project_snapshot_from_sidebar_contract_json(
             &mut self.latest_sidebar_project_snapshot,
             payload,
-        ) {
+            |snapshot, focus_stamp| {
+                // Same project: context data only, nothing to swap. Another project from before the newest local selection: the runtime had not heard of that selection yet.
+                let observed_stamp = focus_stamp.unwrap_or(0);
+                let admitted = observed_stamp >= local_stamp
+                    || gpui_active_project_id_from_snapshot(Some(snapshot))
+                        == workspace_project_id.as_deref();
+                if !admitted {
+                    refused_stamp = Some(observed_stamp);
+                }
+                admitted
+            },
+        );
+        if let Some(observed_stamp) = refused_stamp {
+            self.gx_store_note_stale_project_context(observed_stamp);
+        }
+        match stored {
             Ok(GpuiProjectSnapshotStoreResult::Changed) => {
                 /*
                 CDXC:Navigation 2026-07-29:
@@ -916,8 +934,9 @@ impl GhostexGpuiApp {
             &self.agents_send_when_stopped_watchers,
             SystemTime::now(),
         );
+        let kept_alive_viewer_sessions = self.agents_terminal_keep_alive_viewer_sessions();
         self.park_agents_gpui_engine_terminal_zmx_clients(cx);
-        self.release_unused_agents_gpui_terminal_viewers(true, cx);
+        self.release_unused_agents_gpui_terminal_viewers(true, &kept_alive_viewer_sessions, cx);
         let zmx_session_names = self
             .agents_workspace
             .terminal_sessions
@@ -973,6 +992,8 @@ impl GhostexGpuiApp {
                         gpui_engine_close_confirms: std::mem::take(
                             &mut self.agents_gpui_engine_close_confirms,
                         ),
+                        kept_alive_viewer_sessions,
+                        parked_at: Some(Instant::now()),
                     },
                 );
                 if let Some(replaced) = self
@@ -1125,6 +1146,7 @@ impl GhostexGpuiApp {
         self.apply_project_view_state_for_active_project(cx);
         self.reconcile_agents_chat_surfaces(cx);
         self.evict_expired_hidden_agents_chat_surfaces(cx);
+        self.ensure_project_keep_alive_expiry_scheduled(cx);
         self.persist_shell_layout_state();
         self.sync_gpui_keep_awake_automation_from_current_settings(cx);
         cx.notify();

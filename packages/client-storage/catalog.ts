@@ -216,6 +216,14 @@ export const storageCatalog = Object.freeze({
     objectCodec,
     protectedDisk
   ),
+  modelScopeDefault: define(
+    'modelScopeDefault',
+    'Model pills that also set the default',
+    chat + 'session-chat-model-picker-launcher.tsx',
+    'ghostex.model-selection-also-default.',
+    boolean,
+    cache
+  ),
   retiredQuestions: define(
     'retiredQuestions',
     'Answered question receipts',
@@ -399,13 +407,6 @@ export const storageCatalog = Object.freeze({
     desktop + 'views/manage/manage-app.tsx',
     'ghostex.manage.sidebarSide',
     enumCodec(['left', 'right'])
-  ),
-  docsWidth: define(
-    'docsWidth',
-    'Docs sidebar width',
-    desktop + 'views/manage/manage-app.tsx',
-    'ghostex.manage.sidebarWidth',
-    textCodec
   ),
   docsPinned: define(
     'docsPinned',

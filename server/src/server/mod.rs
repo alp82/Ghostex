@@ -426,6 +426,7 @@ pub async fn run_gxserver_foreground(
     }
 
     let storage = initialize_gxserver_storage(&paths)?;
+    crate::storage::hold_gxserver_database_open(&paths)?;
     let config = read_gxserver_config(&paths)?;
     let identity = ensure_gxserver_identity(&paths)?;
     let auth = ensure_gxserver_auth_token(&paths)?;
@@ -1638,22 +1639,35 @@ async fn route_http(
                 from the narrow fork-row read over the whole registry.
                 */
                 let sessions = repository.list_presentation_sessions()?;
-                let mut sessions_changed = sync_session_state_sidecars(
-                    &state,
-                    db,
-                    repository,
-                    &sessions,
-                    "read-presentation-snapshot",
-                )?;
-                sessions_changed |= sync_zmx_provider_existence(&state, db, repository, &sessions)?;
-                sessions_changed |= sync_live_zmx_process_identities(
-                    &state,
-                    db,
-                    repository,
-                    &sessions,
-                    None,
-                    "read-presentation-snapshot",
-                )?;
+                /*
+                CDXC:StateSync 2026-09-18 WHY:
+                Every client read ran the three repair passes, and the desktop
+                alone reads this about once a second, so the zmx process scan
+                behind sync_live_zmx_process_identities ran continuously (13%
+                of gxserver's CPU in a sample). The passes repair durable rows,
+                so a read within a few seconds of the last pass sees the same
+                rows it would have repaired; run them at most every 5 seconds.
+                */
+                let mut sessions_changed = false;
+                if presentation_snapshot_sync_due() {
+                    sessions_changed = sync_session_state_sidecars(
+                        &state,
+                        db,
+                        repository,
+                        &sessions,
+                        "read-presentation-snapshot",
+                    )?;
+                    sessions_changed |=
+                        sync_zmx_provider_existence(&state, db, repository, &sessions)?;
+                    sessions_changed |= sync_live_zmx_process_identities(
+                        &state,
+                        db,
+                        repository,
+                        &sessions,
+                        None,
+                        "read-presentation-snapshot",
+                    )?;
+                }
                 let sessions = if sessions_changed {
                     repository.list_presentation_sessions()?
                 } else {
@@ -2647,6 +2661,20 @@ async fn route_http(
             ),
         ),
     }
+}
+
+/// True at most once per five seconds across every snapshot read.
+fn presentation_snapshot_sync_due() -> bool {
+    static LAST_SYNC: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let Ok(mut last) = LAST_SYNC.lock() else {
+        return true;
+    };
+    let now = std::time::Instant::now();
+    if last.is_some_and(|at| now.duration_since(at) < std::time::Duration::from_secs(5)) {
+        return false;
+    }
+    *last = Some(now);
+    true
 }
 
 fn handle_domain_http<F>(
