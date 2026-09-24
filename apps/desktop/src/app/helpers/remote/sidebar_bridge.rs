@@ -41,8 +41,8 @@ pub(crate) fn gpui_remote_sidebar_request_path_allowed(path: &str) -> bool {
             Creating a remote agent session is a two-step daemon operation:
             `/api/createAgentSession` writes the row and queues the agent's
             launch startup text, then `/api/startSessionProvider` spawns the
-            zmx provider that actually runs the agent, and `/api/sendSessionMessage`
-            delivers the workflow prompt. Leaving the second and third steps off
+            zmx provider that actually runs the agent, and `/api/queueSessionChatPrompt`
+            durably queues the workflow prompt for verified delivery. Leaving the second and third steps off
             this allowlist made every remote agent launch report "Remote agent
             failed" at the Rust boundary and silently dropped Git/worktree
             workflow prompts. Params below are reshaped to the two ids (plus a
@@ -51,6 +51,7 @@ pub(crate) fn gpui_remote_sidebar_request_path_allowed(path: &str) -> bool {
             */
             | "/api/startSessionProvider"
             | "/api/sendSessionMessage"
+            | "/api/queueSessionChatPrompt"
             | "/api/updateSession"
             | "/api/requestSessionRename"
             /*
@@ -110,6 +111,24 @@ pub(crate) fn gpui_remote_sidebar_request_path_allowed(path: &str) -> bool {
             */
             | "/api/readSidebarHud"
             | "/api/updateSidebarProjectCollections"
+            /*
+            CDXC:RemoteMachines 2026-09-21:
+            Editing a Space, reordering projects, Switch Account and saving a
+            note are the four sidebar writes the old runtime has always sent
+            down a machine's tunnel and this list never carried, so each one
+            failed at the Rust boundary on a remote tab while working on this
+            computer. Their params are shaped in
+            `sidebar_bridge_writes.rs`, which says why each is the same kind
+            of write as the allowlisted sibling beside it and why the server
+            needs no change.
+            */
+            | "/api/updateSidebarSpaces"
+            | "/api/updateWorkspaceSessionGroups"
+            | "/api/switchSessionAgent"
+            | "/api/saveSessionAgentNote"
+            // The account pages' list, a row's account list and a pick; shaped both ways in
+            // `sidebar_bridge_writes.rs`.
+            | "/api/agentAccounts"
             | "/api/runGitAction"
             | "/api/runGitHubAction"
             | "/api/runBeadsAction"
@@ -136,6 +155,11 @@ pub(crate) fn gpui_remote_sidebar_request_params(
         "/api/updateSidebarProjectCollections" => {
             gpui_remote_sidebar_project_collections_params(params)
         }
+        "/api/updateSidebarSpaces" => gpui_remote_sidebar_spaces_params(params),
+        "/api/updateWorkspaceSessionGroups" => gpui_remote_sidebar_workspace_groups_params(params),
+        "/api/switchSessionAgent" => gpui_remote_sidebar_switch_session_agent_params(params),
+        "/api/saveSessionAgentNote" => gpui_remote_sidebar_session_note_params(params),
+        "/api/agentAccounts" => gpui_remote_sidebar_agent_accounts_params(params),
         "/api/closeProjectToRecent"
         | "/api/restoreRecentProject"
         | "/api/removeRecentProject"
@@ -153,6 +177,12 @@ pub(crate) fn gpui_remote_sidebar_request_params(
         }
         "/api/startSessionProvider" => gpui_remote_sidebar_session_lifecycle_params(params, None),
         "/api/sendSessionMessage" => gpui_remote_sidebar_send_session_message_params(params),
+        "/api/queueSessionChatPrompt" => {
+            let mut shaped = gpui_remote_sidebar_send_session_message_params(params)?;
+            shaped.as_object_mut()?.remove("submit");
+            shaped["startupSend"] = serde_json::json!(true);
+            Some(shaped)
+        }
         "/api/settleSession"
         | "/api/unsettleSession"
         | "/api/unsnoozeSession"
@@ -863,6 +893,12 @@ pub(crate) fn gpui_remote_sidebar_response_payload(
             gpui_remote_sidebar_agent_hook_status_response_payload(result)
         }
         "/api/scheduleDelayedSend" | "/api/postponeDelayedSend" => serde_json::json!({}),
+        "/api/queueSessionChatPrompt" => result
+            .pointer("/prompt/id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.is_empty() && id.len() <= 128 && !id.chars().any(char::is_control))
+            .map(|id| serde_json::json!({ "prompt": { "id": id } }))
+            .unwrap_or(serde_json::Value::Null),
         "/api/cancelDelayedSend" => serde_json::json!({
             "changed": result
                 .get("changed")
@@ -877,6 +913,19 @@ pub(crate) fn gpui_remote_sidebar_response_payload(
                     "sidebarProjectCollections": sidebar_project_collections,
                 })
             })
+            .unwrap_or(serde_json::Value::Null),
+        // Both documents are adopted by the caller, which refuses an answer that is not the
+        // document it asked about, so each is rebuilt through the same shaping its params went
+        // through rather than passed on as the machine sent it.
+        "/api/updateSidebarSpaces" => result
+            .get("sidebarSpaces")
+            .and_then(gpui_remote_sidebar_spaces_state)
+            .map(|sidebar_spaces| serde_json::json!({ "sidebarSpaces": sidebar_spaces }))
+            .unwrap_or(serde_json::Value::Null),
+        "/api/updateWorkspaceSessionGroups" => result
+            .get("groups")
+            .and_then(gpui_remote_sidebar_workspace_groups_state)
+            .map(|groups| serde_json::json!({ "groups": groups }))
             .unwrap_or(serde_json::Value::Null),
         "/api/updateProject"
         | "/api/closeProjectToRecent"
@@ -913,6 +962,7 @@ pub(crate) fn gpui_remote_sidebar_response_payload(
         "/api/exportSessionTranscript" => {
             gpui_remote_sidebar_export_session_transcript_response_payload(result)
         }
+        "/api/agentAccounts" => gpui_remote_sidebar_agent_accounts_response_payload(result),
         _ => serde_json::Value::Null,
     }
 }

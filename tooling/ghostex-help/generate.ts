@@ -9,6 +9,7 @@
  * is stale.
  * SEE-ALSO: packages/core-ui/settings-modal/search-catalog.ts, server/src/ghostex_cli/settings.rs, server/src/ghostex_cli/guide.rs.
  */
+import './catalog-platform';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,7 +123,10 @@ const AGENT_DENIED_KEY_PATTERN = /token|password|secret|apikey|credential/iu;
 const AGENT_DENIED_TABS = new Set(['accounts', 'remote']);
 
 const NUMBER_RANGES: Record<string, { max: number; min: number; step?: number }> = {
-  agentManagerZoomPercent: { max: MAX_AGENT_MANAGER_ZOOM_PERCENT, min: MIN_AGENT_MANAGER_ZOOM_PERCENT },
+  agentManagerZoomPercent: {
+    max: MAX_AGENT_MANAGER_ZOOM_PERCENT,
+    min: MIN_AGENT_MANAGER_ZOOM_PERCENT,
+  },
   commandsPanelDefaultHeightPx: {
     max: MAX_COMMANDS_PANEL_DEFAULT_HEIGHT_PX,
     min: MIN_COMMANDS_PANEL_DEFAULT_HEIGHT_PX,
@@ -154,14 +158,23 @@ const NUMBER_RANGES: Record<string, { max: number; min: number; step?: number }>
     max: MAX_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
     min: MIN_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   },
-  sidebarDefaultWidthPx: { max: MAX_SIDEBAR_DEFAULT_WIDTH_PX, min: MIN_SIDEBAR_DEFAULT_WIDTH_PX },
+  sidebarDefaultWidthPx: {
+    max: MAX_SIDEBAR_DEFAULT_WIDTH_PX,
+    min: MIN_SIDEBAR_DEFAULT_WIDTH_PX,
+  },
   sidebarTooltipDelayMs: {
     max: MAX_SIDEBAR_TOOLTIP_DELAY_MS,
     min: MIN_SIDEBAR_TOOLTIP_DELAY_MS,
     step: SIDEBAR_TOOLTIP_DELAY_STEP_MS,
   },
-  terminalPaneHorizontalPaddingPx: { max: MAX_TERMINAL_PANE_PADDING_PX, min: MIN_TERMINAL_PANE_PADDING_PX },
-  terminalPaneVerticalPaddingPx: { max: MAX_TERMINAL_PANE_PADDING_PX, min: MIN_TERMINAL_PANE_PADDING_PX },
+  terminalPaneHorizontalPaddingPx: {
+    max: MAX_TERMINAL_PANE_PADDING_PX,
+    min: MIN_TERMINAL_PANE_PADDING_PX,
+  },
+  terminalPaneVerticalPaddingPx: {
+    max: MAX_TERMINAL_PANE_PADDING_PX,
+    min: MIN_TERMINAL_PANE_PADDING_PX,
+  },
   terminalViewWidthPercent: {
     max: MAX_TERMINAL_VIEW_WIDTH_PERCENT,
     min: MIN_TERMINAL_VIEW_WIDTH_PERCENT,
@@ -185,13 +198,23 @@ type SupplementalRow = {
 };
 
 const GENERAL_TAB = { tab: 'settings', tabTitle: 'General' } as const;
+/** The Theme page renders the `appearance` group's sections (Theme, App Icon) on its own tab. */
+const THEME_TAB = { tab: 'theme', tabTitle: 'Theme' } as const;
 const EXTENSIONS_TAB = { tab: 'extensions', tabTitle: 'Extensions' } as const;
 const AGENTS_TAB = { tab: 'agents', tabTitle: 'Agents' } as const;
 const PROJECTS_TAB = { tab: 'projects', tabTitle: 'Projects' } as const;
 const OPEN_TARGETS_TAB = { tab: 'openTargets', tabTitle: 'Open In' } as const;
 const HOTKEYS_TAB = { tab: 'hotkeys', tabTitle: 'Hotkeys' } as const;
-const titlebarViews = { ...EXTENSIONS_TAB, section: 'viewOrder', sectionTitle: 'Titlebar views' };
-const agentsConfig = { ...AGENTS_TAB, section: 'config', sectionTitle: 'Config' };
+const viewRows = {
+  ...EXTENSIONS_TAB,
+  section: 'viewOrder',
+  sectionTitle: 'Views',
+};
+const agentsConfig = {
+  ...AGENTS_TAB,
+  section: 'config',
+  sectionTitle: 'Config',
+};
 
 /**
  * Settings keys the modal renders without a search row (or with a row keyed
@@ -253,73 +276,104 @@ const SUPPLEMENTAL_SETTING_ROWS: Record<string, SupplementalRow> = {
     title: 'Show Advanced settings',
   },
   codeViewTabHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Code view tab from the titlebar.',
+    ...viewRows,
+    subtitle:
+      'Stop offering the Code view, so it is missing from the view panel tab strip, its + menu and the view picker.',
     title: 'Hide Code view',
   },
   browserViewTabHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Browser view tab from the titlebar.',
+    ...viewRows,
+    subtitle:
+      'Stop offering the Browser view, so it is missing from the view panel tab strip, its + menu and the view picker.',
     title: 'Hide Browser view',
   },
   kanbanViewTabHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Kanban view tab from the titlebar.',
+    ...viewRows,
+    subtitle:
+      'Stop offering the Kanban view, so it is missing from the view panel tab strip, its + menu and the view picker.',
     title: 'Hide Kanban view',
   },
   automateViewTabHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Automate view tab from the titlebar.',
+    ...viewRows,
+    subtitle:
+      'Stop offering the Automate view, so it is missing from the view panel tab strip, its + menu and the view picker.',
     title: 'Hide Automate view',
   },
   docsViewTabHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Docs view tab from the titlebar.',
+    ...viewRows,
+    subtitle:
+      'Stop offering the Docs view, so it is missing from the view panel tab strip, its + menu and the view picker.',
     title: 'Hide Docs view',
   },
+  linearViewTabHidden: {
+    ...viewRows,
+    title: 'Hide Linear view',
+    subtitle: 'Hide the Linear view from the view picker and tab menus.',
+  },
+  jiraViewTabHidden: {
+    ...viewRows,
+    title: 'Hide Jira view',
+    subtitle: 'Hide the Jira view from the view picker and tab menus.',
+  },
+  githubViewTabHidden: {
+    ...viewRows,
+    title: 'Hide GitHub view',
+    subtitle: 'Hide the automatic repository view from the view picker and tab menus.',
+  },
+  storybookViewTabHidden: {
+    ...viewRows,
+    title: 'Hide Storybook view',
+    subtitle: 'Hide the built-in component workshop. When enabled, it appears only in projects with Storybook.',
+  },
+  terminalViewTabHidden: {
+    ...viewRows,
+    subtitle:
+      'Stop offering the Terminal view, so it is missing from the view panel tab strip, its + menu and the view picker.',
+    title: 'Hide Terminal view',
+  },
   tipsAndTricksTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Tips button from the titlebar.',
+    ...viewRows,
+    subtitle: 'Stop offering the Tips & Tricks page, so it is missing from the header ⋯ menu and the view picker.',
     title: 'Hide Tips button',
   },
   notificationsTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Notifications bell from the titlebar.',
+    ...viewRows,
+    subtitle: "Hide the Notifications bell from the sidebar's top row.",
     title: 'Hide Notifications bell',
   },
   helpTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Ghostex Help button from the titlebar.',
+    ...viewRows,
+    subtitle: 'Stop offering the Ask Ghostex page, so it is missing from the header ⋯ menu and the view picker.',
     title: 'Hide Help button',
   },
   resourcesTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Resources button from the titlebar.',
+    ...viewRows,
+    subtitle: 'Stop offering the Resources page, so it is missing from the header ⋯ menu and the view picker.',
     title: 'Hide Resources button',
   },
   devServersTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Dev Servers button from the titlebar.',
+    ...viewRows,
+    subtitle: 'Hide Dev servers from the header ⋯ menu.',
     title: 'Hide Dev Servers button',
   },
   extensionsTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Extensions button from the titlebar.',
+    ...viewRows,
+    subtitle: 'Hide Extensions from the header ⋯ menu.',
     title: 'Hide Extensions button',
   },
   gitActionsTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Git button from the titlebar.',
+    ...viewRows,
+    subtitle: 'Hide the Commit button from the work area header.',
     title: 'Hide Git button',
   },
   quickActionsTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Actions button from the titlebar.',
+    ...viewRows,
+    subtitle: 'Hide the Start button from the work area header.',
     title: 'Hide Actions button',
   },
   openInTitlebarButtonHidden: {
-    ...titlebarViews,
-    subtitle: 'Hide the Open In button from the titlebar.',
+    ...viewRows,
+    subtitle: 'Hide the Open button from the work area header.',
     title: 'Hide Open In button',
   },
   defaultEditorCommand: {
@@ -429,7 +483,7 @@ const SUPPLEMENTAL_SETTING_ROWS: Record<string, SupplementalRow> = {
     title: 'Portless protocol',
   },
   workspacePaneGap: {
-    ...GENERAL_TAB,
+    ...THEME_TAB,
     group: 'appearance',
     section: 'theming',
     sectionTitle: 'Theme',
@@ -437,7 +491,7 @@ const SUPPLEMENTAL_SETTING_ROWS: Record<string, SupplementalRow> = {
     title: 'Pane gap',
   },
   customSidebarTitlebarForegroundColor: {
-    ...GENERAL_TAB,
+    ...THEME_TAB,
     group: 'appearance',
     section: 'theming',
     sectionTitle: 'Theme',
@@ -446,7 +500,7 @@ const SUPPLEMENTAL_SETTING_ROWS: Record<string, SupplementalRow> = {
     userOnly: true,
   },
   customSidebarTitlebarBackgroundColor: {
-    ...GENERAL_TAB,
+    ...THEME_TAB,
     group: 'appearance',
     section: 'theming',
     sectionTitle: 'Theme',
@@ -502,7 +556,10 @@ function catalogEntry(
   definition: SettingSearchDefinition,
   location: Pick<CatalogEntry, 'tab' | 'tabTitle' | 'group' | 'groupTitle' | 'section' | 'sectionTitle'>
 ): CatalogEntry {
-  const options = definition.options?.map((option) => ({ label: option.label, value: option.value }));
+  const options = definition.options?.map((option) => ({
+    label: option.label,
+    value: option.value,
+  }));
   const type = valueTypeFor(definition.key, Boolean(options && options.length > 0));
   const primitive = type === 'boolean' || type === 'number' || type === 'string' || type === 'enum';
   const agentWritable =
@@ -516,7 +573,13 @@ function catalogEntry(
     type,
     ...(type === 'ui' ? {} : { default: defaults[definition.key] }),
     ...(options && options.length > 0 ? { options } : {}),
-    ...(range ? { min: range.min, max: range.max, ...(range.step ? { step: range.step } : {}) } : {}),
+    ...(range
+      ? {
+          min: range.min,
+          max: range.max,
+          ...(range.step ? { step: range.step } : {}),
+        }
+      : {}),
     ...(definition.advanced || ADVANCED_MAIN_SETTING_KEYS.has(definition.key) ? { advanced: true } : {}),
     agentWritable,
   };
@@ -556,6 +619,23 @@ function buildCatalog(): Catalog {
     }
   }
 
+  // The `appearance` group left General's rail for its own Theme page, after General.
+  const themeGroup = MAIN_SETTINGS_GROUP_SECTIONS.appearance;
+  for (const sectionId of themeGroup.sections as readonly SettingsSearchSectionId[]) {
+    const section = definitions[sectionId];
+    for (const definition of section.settings) {
+      push(
+        catalogEntry(definition, {
+          ...THEME_TAB,
+          group: 'appearance',
+          groupTitle: themeGroup.title,
+          section: sectionId,
+          sectionTitle: section.title,
+        })
+      );
+    }
+  }
+
   const groupedSectionIds = new Set<string>(
     Object.values(MAIN_SETTINGS_GROUP_SECTIONS).flatMap((group) => [...group.sections])
   );
@@ -575,7 +655,12 @@ function buildCatalog(): Catalog {
         catalogEntry(definition, {
           tab: 'settings',
           tabTitle: 'General',
-          ...(groupId ? { group: groupId, groupTitle: MAIN_SETTINGS_GROUP_SECTIONS[groupId].title } : {}),
+          ...(groupId
+            ? {
+                group: groupId,
+                groupTitle: MAIN_SETTINGS_GROUP_SECTIONS[groupId].title,
+              }
+            : {}),
           section: sectionId,
           sectionTitle: section.title,
         })
@@ -607,7 +692,12 @@ function buildCatalog(): Catalog {
       {
         tab: row.tab,
         tabTitle: row.tabTitle,
-        ...(row.group ? { group: row.group, groupTitle: MAIN_SETTINGS_GROUP_SECTIONS[row.group].title } : {}),
+        ...(row.group
+          ? {
+              group: row.group,
+              groupTitle: MAIN_SETTINGS_GROUP_SECTIONS[row.group].title,
+            }
+          : {}),
         section: row.section,
         sectionTitle: row.sectionTitle,
       }
@@ -621,7 +711,11 @@ function buildCatalog(): Catalog {
     }
     push({
       ...catalogEntry(
-        { key, subtitle: 'App-managed state saved with the settings; not a user preference.', title: key },
+        {
+          key,
+          subtitle: 'App-managed state saved with the settings; not a user preference.',
+          title: key,
+        },
         INTERNAL_STATE_ROW
       ),
       agentWritable: false,
@@ -662,7 +756,12 @@ function buildCatalog(): Catalog {
     ...(definition.windowsLinuxDefaultKey ? { windowsLinuxDefaultKey: definition.windowsLinuxDefaultKey } : {}),
   }));
 
-  return { version: 1, generatedBy: GENERATOR_PATH, settings: entries, hotkeys };
+  return {
+    version: 1,
+    generatedBy: GENERATOR_PATH,
+    settings: entries,
+    hotkeys,
+  };
 }
 
 function formatDefault(value: unknown): string {

@@ -113,6 +113,7 @@ impl GhostexGpuiApp {
         let main_window_native_view = self.parent_ns_view;
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            display_id: crate::app::window::popup_frame::display_at(anchor, cx),
             focus: false,
             show: true,
             kind: WindowKind::PopUp,
@@ -120,7 +121,11 @@ impl GhostexGpuiApp {
             is_resizable: false,
             is_minimizable: false,
             titlebar: None,
-            window_background: WindowBackgroundAppearance::Transparent,
+            window_background: if window_glass_active() {
+                WindowBackgroundAppearance::Blurred
+            } else {
+                WindowBackgroundAppearance::Transparent
+            },
             ..Default::default()
         };
         self.app_toast_window = cx
@@ -130,6 +135,7 @@ impl GhostexGpuiApp {
                     app,
                     toasts,
                     hovered_toast_id: None,
+                    blur_region: Vec::new(),
                 })
             })
             .ok();
@@ -198,6 +204,18 @@ impl GhostexGpuiApp {
         */
         self.remote_machine_connect_states
             .insert(remote_machine_id.to_string(), state.to_string());
+        // The sanitized summary of THIS transition, which the machine tab draws
+        // (gx_store/remote_clients.rs). The page's copy was never cleared either: a transition
+        // without a message leaves the last one standing, exactly as `metadata.ts` did.
+        if let Some(message) = message.map(str::trim).filter(|message| !message.is_empty()) {
+            self.remote_machine_status_messages
+                .insert(remote_machine_id.to_string(), message.to_string());
+        }
+        // Every connect transition funnels through here, so this is also where the store learns
+        // whether it still has a daemon to subscribe to on that machine: a client starts on the
+        // connected edge and is retired on every other one, which leaves the machine's rows on
+        // screen as stale rather than dropping them.
+        self.gx_store_sync_remote_clients(true, cx);
         if state == GpuiRemoteGxserverConnectState::Connected.wire_status_state() {
             self.attach_surfaced_remote_workspace_terminals(remote_machine_id, cx);
         }

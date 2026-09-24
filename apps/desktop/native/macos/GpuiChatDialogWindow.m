@@ -17,3 +17,46 @@ void GhostexGpuiPrepareChatDialogWindow(void *nativeView) {
   [window invalidateShadow];
   CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window.windowNumber, 24);
 }
+
+// CDXC:AppModal 2026-09-21 DECISION:
+// User, on popups that open as their own window: "I don't like this at all", about the large
+// rounded system frame, white ring and heavy drop shadow a titled macOS window brings, which the
+// sidebar's in-window context menu does not have. Every chat popup and the New Thread picker goes
+// borderless and shadowless so only the panel GPUI draws is visible.
+void GhostexGpuiStripPopupWindowFrame(void *nativeView) {
+  NSView *view = (__bridge NSView *)nativeView;
+  NSWindow *window = view.window;
+  if (!window) return;
+  window.styleMask = NSWindowStyleMaskBorderless;
+  window.opaque = NO;
+  window.backgroundColor = NSColor.clearColor;
+  window.hasShadow = NO;
+  [window invalidateShadow];
+}
+
+static NSTimeInterval GhostexGpuiLastPointerPressAt = 0;
+static id GhostexGpuiPointerPressMonitor = nil;
+
+// CDXC:SessionChat 2026-09-22 WHY:
+// A chat menu is a child window that closes when it loses key status, and a press anywhere in the
+// app makes the pressed window key before the press is delivered, so "lost key while a mouse button
+// is down, or within a moment of a press" is the user dismissing the menu. Key status the main
+// window takes back without any press (an app activation still completing, or another program
+// focusing the window) is not. The monitor sees every press the app receives, in native child views
+// as well as GPUI's own, which GPUI's window handlers do not.
+bool GhostexGpuiPointerPressedRecently(void) {
+  if (GhostexGpuiPointerPressMonitor == nil) {
+    GhostexGpuiPointerPressMonitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown |
+                                              NSEventMaskOtherMouseDown)
+                                     handler:^NSEvent *(NSEvent *event) {
+                                       GhostexGpuiLastPointerPressAt =
+                                           [NSDate timeIntervalSinceReferenceDate];
+                                       return event;
+                                     }];
+  }
+  if (NSEvent.pressedMouseButtons != 0) return true;
+  return [NSDate timeIntervalSinceReferenceDate] - GhostexGpuiLastPointerPressAt < 0.3;
+}
+
+bool GhostexGpuiApplicationIsActive(void) { return NSApp.isActive; }

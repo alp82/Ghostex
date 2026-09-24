@@ -97,10 +97,30 @@ case "$(printf '%s' "$GHOSTEX_REQUIRE_SPARKLE" | tr '[:upper:]' '[:lower:]')" in
 	;;
 esac
 
-# Signing: unset identity keeps the historical ad-hoc dev signing. Release
-# builds pass the Developer ID identity; notarization is opt-in and uses the
-# same notarytool keychain profile as the macOS release pipeline.
+# Signing: release builds pass the Developer ID identity; notarization is
+# opt-in and uses the same notarytool keychain profile as the macOS release
+# pipeline. GHOSTEX_GPUI_SIGN_IDENTITY=- forces ad-hoc signing.
+#
+# CDXC:Build 2026-09-22 WHY:
+# An unset identity used to mean ad-hoc, so a packager run outside `bun run start` (an agent working around a failed start built the bundle here and hand-installed it with ditto and mv) shipped an ad-hoc app, whose designated requirement is its cdhash, so macOS forgot the app's folder permissions and asked again after every rebuild.
+# The local start records the certificate it signs with per computer (tooling/local-start-utils.mjs); an unset identity now means that certificate when the record exists, and ad-hoc only on a computer that has never signed with one. A certificate that cannot sign from this shell fails the build instead of degrading it.
 GHOSTEX_GPUI_SIGN_IDENTITY="${GHOSTEX_GPUI_SIGN_IDENTITY:-}"
+if [[ -z "$GHOSTEX_GPUI_SIGN_IDENTITY" ]]; then
+	remembered_identity_state_root="$HOME/.local/state"
+	if [[ "${XDG_STATE_HOME:-}" == /* ]]; then
+		remembered_identity_state_root="$XDG_STATE_HOME"
+	fi
+	remembered_identity_file="$remembered_identity_state_root/ghostex/local-start/macos-code-sign-identity"
+	if [[ -s "$remembered_identity_file" ]]; then
+		GHOSTEX_GPUI_SIGN_IDENTITY="$(head -n 1 "$remembered_identity_file")"
+		# A local certificate signs without a secure timestamp: the release
+		# pipeline sets the flag explicitly, and Apple's timestamp server is
+		# slow or unreachable offline.
+		GHOSTEX_GPUI_SIGN_TIMESTAMP_FLAG="${GHOSTEX_GPUI_SIGN_TIMESTAMP_FLAG:---timestamp=none}"
+		export GHOSTEX_GPUI_SIGN_TIMESTAMP_FLAG
+		echo "Signing with this computer's local-start identity: $GHOSTEX_GPUI_SIGN_IDENTITY"
+	fi
+fi
 GHOSTEX_GPUI_NOTARIZE="${GHOSTEX_GPUI_NOTARIZE:-0}"
 case "$(printf '%s' "$GHOSTEX_GPUI_NOTARIZE" | tr '[:upper:]' '[:lower:]')" in
 1 | true | yes | on)
@@ -600,8 +620,7 @@ stage_gpui_lid_sleep_helper() {
 	helper_source="$(build_gpui_lid_sleep_helper)"
 	helper_dir="$APP_PATH/Contents/Library/LaunchServices"
 	helper_target="$helper_dir/$GPUI_LID_SLEEP_HELPER_LABEL"
-	mkdir -p "$helper_dir"
-	install -m 0755 "$helper_source" "$helper_target"
+	stage_file_if_changed "$helper_source" "$helper_target" 0755
 	if [[ ! -x "$helper_target" ]]; then
 		echo "Packaged GPUI lid-sleep helper is missing or not executable." >&2
 		exit 1
@@ -855,12 +874,18 @@ stage_gpui_app_icon() {
 		exit 1
 	fi
 
+	local icon_digest
+	icon_digest="$(fingerprint_inputs --value "gpui-app-icon-v1" --path "$writer" --path "$APP_ICON_SOURCE_SET")"
+	if cache_matches "gpui-app-icon" "$icon_digest" "$APP_ICON_DEST"; then
+		return 0
+	fi
 	mkdir -p "$(dirname "$APP_ICON_DEST")"
 	python3 "$writer" "$APP_ICON_SOURCE_SET" "$APP_ICON_DEST"
 	if [[ ! -s "$APP_ICON_DEST" ]]; then
 		echo "App icon encoder did not write $APP_ICON_DEST" >&2
 		exit 1
 	fi
+	write_cache_stamp "gpui-app-icon" "$icon_digest"
 }
 
 sign_gpui_app_bundle() {
@@ -998,6 +1023,90 @@ stage_code_server_payload_if_changed() {
 	rsync -a --delete "$WEB_SOURCE_DIR/code-server/" "$target_dir/"
 	chmod 755 "$target_dir/lib/node"
 	write_cache_stamp "code-server-staged" "$payload_digest"
+}
+
+# CDXC:Build 2026-09-23 WHY:
+# Signing rewrites the staged copies of these binaries, so they never match their sources again: rsync or cp copied an unsigned original back on every start and every nested signature was redone.
+# Record which source identity each staged copy came from and copy only when that changes, so codesign-gpui-app.sh can reuse the existing signature.
+staged_copy_stamp_key() {
+	printf 'staged-copy-%s\n' "$(md5 -q -s "$1")"
+}
+
+stage_file_if_changed() {
+	local source_path="$1" target_path="$2" mode="$3" key digest
+	key="$(staged_copy_stamp_key "$target_path")"
+	digest="$mode:$(path_identity "$source_path")"
+	if cache_matches "$key" "$digest" "$target_path"; then
+		return 0
+	fi
+	mkdir -p "$(dirname "$target_path")"
+	install -m "$mode" "$source_path" "$target_path"
+	write_cache_stamp "$key" "$digest"
+}
+
+stage_tree_if_changed() {
+	local source_dir="$1" target_dir="$2" key digest
+	key="$(staged_copy_stamp_key "$target_dir")"
+	digest="$(cd "$source_dir" && find . \( -type f -o -type l \) -print0 | LC_ALL=C sort -z | xargs -0 stat -f '%N:%m:%z:%p' | md5 -q)"
+	if cache_matches "$key" "$digest" "$target_dir"; then
+		return 0
+	fi
+	mkdir -p "$target_dir"
+	rsync -a --delete "$source_dir/" "$target_dir/"
+	write_cache_stamp "$key" "$digest"
+}
+
+stage_local_start_code_server() {
+	local source_dir="$WEB_SOURCE_DIR/code-server"
+	local store_root="$REPO_ROOT/build/dev-components.noindex/code-server"
+	local pointer_path="$WEB_DIR/local-start-code-server-root"
+	local payload_digest runtime_dir staging_dir entry previous_kept=0
+
+	# CDXC:CodeEditor 2026-09-23 DECISION:
+	# User chose to keep code-server out of `bun run start` bundles. Each code-server build is cloned once (APFS copy-on-write, near free) into a content-named folder under build/dev-components.noindex/, and the bundle records that folder in Web/local-start-code-server-root.
+	# A rebuild gets a new folder, so a running app keeps its own copy until it restarts. Only lib/node stays in the bundle, where Portless and the signed runtime paths expect it.
+	# SEE-ALSO: source_code_server_repo_root_candidates in apps/desktop/src/app/helpers/source_server/code_server.rs, localStartCodeServerStoreRoot in tooling/start-gpui.mjs.
+	if [[ ! -f "$source_dir/out/node/entry.js" ]]; then
+		rm -f "$pointer_path"
+		return 0
+	fi
+	payload_digest="$(fingerprint_inputs \
+		--value "local-start-code-server-v1" \
+		--value "arch=$GHOSTEX_MACOS_ARCH" \
+		--value "entry=$(path_identity "$source_dir/out/node/entry.js")" \
+		--value "node=$(path_identity "$source_dir/lib/node")" \
+		--value "vscode=$(path_identity "$source_dir/lib/vscode/out/server-main.js")" \
+		--path "$(cache_stamp_path "code-server-package-$GHOSTEX_MACOS_ARCH")")"
+	runtime_dir="$store_root/$GHOSTEX_MACOS_ARCH-${payload_digest:0:16}"
+	if [[ ! -f "$runtime_dir/out/node/entry.js" ]]; then
+		mkdir -p "$store_root"
+		staging_dir="$store_root/.staging.$$"
+		rm -rf "$staging_dir" "$runtime_dir"
+		cp -c -R "$source_dir" "$staging_dir"
+		mv "$staging_dir" "$runtime_dir"
+	fi
+	# Keep this build and the newest other one, which a still-running app may be using.
+	while IFS= read -r entry; do
+		entry="${entry%/}"
+		[[ "$entry" == "$runtime_dir" ]] && continue
+		if [[ "$previous_kept" == "0" ]]; then
+			previous_kept=1
+			continue
+		fi
+		rm -rf "$entry"
+	done < <(ls -1dt "$store_root"/*/ 2>/dev/null)
+
+	if [[ -d "$WEB_DIR/code-server" && -n "$(find "$WEB_DIR/code-server" -mindepth 1 -maxdepth 1 ! -name lib -print -quit)" ]]; then
+		rm -rf "$WEB_DIR/code-server"
+	fi
+	if [[ -d "$WEB_DIR/code-server/lib" && -n "$(find "$WEB_DIR/code-server/lib" -mindepth 1 -maxdepth 1 ! -name node -print -quit)" ]]; then
+		rm -rf "$WEB_DIR/code-server/lib"
+	fi
+	stage_file_if_changed "$source_dir/lib/node" "$WEB_DIR/code-server/lib/node" 0755
+	if [[ ! -f "$pointer_path" || "$(<"$pointer_path")" != "$runtime_dir" ]]; then
+		printf '%s\n' "$runtime_dir" >"$pointer_path"
+	fi
+	echo "code-server runs from $runtime_dir (kept outside the local-start bundle)."
 }
 
 cef_component_version() {
@@ -1155,8 +1264,7 @@ fi
 
 prepare_gpui_app_bundle_path
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$APP_PATH/Contents/Frameworks"
-cp "$GPUI_DIR/target/release/ghostex-gpui" "$APP_PATH/Contents/MacOS/$APP_NAME"
-chmod 755 "$APP_PATH/Contents/MacOS/$APP_NAME"
+stage_file_if_changed "$GPUI_DIR/target/release/ghostex-gpui" "$APP_PATH/Contents/MacOS/$APP_NAME" 0755
 stage_gpui_app_icon
 if [[ "$GHOSTEX_ON_DEMAND_ASSETS" != "1" ]]; then
 	stage_cef_framework_if_changed
@@ -1168,16 +1276,23 @@ rsync -a --delete "$GPUI_DIR/dist/sidebar/" "$APP_PATH/Contents/Resources/sideba
 # 133 prompt semantics. Keep the upstream loader beside the packaged binary so
 # an idle shell is recognized as safe to close instead of being mistaken for a
 # running foreground command.
-rm -rf "$APP_PATH/Contents/Resources/shell-integration"
+# `install -C` leaves an identical file untouched, so unchanged resources keep
+# their modification time and the /Applications sync skips them.
+find "$APP_PATH/Contents/Resources/shell-integration" -mindepth 1 -maxdepth 1 ! -name zsh -exec rm -rf {} + 2>/dev/null || true
 mkdir -p "$APP_PATH/Contents/Resources/shell-integration/zsh"
-install -m 0644 "$REPO_ROOT/.dependencies/ghostty/src/shell-integration/zsh/.zshenv" \
+install -C -m 0644 "$REPO_ROOT/.dependencies/ghostty/src/shell-integration/zsh/.zshenv" \
 	"$APP_PATH/Contents/Resources/shell-integration/zsh/.zshenv"
-install -m 0644 "$REPO_ROOT/.dependencies/ghostty/src/shell-integration/zsh/ghostty-integration" \
+install -C -m 0644 "$REPO_ROOT/.dependencies/ghostty/src/shell-integration/zsh/ghostty-integration" \
 	"$APP_PATH/Contents/Resources/shell-integration/zsh/ghostty-integration"
-rm -rf "$SOUND_DEST_DIR"
 mkdir -p "$SOUND_DEST_DIR"
+for staged_sound in "$SOUND_DEST_DIR"/*; do
+	[[ -e "$staged_sound" ]] || continue
+	if ! printf '%s\n' "${completion_sound_assets[@]}" | grep -Fxq "$(basename "$staged_sound")"; then
+		rm -rf "$staged_sound"
+	fi
+done
 for asset in "${completion_sound_assets[@]}"; do
-	install -m 0644 "$SOUND_SRC_DIR/$asset" "$SOUND_DEST_DIR/$asset"
+	install -C -m 0644 "$SOUND_SRC_DIR/$asset" "$SOUND_DEST_DIR/$asset"
 done
 
 # CDXC:Cli 2026-06-24-12:56:
@@ -1185,17 +1300,19 @@ done
 # CDXC:AgentSkills 2026-06-26-13:47: The GPUI app bundle must carry `$ghostex-move-codex-session` with the other CLI skills so `ghostex move-codex-session install-skill` works from installed builds.
 # CDXC:Cli 2026-07-13: `ghostex` is the native Rust CLI from the
 # app-owned gxserver package; `gx` is a bundle-internal symlink to it.
-rm -rf "$CLI_DIR"
+find "$CLI_DIR" -mindepth 1 -maxdepth 1 ! -name ghostex ! -name gx ! -name skills -exec rm -rf {} + 2>/dev/null || true
 mkdir -p "$CLI_DIR/skills"
-install -m 0755 "$GXSERVER_SOURCE_DIR/bin/ghostex" "$CLI_DIR/ghostex"
+stage_file_if_changed "$GXSERVER_SOURCE_DIR/bin/ghostex" "$CLI_DIR/ghostex" 0755
 ln -sfh "ghostex" "$CLI_DIR/gx"
-copy_cli_skill() {
-	local skill_name="$1"
-	mkdir -p "$CLI_DIR/skills/$skill_name"
-	cp -R "$REPO_ROOT/skills/$skill_name/." "$CLI_DIR/skills/$skill_name/"
-}
+for staged_skill in "$CLI_DIR/skills"/*; do
+	[[ -e "$staged_skill" ]] || continue
+	if ! printf '%s\n' "${bundled_cli_skill_assets[@]}" | grep -Fxq "$(basename "$staged_skill")"; then
+		rm -rf "$staged_skill"
+	fi
+done
 for skill_name in "${bundled_cli_skill_assets[@]}"; do
-	copy_cli_skill "$skill_name"
+	mkdir -p "$CLI_DIR/skills/$skill_name"
+	rsync -a --delete "$REPO_ROOT/skills/$skill_name/" "$CLI_DIR/skills/$skill_name/"
 done
 
 # CDXC:CodeEditor 2026-06-24-23:17:
@@ -1205,12 +1322,16 @@ done
 # Web/bin tools into Contents/Resources/Web, matching the native start command's
 # daemon ownership instead of launching against the main Ghostex.app bundle.
 mkdir -p "$WEB_DIR/portless"
-rsync -a --delete "$WEB_BIN_SOURCE_DIR/" "$WEB_DIR/bin/"
-rsync -a --delete "$GXSERVER_SOURCE_DIR/" "$WEB_DIR/gxserver/"
-if [[ "$GHOSTEX_ON_DEMAND_ASSETS" != "1" ]]; then
-	stage_code_server_payload_if_changed
-else
+stage_tree_if_changed "$WEB_BIN_SOURCE_DIR" "$WEB_DIR/bin"
+stage_tree_if_changed "$GXSERVER_SOURCE_DIR" "$WEB_DIR/gxserver"
+if [[ "$GHOSTEX_ON_DEMAND_ASSETS" == "1" ]]; then
 	rm -rf "$WEB_DIR/code-server"
+	rm -f "$WEB_DIR/local-start-code-server-root"
+elif [[ "$GHOSTEX_LOCAL_START" == "1" ]]; then
+	stage_local_start_code_server
+else
+	rm -f "$WEB_DIR/local-start-code-server-root"
+	stage_code_server_payload_if_changed
 fi
 rsync -a --delete "$WEB_SOURCE_DIR/portless/" "$WEB_DIR/portless/"
 chmod 755 "$WEB_DIR/portless/dist/cli.js"
@@ -1367,8 +1488,7 @@ for helper_name in "${helper_names[@]}"; do
 	helper_app="$APP_PATH/Contents/Frameworks/$helper_name.app"
 	helper_macos="$helper_app/Contents/MacOS"
 	mkdir -p "$helper_macos"
-	cp "$GPUI_DIR/target/release/ghostex-gpui-cef-helper" "$helper_macos/$helper_name"
-	chmod 755 "$helper_macos/$helper_name"
+	stage_file_if_changed "$GPUI_DIR/target/release/ghostex-gpui-cef-helper" "$helper_macos/$helper_name" 0755
 	cat >"$helper_app/Contents/Info.plist" <<EOF_HELPER
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1405,11 +1525,11 @@ stage_gpui_sparkle_framework_if_available
 # the small helper apps and seal the separately signed framework component into
 # the on-demand manifest.
 
-# Signing: unset GHOSTEX_GPUI_SIGN_IDENTITY keeps the historical ad-hoc --deep
-# re-sign for dev builds; a Developer ID identity runs the inside-out
-# hardened-runtime recipe in codesign-gpui-app.sh (macOS
-# codesign-ghostex-host.sh port), and GHOSTEX_GPUI_NOTARIZE=1 notarizes and
-# staples the app for distribution outside a DMG release.
+# Signing: an ad-hoc identity (-) runs the historical --deep re-sign; a
+# certificate identity runs the inside-out hardened-runtime recipe in
+# codesign-gpui-app.sh (macOS codesign-ghostex-host.sh port), and
+# GHOSTEX_GPUI_NOTARIZE=1 notarizes and staples the app for distribution
+# outside a DMG release.
 sign_gpui_app_bundle
 notarize_and_staple_gpui_app_if_requested
 # rsync of this bundle's contents does not copy wrapper Finder flags, so the

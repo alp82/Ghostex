@@ -33,6 +33,7 @@ impl GhostexGpuiApp {
                 .get("sidebarTheme")
                 .and_then(serde_json::Value::as_str),
         )
+        .tinted(titlebar_background().into())
     }
 
     /// Opens `kind` as a native window whose content is built by `build`.
@@ -49,6 +50,7 @@ impl GhostexGpuiApp {
         self.remove_native_app_modal_window(cx);
         let window_size = size(px(width), px(initial_height));
         let options = WindowOptions {
+            kind: crate::app::window::popup_frame::child_window_kind(),
             window_bounds: Some(WindowBounds::Windowed(gpui::Bounds::centered_at(
                 self.main_window_bounds.center(),
                 window_size,
@@ -59,7 +61,11 @@ impl GhostexGpuiApp {
             show: true,
             is_resizable: false,
             is_minimizable: false,
-            display_id: self.main_window_display_id,
+            display_id: crate::app::window::popup_frame::display_at(
+                self.main_window_bounds.center(),
+                cx,
+            )
+            .or(self.main_window_display_id),
             titlebar: None,
             ..Default::default()
         };
@@ -67,7 +73,11 @@ impl GhostexGpuiApp {
         let view_out = view_slot.clone();
         let window = cx
             .open_window(options, move |window, cx| {
-                window.set_window_title("");
+                window.set_window_title(if cfg!(any(target_os = "windows", target_os = "linux")) {
+                    kind.window_title()
+                } else {
+                    ""
+                });
                 window.activate_window();
                 let view = build(window, cx);
                 *view_out.borrow_mut() = Some(view.clone().into_any());
@@ -144,6 +154,12 @@ impl GhostexGpuiApp {
             }
             GpuiAppModalKind::Worktree => {
                 self.open_gpui_create_worktree_modal(open_message, cx);
+            }
+            GpuiAppModalKind::CommandPalette
+            | GpuiAppModalKind::RecentProjects
+            | GpuiAppModalKind::PreviousSessions
+            | GpuiAppModalKind::StashedPrompts => {
+                self.open_gpui_quick_access_modal(kind, open_message, cx);
             }
             // NATIVE-MODAL-OPEN-ARMS: one arm per converted modal kind.
             _ => return false,
@@ -274,6 +290,12 @@ impl GhostexGpuiApp {
         self.app_modal_command_return_focus_target = None;
         if modal.kind == GpuiAppModalKind::ExportTranscriptResult {
             self.pending_export_transcript_reveal_path = None;
+        }
+        // Quick Access keeps a live controller in the sidebar runtime; tell it to
+        // stop publishing when its window is replaced or dismissed.
+        if crate::app::window::quick_access::QuickAccessTabId::from_modal_kind(modal.kind).is_some()
+        {
+            self.dispatch_gpui_quick_access_command(serde_json::json!({ "type": "closed" }), cx);
         }
         modal
             .window

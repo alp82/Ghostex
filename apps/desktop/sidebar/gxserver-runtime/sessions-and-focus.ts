@@ -36,7 +36,10 @@ import {
 import { shouldApplyGpuiLocalWorkspaceTransition } from './helpers/terminal-lifecycle';
 import type { GpuiWorkspaceTerminalFocusPlacement } from './types-and-protocol';
 import { closeAppModal, openAppModal, postAppModalHostMessage } from '@/packages/core-ui/app-modal-host-bridge';
-import type { PreferredAgentInterface } from '@/packages/shared/ghostex-settings';
+import {
+  resolveEffectivePreferredAgentInterface,
+  type PreferredAgentInterface,
+} from '@/packages/shared/ghostex-settings';
 import { reorderPresentationProjectSessions } from '@/packages/shared/gxserver-presentation-cache';
 import {
   createGxserverPresentationProjectGroupId,
@@ -75,7 +78,7 @@ export interface GpuiSidebarRuntimeSessionFocusMethods {
   focusSession(
     sessionId: string,
     originalMessage?: SidebarToExtensionMessage,
-    options?: { keepView?: boolean; preferredInterface?: PreferredAgentInterface }
+    options?: { keepSleeping?: boolean; keepView?: boolean; preferredInterface?: PreferredAgentInterface }
   ): Promise<void>;
   postSidebarSessionFocusConfirmation(sessionId: string): void;
   focusLocalWorkspaceSession(
@@ -83,9 +86,11 @@ export interface GpuiSidebarRuntimeSessionFocusMethods {
     sessionId: string,
     options?: {
       forceRemount?: boolean;
+      keepSleeping?: boolean;
       keepView?: boolean;
       placement?: GpuiWorkspaceTerminalFocusPlacement;
       preferredInterface?: PreferredAgentInterface;
+      wakeSleeping?: boolean;
     }
   ): void;
   postLocalWorkspaceTerminalFocus(
@@ -94,10 +99,12 @@ export interface GpuiSidebarRuntimeSessionFocusMethods {
     placementTargetSessionId?: string,
     options?: {
       forceRemount?: boolean;
+      keepSleeping?: boolean;
       keepView?: boolean;
       placement?: GpuiWorkspaceTerminalFocusPlacement;
       preferredInterface?: PreferredAgentInterface;
       startupRestore?: boolean;
+      wakeSleeping?: boolean;
     }
   ): void;
   transitionSession(sessionId: string, action: 'close' | 'sleep'): Promise<void>;
@@ -164,6 +171,26 @@ function focusChangesActiveProject(
     return activeRemote?.machineId !== target.machineId || activeRemote.projectId !== target.projectId;
   }
   return activeRemote !== undefined || runtime.activeProjectId !== target.projectId;
+}
+
+/**
+ * CDXC:SessionChat 2026-09-20 WHY:
+ * A session click used to reach the desktop with no view preference, so a session with no tab yet materialized its
+ * terminal first and the automatic Chat handoff ran only once the daemon was awake and that terminal live. The agent's
+ * effective Default Agent View is known here before anything is woken, so every focus carries it and the pane can open
+ * chat while the wake and attach run behind it.
+ * Sessions with no agent stay unset: the desktop drops the intent for them anyway, and an unset value keeps the extra
+ * attach-metadata preview off the plain-terminal path.
+ */
+function sessionPreferredAgentInterface(
+  runtime: GpuiSidebarRuntime,
+  session: { agentId?: string } | undefined
+): PreferredAgentInterface | undefined {
+  const agentId = normalizeNonEmptyString(session?.agentId);
+  if (!agentId) {
+    return undefined;
+  }
+  return resolveEffectivePreferredAgentInterface(createGpuiSidebarSettings(runtime.runtimeSettings), agentId);
 }
 
 export const gpuiSidebarRuntimeSessionFocusMethods = {
@@ -261,7 +288,7 @@ export const gpuiSidebarRuntimeSessionFocusMethods = {
     this: GpuiSidebarRuntime,
     sessionId: string,
     originalMessage?: SidebarToExtensionMessage,
-    options?: { keepView?: boolean; preferredInterface?: PreferredAgentInterface }
+    options?: { keepSleeping?: boolean; keepView?: boolean; preferredInterface?: PreferredAgentInterface }
   ): Promise<void> {
     /*
     CDXC:Navigation 2026-09-11 DECISION:
@@ -298,12 +325,23 @@ export const gpuiSidebarRuntimeSessionFocusMethods = {
     if (remoteSession) {
       this.acknowledgeSessionAttention(sessionId, 'sidebar-focus');
       const keepView = keepViewRequested || focusChangesActiveProject(this, remoteSession);
+      const remotePreferredInterface =
+        options?.preferredInterface ??
+        sessionPreferredAgentInterface(
+          this,
+          this.remotePresentations
+            .get(remoteSession.machineId)
+            ?.sessions.find(
+              (session) =>
+                session.projectId === remoteSession.projectId && session.sessionId === remoteSession.sessionId
+            )
+        );
       if (
         this.postRemoteSessionNativeAction(
           'openRemoteSessionTerminal',
           remoteSession,
           originalMessage ?? { sessionId, type: 'focusSession' },
-          { ...options, keepView }
+          { ...options, keepView, preferredInterface: remotePreferredInterface }
         )
       ) {
         this.setRemotePresentationSessionFocus(remoteSession);
@@ -326,13 +364,48 @@ export const gpuiSidebarRuntimeSessionFocusMethods = {
     const focusOptions = {
       ...options,
       keepView: keepViewRequested || focusChangesActiveProject(this, { projectId: reference.projectId }),
+      preferredInterface:
+        options?.preferredInterface ??
+        sessionPreferredAgentInterface(
+          this,
+          this.presentation?.sessions.find(
+            (session) => session.projectId === reference.projectId && session.sessionId === reference.sessionId
+          )
+        ),
     };
+    if (
+      options?.keepSleeping &&
+      createGpuiSidebarSettings(this.runtimeSettings).clickToWakeSleepingSessions &&
+      this.isSleepingLocalPresentationSession(reference.projectId, reference.sessionId)
+    ) {
+      // An indirect selection shows the wake placeholder instead of waking (CDXC:SessionSleep 2026-09-23 on `select_sleeping_local_workspace_tab`).
+      this.focusLocalWorkspaceSession(reference.projectId, reference.sessionId, {
+        ...focusOptions,
+        keepSleeping: true,
+      });
+      this.publishPresentation('patch');
+      return;
+    }
     if (this.isSleepingLocalPresentationSession(reference.projectId, reference.sessionId)) {
       /*
-      CDXC:FocusRouting 2026-06-26-23:24:
-      Sleeping local session-card clicks must match macOS session activation by committing gxserver `/api/wakeSession` before the Rust workspace materializes the terminal. A plain focus bridge can select the tab but leaves gxserver sleeping, so route this branch through the same Wake path as the sidebar sleep toggle.
+      CDXC:FocusRouting 2026-09-20 WHY:
+      Supersedes the 2026-06-26-23:24 note that routed a sleeping session click through the sidebar's own Wake first.
+      The requirement it protected still holds, that gxserver commits `/api/wakeSession` before the workspace
+      materializes the terminal, but the desktop's attach plan is what commits it now: `wakeSleeping` makes that plan
+      use the Wake intent, which starts the provider, marks the row running and returns the attach metadata in one
+      round trip. Awaiting a separate wake here first only added a second serial round trip in front of everything the
+      user sees, so the previous session stayed on screen for the whole daemon start.
+      The row is patched to running the way the wake used to patch it; a wake that fails leaves gxserver's next
+      presentation delta to put the row back to sleeping.
       */
-      await this.setSessionSleeping(sessionId, false, focusOptions);
+      this.patchPresentationSession(reference.projectId, reference.sessionId, {
+        lifecycleState: 'running',
+      });
+      this.focusLocalWorkspaceSession(reference.projectId, reference.sessionId, {
+        ...focusOptions,
+        wakeSleeping: true,
+      });
+      this.publishPresentation('patch');
       return;
     }
     /*
@@ -381,9 +454,11 @@ export const gpuiSidebarRuntimeSessionFocusMethods = {
     sessionId: string,
     options?: {
       forceRemount?: boolean;
+      keepSleeping?: boolean;
       keepView?: boolean;
       placement?: GpuiWorkspaceTerminalFocusPlacement;
       preferredInterface?: PreferredAgentInterface;
+      wakeSleeping?: boolean;
     }
   ): void {
     /*
@@ -406,10 +481,12 @@ export const gpuiSidebarRuntimeSessionFocusMethods = {
     placementTargetSessionId?: string,
     options?: {
       forceRemount?: boolean;
+      keepSleeping?: boolean;
       keepView?: boolean;
       placement?: GpuiWorkspaceTerminalFocusPlacement;
       preferredInterface?: PreferredAgentInterface;
       startupRestore?: boolean;
+      wakeSleeping?: boolean;
     }
   ): void {
     /*
@@ -426,6 +503,8 @@ export const gpuiSidebarRuntimeSessionFocusMethods = {
       ...(options?.placement ? { placement: options.placement } : {}),
       ...(options?.preferredInterface ? { preferredInterface: options.preferredInterface } : {}),
       ...(options?.startupRestore ? { startupRestore: true } : {}),
+      ...(options?.wakeSleeping ? { wakeSleeping: true } : {}),
+      ...(options?.keepSleeping ? { keepSleeping: true } : {}),
       ...(options?.keepView ? { keepView: true } : {}),
       projectId,
       sessionId,

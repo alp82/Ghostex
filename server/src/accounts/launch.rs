@@ -75,8 +75,11 @@ pub(crate) fn command(home: &Path, account: &SavedAccount) -> Result<String, Dom
             account.provider.helper()
         ))
     })?;
+    // CDXC:AgentProviders 2026-09-18 WHY:
+    // Windows sessions run in PowerShell, where a quoted executable path in command position is a string literal that prints instead of running. The call operator is required, as in agent_cli/endpoint.rs and zmx/scripts_windows.rs.
+    let invoke = if cfg!(windows) { "& " } else { "" };
     Ok(format!(
-        "{} run {} --share-history --",
+        "{invoke}{} run {} --share-history --",
         quote_shell_arg(&executable.to_string_lossy()),
         quote_shell_arg(&account.selector)
     ))
@@ -118,7 +121,7 @@ pub(crate) fn apply_new_session(
         _ => return Ok(None),
     };
     let registry = store::read(db)?;
-    // CDXC:AgentProviders 2026-09-11 DECISION: User: use the current CLI login until an account is added to Ghostex for that provider (2026-09-09); once accounts exist, a launch without an explicit account uses the provider's Account for new sessions rule from Settings (Most limit remaining by default, see default_account.rs), which supersedes the lowest-slot choice. When that rule yields no account the launch keeps the current CLI login, so a normal CLI launch needs no account switcher and starts with automatic continuation off.
+    // CDXC:AgentProviders 2026-09-11 DECISION: User: use the current CLI login until an account is added to Ghostex for that provider (2026-09-09); once accounts exist, a launch without an explicit account uses the provider's Account for new sessions rule from Settings (Most limit remaining by default, see default_account.rs), which supersedes the lowest-slot choice. When that rule yields no account the launch keeps the current CLI login, so a normal CLI launch needs no account switcher.
     let snapshot = super::runtime::current_snapshot();
     let id = runtime
         .get("accountId")
@@ -129,7 +132,6 @@ pub(crate) fn apply_new_session(
                 .map(|a| a.id.clone())
         });
     let Some(id) = id else {
-        runtime.insert("accountPolicyDefault".into(), json!(Policy::default()));
         return Ok(None);
     };
     let account = registry
@@ -141,23 +143,20 @@ pub(crate) fn apply_new_session(
                 "The selected account is no longer registered. Choose another account.",
             )
         })?;
-    runtime
-        .entry("accountPolicyDefault")
-        .or_insert(json!(registry
-            .defaults
-            .get(&provider)
-            .cloned()
-            .unwrap_or_default()));
     let home = home()?;
     let cmd = command(&home, account)?;
     let assigned = assign(runtime, account, cmd)?;
     super::default_account::record_last_used(db, &registry, provider, &account.id)?;
     Ok(Some(assigned))
 }
+/// CDXC:AgentProviders 2026-09-18 WHY:
+/// Windows has no HOME, so reading it alone failed every account launch and resume with "The server's home directory is unavailable."
 pub(crate) fn home() -> Result<PathBuf, DomainStateError> {
-    std::env::var_os("HOME")
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(std::env::var_os)
         .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
+        .find(|p| p.is_absolute())
         .ok_or_else(|| DomainStateError::bad_request("The server's home directory is unavailable."))
 }
 pub(crate) fn validate_session(
@@ -190,10 +189,21 @@ pub(crate) fn validate_identity(
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .unwrap_or_else(|| home.join(".local/share"));
+    // CDXC:AgentProviders 2026-09-18 WHY:
+    // xswap's registry is %LOCALAPPDATA%\codex-swap on Windows and $XDG_DATA_HOME/codex-swap elsewhere (its fsutil::default_data_dir).
+    // Reading the POSIX location on Windows made every saved Codex account fail identity validation as changed or unavailable.
+    let xswap_data_home = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| data_home.clone())
+    } else {
+        data_home.clone()
+    };
     let path = match account.provider {
         Provider::Codex => std::env::var_os("XSWAP_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|| data_home.join("codex-swap"))
+            .unwrap_or_else(|| xswap_data_home.join("codex-swap"))
             .join("accounts.json"),
         Provider::Claude => {
             if cfg!(target_os = "linux") {
@@ -235,17 +245,13 @@ pub(crate) fn validate_identity(
     }
     Ok(())
 }
-/// CDXC:AgentProviders 2026-09-05 DECISION:
-/// Continuation defaults apply to new sessions. Existing sessions retain their saved policy; sessions created before account management stay off until explicitly configured.
-pub(crate) fn effective_policy(
-    _registry: &Registry,
-    _provider: Provider,
-    session: &Value,
-) -> Policy {
+/// CDXC:AgentProviders 2026-09-19 DECISION:
+/// User: "I literally didn't touch the default in the session or in settings" and the session still did not switch accounts at a limit. A session follows the provider's continuation defaults from Settings > Accounts as they are now, unless it has its own Customize settings. This supersedes the 2026-09-05 copy saved at launch (`accountPolicyDefault`), which forks, restored sessions, CLIs adopted from a terminal, and agent re-detection never received or lost, leaving them off while Settings said on.
+pub(crate) fn effective_policy(registry: &Registry, provider: Provider, session: &Value) -> Policy {
     session
         .pointer("/runtimeSettings/accountPolicyOverride")
         .filter(|v| !v.is_null())
-        .or_else(|| session.pointer("/runtimeSettings/accountPolicyDefault"))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .or_else(|| registry.defaults.get(&provider).cloned())
         .unwrap_or_default()
 }

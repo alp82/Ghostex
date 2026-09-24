@@ -47,7 +47,7 @@ pub(crate) fn titlebar_popup_menu_with_scroll_behavior(
             item_padding_x: px(10.0),
             item_height: px(TITLEBAR_POPUP_MENU_MIN_ITEM_HEIGHT),
             separator_margin: px(6.0),
-            background: titlebar_popup_menu_background(),
+            background: popup_window_surface(titlebar_popup_menu_background()),
             foreground: titlebar_popup_menu_foreground(),
             border: titlebar_popup_menu_border_color(),
             hover: titlebar_popup_menu_hover_color(),
@@ -167,13 +167,24 @@ impl GhostexGpuiApp {
             titlebar_popup_menu_with_scroll_behavior(menu, width, max_height, scrollable)
                 .check_side(Side::Right);
 
-        let Some(state) = self.titlebar_git_menu_state.as_ref() else {
+        let Some(state) = self
+            .titlebar_git_menu_state
+            .as_ref()
+            .filter(|state| !state.is_busy)
+        else {
             return menu.menu_element_with_disabled(
                 Box::new(CopyGpuiTitlebarGitBranch),
                 true,
                 move |_, _| titlebar_popup_empty_menu_row("Loading Git state...".to_string()),
             );
         };
+        if !state.is_repo {
+            return menu.menu_element_with_disabled(
+                Box::new(CopyGpuiTitlebarGitBranch),
+                true,
+                move |_, _| titlebar_popup_empty_menu_row("Not a Git repository".to_string()),
+            );
+        }
 
         menu = titlebar_popup_git_section(menu, "Status");
 

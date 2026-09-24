@@ -15,10 +15,14 @@ import {
   DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_BACKGROUND_DARKNESS_PERCENT,
   DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_BACKGROUND_TINT_COLOR,
   DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_FOREGROUND_COLOR,
+  DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_LIGHT_BACKGROUND_COLOR,
+  DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_LIGHT_BACKGROUND_LIGHTNESS_PERCENT,
+  DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_LIGHT_BACKGROUND_TINT_COLOR,
+  DEFAULT_DARK_THEME_PRESET,
+  DEFAULT_LIGHT_THEME_PRESET,
   getSidebarTitlebarBackgroundForDarkness,
 } from './titlebar-color';
 import {
-  DEFAULT_ACCENT_COLOR,
   DEFAULT_PROJECT_SESSION_LIST_COLLAPSED_COUNT,
   DEFAULT_PROJECT_SWITCH_KEEP_ALIVE_MINUTES,
   DEFAULT_SESSION_CHAT_TRANSCRIPT_WIDTH_PERCENT,
@@ -30,6 +34,10 @@ import {
   DEFAULT_SIDEBAR_TOOLTIP_DELAY_MS,
   DEFAULT_TERMINAL_PANE_HORIZONTAL_PADDING_PX,
   DEFAULT_TERMINAL_PANE_PADDING_PX,
+  DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_DARK_PERCENT,
+  DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_LIGHT_PERCENT,
+  DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_DARK_PERCENT,
+  DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_LIGHT_PERCENT,
   type PromptEditorBackend,
   type WebLinkOpenTarget,
   type ghostexSettings,
@@ -117,6 +125,12 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
   kanbanViewTabHidden: false,
   automateViewTabHidden: false,
   docsViewTabHidden: false,
+  terminalViewTabHidden: false,
+  storybookViewTabHidden: false,
+  linearViewTabHidden: false,
+  jiraViewTabHidden: false,
+  githubViewTabHidden: false,
+  projectWebsiteViews: {},
   tipsAndTricksTitlebarButtonHidden: false,
   notificationsTitlebarButtonHidden: false,
   helpTitlebarButtonHidden: false,
@@ -232,6 +246,7 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
    */
   analyticsEnabled: true,
   debuggingMode: false,
+  chatBrain: 'quickjs',
   diagnosticLogging: {
     scenarios: DEFAULT_DIAGNOSTIC_LOGGING_SCENARIOS,
     version: 1,
@@ -384,6 +399,7 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
    */
   preferredAgentInterfaceOverrides: {},
   sidebarCollapseAnimationDurationMs: DEFAULT_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS,
+  panelAnimationSpeed: 'normal',
   sidebarTooltipDelayMs: DEFAULT_SIDEBAR_TOOLTIP_DELAY_MS,
   /**
    * CDXC:Sidebar 2026-06-05-04:40:
@@ -403,8 +419,6 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
   /** CDXC:Theming 2026-09-14 DECISION: User: default App theme to System, with Chat and Terminal on Follow app. Existing saved theme selections remain unchanged. */
   sidebarTheme: 'system',
   sessionChatTheme: 'app',
-  /** CDXC:SessionChat 2026-09-19 DECISION: User: make GPUI chat the default on desktop. This supersedes the React default; turning the setting off still selects React chat, and saved choices are kept. */
-  sessionChatUseGpui: true,
   sessionChatFontFamily: '',
   sessionChatZoomPercent: DEFAULT_SESSION_CHAT_ZOOM_PERCENT,
   sessionChatCustomTranscriptWidthEnabled: false,
@@ -412,7 +426,7 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
   sessionChatVerboseMode: false,
   sessionChatSimpleMode: false,
   sessionChatFileEditPreviews: false,
-  sessionChatModelPicksSessionOnly: false,
+  sessionChatKeepComposerExpanded: false,
   /**
    * CDXC:Theming 2026-06-15-11:24:
    * Custom sidebar/titlebar colors are scoped to the sidebar and titlebar.
@@ -455,7 +469,6 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
    * titlebar-color.ts owns the default matching the user's saved neutral #808080 tint at 96 contrast (#0b0b0b).
    *
    * Background Contrast and Background Tint are always-active Theming controls.
-   * Accent Color is advanced.
    */
   customSidebarTitlebarForegroundColor: DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_FOREGROUND_COLOR,
   customSidebarTitlebarBackgroundTintColor: DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_BACKGROUND_TINT_COLOR,
@@ -464,7 +477,14 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
     DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_BACKGROUND_DARKNESS_PERCENT,
     DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_BACKGROUND_TINT_COLOR
   ),
-  accentColor: DEFAULT_ACCENT_COLOR,
+  darkThemePreset: DEFAULT_DARK_THEME_PRESET,
+  lightThemePreset: DEFAULT_LIGHT_THEME_PRESET,
+  themeSidebarContrast: 0,
+  themeWorkAreaContrast: 0,
+  customSidebarTitlebarLightBackgroundTintColor: DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_LIGHT_BACKGROUND_TINT_COLOR,
+  customSidebarTitlebarLightBackgroundLightnessPercent:
+    DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_LIGHT_BACKGROUND_LIGHTNESS_PERCENT,
+  customSidebarTitlebarLightBackgroundColor: DEFAULT_CUSTOM_SIDEBAR_TITLEBAR_LIGHT_BACKGROUND_COLOR,
   /**
    * CDXC:Terminal 2026-05-22-12:29:
    * New Ghostex terminals should default to the requested GitHub Dark terminal
@@ -535,14 +555,22 @@ export const DEFAULT_ghostex_SETTINGS: ghostexSettings = {
   hotkeys: DEFAULT_ghostex_HOTKEYS,
   showActivePaneOutline: false,
   workspaceActivePaneBorderColor: '#3b82f6',
+  windowGlass: 'auto',
+  windowGlassSource: 'desktopAndWindows',
+  windowGlassImagePlacement: 'static',
+  windowGlassImageDark: '',
+  windowGlassImageLight: '',
+  windowGlassSidebarOpacityDark: DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_DARK_PERCENT,
+  windowGlassWorkAreaTintDark: DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_DARK_PERCENT,
+  windowGlassSidebarOpacityLight: DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_LIGHT_PERCENT,
+  windowGlassWorkAreaTintLight: DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_LIGHT_PERCENT,
   /**
    * CDXC:Workarea 2026-06-07-16:53:
    * A near-black workspace background avoids platform compositor handling of
    * literal transparent black while keeping pane chrome visually black.
    */
-  workspaceBackgroundColor: '#010101',
+  workspaceBackgroundColor: '',
   clickToWakeSleepingSessions: true,
-  showAgentsPaneTabBarWhenUnsplit: false,
   customViews: [],
   customViewTemplates: [],
   viewScopes: {},

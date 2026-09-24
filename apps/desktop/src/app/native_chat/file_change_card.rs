@@ -16,6 +16,13 @@ use gpui::{
 };
 use serde_json::{Value, json};
 
+/// The stack's frame (React's `.ghostex-chat-file-changes`): 10px rounded corners, 10px side and
+/// 8px end padding, and 12px between files. The files carry the padding and the gap themselves.
+const STACK_RADIUS: f32 = 10.0;
+const STACK_PAD_X: f32 = 10.0;
+const STACK_PAD_Y: f32 = 8.0;
+const STACK_GAP: f32 = 12.0;
+
 /// The card palette, mirroring the tokens in `session-chat-file-change-card.css`.
 struct Palette {
     surface: Hsla,
@@ -31,25 +38,21 @@ struct Palette {
 impl Palette {
     fn of(p: &ChatAppearance) -> Self {
         Self {
-            surface: if p.light {
-                p.input
-            } else {
-                rgb(0x141414).into()
-            },
-            code: if p.light {
-                p.input
-            } else {
-                rgb(0x151515).into()
-            },
+            // CDXC:Theming 2026-09-22 DECISION:
+            // User: the diff cards take from the theme colour too. The surfaces read the chat's
+            // derived input fill and the lines are the muted tone at the opacities that give the
+            // old #2b2b2e border and #747475 rail over the neutral dark chat.
+            surface: p.input,
+            code: p.input,
             border: if p.light {
                 p.border
             } else {
-                rgb(0x2b2b2e).into()
+                p.muted.opacity(0.2)
             },
             rail: if p.light {
                 p.border
             } else {
-                rgb(0x747475).into()
+                p.muted.opacity(0.7)
             },
             added: rgb(if p.light { 0x16803d } else { 0x94caaa }).into(),
             removed: rgb(if p.light { 0xc53030 } else { 0xe5a0a4 }).into(),
@@ -144,10 +147,7 @@ impl NativeChatView {
             .flex_col()
             .w_full()
             .min_w_0()
-            .gap(px(12.0 * s))
-            .py(px(8.0 * s))
-            .px(px(10.0 * s))
-            .rounded(px(10.0 * s))
+            .rounded(px(STACK_RADIUS * s))
             .bg(palette.surface);
         let last = files.len().saturating_sub(1);
         for (index, file) in files.iter().enumerate() {
@@ -180,7 +180,6 @@ impl NativeChatView {
         let parent = text(file, "parent");
 
         let marker_group = format!("marker:{key}");
-        let marker_key = key.clone();
         let marker = div()
             .id(format!("marker:{key}"))
             .group(marker_group.clone())
@@ -198,13 +197,10 @@ impl NativeChatView {
                     .size(px(8.0 * s))
                     .rounded_full()
                     .bg(palette.rail)
-                    .group_hover(marker_group, |style| style.bg(gpui::white())),
-            )
-            .on_click(cx.listener(move |view, _, _, cx| {
-                if can_expand {
-                    view.toggle_disclosure(&marker_key, cx);
-                }
-            }));
+                    .when(can_expand, |this| {
+                        this.group_hover(marker_group, |style| style.bg(gpui::white()))
+                    }),
+            );
 
         let open_path = text(file, "path");
         let name = div()
@@ -243,13 +239,14 @@ impl NativeChatView {
                     .child(text(file, "filename")),
             )
             .on_click(cx.listener(move |view, _, _, cx| {
+                // The path opens the file; every other press on the card toggles the diff.
+                cx.stop_propagation();
                 view.invoke(
                     json!({"type":"openMarkdownLink","href":open_path,"external":false}),
                     cx,
                 )
             }));
 
-        let counts_key = key.clone();
         let counts = div()
             .id(format!("counts:{key}"))
             .flex()
@@ -269,31 +266,68 @@ impl NativeChatView {
                 div()
                     .text_color(palette.removed)
                     .child(format!("\u{2212}{removed}")),
-            )
+            );
+
+        // One press target, as React's `<section onClick>` is: the marker, the counts, the rail,
+        // the code, the footer and the empty space between them all toggle the diff from here, so
+        // no two listeners can flip the same row twice. Only the path stops the press to open the file.
+        let card_key = key.clone();
+        // CDXC:SessionChat 2026-09-23 DECISION:
+        // User: "when i hover over this kind of card, you're making the only middle part change
+        // color, I want all of it to change color". Each file owns its share of the stack's padding
+        // and of the gap to its neighbours, so its hover fill reaches the stack's edges and, for the
+        // first and last file, its rounded corners: a single file lights the whole stack. The spacing
+        // is the old 8px padding and 12px gap, so the layout does not move. Supersedes the
+        // 2026-09-22 fill in a 6px inset. SEE-ALSO: `.ghostex-chat-file-change-card` in
+        // packages/core-ui/chat/session-chat-file-change-card.css.
+        let hover_fill: Hsla = if p.light {
+            gpui::white().opacity(0.6)
+        } else {
+            p.foreground.opacity(0.05)
+        };
+        let first = index == 0;
+        let pad_top = if first { STACK_PAD_Y } else { STACK_GAP / 2.0 } * s;
+        let pad_bottom = if last { STACK_PAD_Y } else { STACK_GAP / 2.0 } * s;
+        let radius = px(STACK_RADIUS * s);
+        let mut card = div()
+            .id(format!("card:{key}"))
             .on_click(cx.listener(move |view, _, _, cx| {
                 if can_expand {
-                    view.toggle_disclosure(&counts_key, cx);
+                    view.toggle_disclosure(&card_key, cx);
                 }
-            }));
-
-        let mut card = div()
+            }))
             .flex()
             .flex_col()
             .w_full()
             .min_w_0()
             .relative()
-            .child(
-                // The hairline React draws down the marker column joining one circle to the next
-                // (`.ghostex-chat-file-change-card::before`); visual only, and it reaches into the
-                // gap below every card but the last.
-                div()
-                    .absolute()
-                    .left(px(8.0 * s))
-                    .top(px(22.0 * s))
-                    .bottom(px(if last { 0.0 } else { -12.0 * s }))
-                    .w(px(1.0))
-                    .bg(palette.rail),
-            )
+            .px(px(STACK_PAD_X * s))
+            .pt(px(pad_top))
+            .pb(px(pad_bottom))
+            .when(first, |this| this.rounded_t(radius))
+            .when(last, |this| this.rounded_b(radius))
+            .when(can_expand, |this| {
+                this.hover(move |style| style.bg(hover_fill))
+            })
+            // The hairline React draws down the marker column joining one circle to the next
+            // (`.ghostex-chat-file-change-card::before`); visual only, and it reaches into the
+            // gap below every card but the last. A collapsed preview draws no rail through its code.
+            .when(!show_body || expanded, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .left(px(STACK_PAD_X * s + 8.0 * s))
+                        .top(px(pad_top + 22.0 * s))
+                        // Down to the next file's first line, through the half gap it owns.
+                        .bottom(px(if last {
+                            pad_bottom
+                        } else {
+                            -STACK_GAP / 2.0 * s
+                        }))
+                        .w(px(1.0))
+                        .bg(palette.rail),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -318,6 +352,15 @@ impl NativeChatView {
         if !show_body {
             return card.into_any_element();
         }
+        let detail = self.row_detail(
+            &key,
+            "file",
+            file["messageId"].as_str().unwrap_or_default(),
+            file["index"].as_u64().unwrap_or_default(),
+        );
+        if detail.is_null() {
+            return card.into_any_element();
+        }
         let mut code = div()
             .flex()
             .flex_col()
@@ -329,7 +372,7 @@ impl NativeChatView {
             .rounded(px(11.0 * s))
             .bg(palette.code)
             .overflow_hidden();
-        let lines: Vec<&Value> = file["lines"]
+        let lines: Vec<&Value> = detail["lines"]
             .as_array()
             .into_iter()
             .flatten()
@@ -370,36 +413,10 @@ impl NativeChatView {
                     .child(div().min_w_0().child(text(line, "text"))),
             );
         }
-        let body_key = key.clone();
-        card = card.child(
-            div()
-                .id(format!("body:{key}"))
-                .flex()
-                .w_full()
-                .min_w_0()
-                .mt(px(8.0 * s))
-                .gap(px(12.0 * s))
-                .when(can_expand, |this| this.chat_cursor_pointer())
-                .child(
-                    // The rail is the grab target React gives the open code, not an invisible overlay.
-                    div()
-                        .w(px(17.0 * s))
-                        .flex_shrink_0()
-                        .flex()
-                        .justify_center()
-                        .child(div().w(px(1.0)).h_full().bg(palette.rail)),
-                )
-                .child(code)
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    if can_expand {
-                        view.toggle_disclosure(&body_key, cx);
-                    }
-                })),
-        );
+        let mut detail_column = div().flex().flex_col().flex_1().min_w_0().child(code);
         if expanded && failed {
-            card = card.child(
+            detail_column = detail_column.child(
                 div()
-                    .ml(px(29.0 * s))
                     .mt(px(8.0 * s))
                     .min_w_0()
                     .text_color(p.error())
@@ -407,8 +424,7 @@ impl NativeChatView {
             );
         }
         if can_expand {
-            let footer_key = key.clone();
-            card = card.child(
+            detail_column = detail_column.child(
                 div()
                     .flex()
                     .justify_end()
@@ -417,7 +433,6 @@ impl NativeChatView {
                     .pb(px(7.0 * s))
                     .child(
                         div()
-                            .id(format!("footer:{key}"))
                             .px(px(8.0 * s))
                             .py(px(4.0 * s))
                             .rounded(px(6.0 * s))
@@ -429,13 +444,40 @@ impl NativeChatView {
                                 "Collapse changes"
                             } else {
                                 "Show all changes"
-                            })
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                view.toggle_disclosure(&footer_key, cx)
-                            })),
+                            }),
                     ),
             );
         }
+        let rail_group = format!("rail:{key}");
+        card = card.child(
+            div()
+                .flex()
+                .w_full()
+                .min_w_0()
+                .mt(px(8.0 * s))
+                .gap(px(12.0 * s))
+                .child(
+                    // The rail is the grab target React gives the open code, not an invisible
+                    // overlay: a real column beside the code and the footer (React's
+                    // `grid-row: 2 / 4`) whose line lights up white under the mouse.
+                    div()
+                        .group(rail_group.clone())
+                        .w(px(17.0 * s))
+                        .flex_shrink_0()
+                        .flex()
+                        .justify_center()
+                        .when(can_expand, |this| this.chat_cursor_pointer())
+                        .when(expanded, |this| {
+                            this.child(div().w(px(1.0)).h_full().bg(palette.rail).when(
+                                can_expand,
+                                |this| {
+                                    this.group_hover(rail_group, |style| style.bg(gpui::white()))
+                                },
+                            ))
+                        }),
+                )
+                .child(detail_column),
+        );
         card.into_any_element()
     }
 }

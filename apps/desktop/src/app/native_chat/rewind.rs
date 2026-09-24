@@ -73,8 +73,12 @@ impl NativeChatView {
                     )
                 })
                 .and_then(|(bounds, display_id)| {
+                    let display_id =
+                        crate::app::window::popup_frame::display_at(bounds.center(), cx)
+                            .or(display_id);
                     cx.open_window(
                         WindowOptions {
+                            kind: crate::app::window::popup_frame::child_window_kind(),
                             window_bounds: Some(WindowBounds::Windowed(bounds)),
                             display_id,
                             app_id: crate::gpui_platform_window_app_id(),

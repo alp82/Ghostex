@@ -79,6 +79,8 @@ impl GhostexGpuiApp {
                     session_id: key.session_id.clone(),
                     startup_restore: false,
                     keep_view: false,
+                    wake_sleeping: false,
+                    keep_sleeping: false,
                 },
                 cx,
             );
@@ -236,7 +238,11 @@ impl GhostexGpuiApp {
         let _ = self.send_enter_key_to_local_agents_workspace_session(&message, cx);
     }
 
-    pub(crate) fn receive_sidebar_session_completion_sound_payload(&mut self, payload: &str) {
+    pub(crate) fn receive_sidebar_session_completion_sound_payload(
+        &mut self,
+        payload: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
         /*
         Session-attention completion sound (macOS parity): the sidebar runtime
         owns the attention transition edge, the attention-event dedupe, and the
@@ -245,10 +251,28 @@ impl GhostexGpuiApp {
         whitelist normalization so no renderer-provided path or file name can
         reach the player.
         */
-        let Ok(sound) = gpui_sidebar_session_completion_sound_from_json(payload) else {
+        let Ok((sound, session_id)) = gpui_sidebar_session_completion_sound_from_json(payload)
+        else {
             return;
         };
         let _ = gpui_play_completion_sound(&sound);
+        /*
+        CDXC:Sessions 2026-09-21 WHY:
+        The card's completion flash rides the same message as the sound, because they are the same
+        event: the runtime posted both from one place and the flash only took the long way round,
+        through the old projection's snapshot bridge (the deleted sidebar page), which M4d
+        part 2 deletes.
+        */
+        let Some(session_id) = session_id else {
+            return;
+        };
+        self.native_sidebar
+            .completion_flashes
+            .retain(|_, started| started.elapsed().as_secs_f32() < 3.0);
+        self.native_sidebar
+            .completion_flashes
+            .insert(session_id, std::time::Instant::now());
+        cx.notify();
     }
 
     pub(crate) fn send_enter_key_to_local_agents_workspace_session(
@@ -327,35 +351,7 @@ impl GhostexGpuiApp {
         self.sidebar_gxserver_presentation_focus_state = next_state;
         self.sync_gpui_engine_first_prompt_input_suppression(cx);
         self.gx_store_persist_focus_state_file();
-        if self.active_mode.is_project_editor_mode() && self.project_editor_companion_is_visible() {
-            let mode = self.active_mode;
-            let focus_companion =
-                self.shell_focus == ShellFocusTarget::ProjectEditorCompanion(mode);
-            if session_selection_changed
-                && let Some(key) = self.project_editor_companion_active_terminal_key()
-                && let Some(session_id) = self.shell_session_for_workspace_terminal_key(&key)
-                && self.project_editor_companion_terminal_session_is_active_project_eligible(
-                    session_id,
-                )
-            {
-                self.retarget_project_editor_companion_to_workspace_terminal(
-                    mode,
-                    session_id,
-                    &key,
-                    focus_companion,
-                    cx,
-                );
-            } else {
-                self.sync_project_editor_companion_terminal_selection();
-            }
-        }
-        self.prune_project_editor_companion_remote_attach_states();
-        #[cfg(target_os = "windows")]
-        {
-            let focus_companion =
-                self.shell_focus == ShellFocusTarget::ProjectEditorCompanion(self.active_mode);
-            self.sync_windows_project_editor_companion_to_presentation_focus(focus_companion, cx);
-        }
+        let _ = session_selection_changed;
         self.refresh_sidebar_gxserver_bootstrap_if_changed(cx);
         self.reconcile_preferred_agents_chat_launch_intents(cx);
         if workspace_changed {
@@ -366,90 +362,6 @@ impl GhostexGpuiApp {
         }
         self.broadcast_extension_context_changes(cx);
         cx.notify();
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn sync_windows_project_editor_companion_to_presentation_focus(
-        &mut self,
-        focus_companion: bool,
-        cx: &mut gpui::Context<Self>,
-    ) -> bool {
-        /*
-        CDXC:PlatformSupport 2026-07-26:
-        Windows CEF sidebar selection publishes both an imperative terminal
-        focus request and the authoritative presentation focus snapshot. The
-        companion used to follow only the imperative request, so a focus-state
-        change could update the sidebar's selection owner while leaving a visible
-        project-editor companion on its previous session. Bind the Windows
-        companion to the changed presentation owner after workspace
-        reconciliation, reusing the existing terminal companion paths instead
-        of creating a second session model or fallback selection. Both the focus
-        snapshot and active-project update drive this helper, so whichever
-        authoritative state arrives second completes synchronization. The
-        caller captures whether the companion still owns shell focus; delayed
-        reconciliation updates content without stealing focus from the editor.
-        */
-        let mode = self.active_mode;
-        if !mode.is_project_editor_mode() || !self.project_editor_companion_is_visible() {
-            return false;
-        }
-        let Some(project_id) = self
-            .sidebar_gxserver_presentation_focus_state
-            .active_project_id
-            .clone()
-        else {
-            return false;
-        };
-        if self.project_editor_companion_active_project_id().as_deref() != Some(project_id.as_str())
-        {
-            return false;
-        }
-        let Some(session_id) = self
-            .sidebar_gxserver_presentation_focus_state
-            .focused_session_id
-            .clone()
-        else {
-            return false;
-        };
-        let key = GpuiLocalWorkspaceSessionKey {
-            project_id,
-            session_id,
-        };
-        let Some(shell_session_id) = self.local_workspace_session_mappings.get(&key).copied()
-        else {
-            return false;
-        };
-        self.agents_terminal_runtime_sessions
-            .reconcile_with_workspace(&self.agents_workspace);
-        let current_runtime_session_id = self
-            .agents_terminal_runtime_sessions
-            .runtime_session_id_for_shell_session(shell_session_id);
-        let current_terminal_matches = self.project_editor_companion_focused_terminal_session_id()
-            == Some(shell_session_id)
-            && self.project_editor_companion_terminal_session_is_eligible(shell_session_id)
-            && self
-                .project_editor_companion_terminal_slot_for_mode(mode)
-                .is_some_and(|slot_id| slot_id.session_id == shell_session_id)
-            && current_runtime_session_id.is_some_and(|runtime_session_id| {
-                self.agents_gpui_engine_terminals
-                    .get(&shell_session_id)
-                    .is_some_and(|record| record.runtime_session_id == runtime_session_id)
-            });
-        if current_terminal_matches {
-            return false;
-        }
-        if self.project_editor_companion_terminal_session_is_eligible(shell_session_id) {
-            let workspace_key = GpuiWorkspaceTerminalSessionKey::Local(key);
-            self.retarget_project_editor_companion_to_workspace_terminal(
-                mode,
-                shell_session_id,
-                &workspace_key,
-                focus_companion,
-                cx,
-            );
-            return true;
-        }
-        false
     }
 
     pub(crate) fn reconcile_local_workspace_tabs_with_sidebar(
@@ -481,6 +393,9 @@ impl GhostexGpuiApp {
         the next sidebar patch reconciles normally.
         */
         if !self.agents_sessions_pending_surface_transfer.is_empty() {
+            return false;
+        }
+        if self.has_unbound_agent_chat_launch() {
             return false;
         }
         let changed = self.agents_workspace.reconcile_with_sidebar_tab_sessions(
@@ -543,7 +458,7 @@ impl GhostexGpuiApp {
         {
             self.attach_surfaced_remote_workspace_terminals(&remote_machine_id, cx);
         }
-        self.resume_restored_workspace_surfaced_terminals(cx);
+        self.resume_restored_workspace_surfaced_terminals(focus_state, cx);
         let Some(tab_sessions) = focus_state.active_project_tab_sessions.as_deref() else {
             return;
         };
@@ -586,24 +501,25 @@ impl GhostexGpuiApp {
 
     pub(crate) fn resume_restored_workspace_surfaced_terminals(
         &mut self,
+        focus_state: &GpuiGxserverPresentationFocusState,
         cx: &mut gpui::Context<Self>,
     ) {
         /*
-        CDXC:Workarea 2026-08-07:
-        A restored workspace keeps the sessions its panes surfaced at quit, but
-        their daemon providers may have gone to sleep (auto-sleep, or the
-        machine rebooted) while the app was closed. Attach alone cannot show
-        those: a sleeping session has no zmx provider to attach to. Wake each
-        pane's surfaced-but-sleeping session exactly once per restored project,
-        which respawns the agent session server-side and then attaches through
-        the ordinary lifecycle path. Later sleeps are user decisions, so the
-        project key is consumed on the first authoritative pass and never
-        re-armed.
+        CDXC:Workarea 2026-09-23 WHY:
+        A restored workspace keeps the sessions its panes surfaced at quit, but their daemon providers may have gone to sleep (auto-sleep, or the machine rebooted) while the app was closed, and attach alone cannot show a session with no zmx provider. So the first visit to each restored project wakes its panes' surfaced-but-sleeping sessions once; later sleeps are user decisions, so the project key is consumed on that pass and never re-armed.
+        Only a return to the project does this. It runs on the first focus snapshot that describes this project, and when that snapshot heads for a session no pane surfaces (a new agent, or a background row) it wakes nothing: the requested session owns the visit and the covered sessions stay asleep until clicked. Waking them anyway respawned sessions the user had not asked for, and before R7 the wake's result also took focus from the new agent.
+        Supersedes the 2026-08-07 note, which woke on the first authoritative pass whatever it was for.
+        With Click to Wake Sleeping Panes on, the pass wakes nothing at all and those panes show their wake placeholder; see the SessionSleep decision on `select_sleeping_local_workspace_tab`.
         */
         let Some(project_id) = self.agents_workspace_project_id.clone() else {
             return;
         };
-        if !self.startup_restore_wake_pending.remove(&project_id) {
+        if focus_state.active_project_id.as_deref() != Some(project_id.as_str())
+            || !self.startup_restore_wake_pending.remove(&project_id)
+            || gpui_click_to_wake_sleeping_sessions_from_shared_settings(
+                &shared_settings::shared_sidebar_settings_snapshot(),
+            )
+        {
             return;
         }
         let surfaced = self
@@ -616,6 +532,25 @@ impl GhostexGpuiApp {
                     .map(|session_id| (pane_id, session_id))
             })
             .collect::<Vec<_>>();
+        if let Some(requested_session_id) = focus_state.focused_session_id.as_deref()
+            && !surfaced.iter().any(|(_, session_id)| {
+                match self.workspace_terminal_key_for_shell_session(*session_id) {
+                    Some(GpuiWorkspaceTerminalSessionKey::Local(key)) => {
+                        key.session_id == requested_session_id
+                    }
+                    Some(GpuiWorkspaceTerminalSessionKey::Remote(key)) => {
+                        gpui_remote_scoped_session_id(
+                            &key.remote_machine_id,
+                            &key.project_id,
+                            &key.session_id,
+                        ) == requested_session_id
+                    }
+                    None => false,
+                }
+            })
+        {
+            return;
+        }
         let focused_pane_id = self.agents_workspace.focused_pane;
         for (pane_id, session_id) in surfaced {
             if self
@@ -644,15 +579,10 @@ impl GhostexGpuiApp {
     pub(crate) fn current_project_view_state(&self) -> GpuiProjectViewState {
         GpuiProjectViewState {
             active_mode: self.available_titlebar_mode_or_agents(self.active_mode),
-            companion_split_enabled: self.project_editor_shell.left_companion_split_enabled,
-            companion_split_axis: self.project_editor_shell.left_companion_split_axis,
-            companion_width_ratio: self.project_editor_shell.left_companion_width_ratio,
-            companion_split_ratio: self.project_editor_shell.left_companion_split_ratio,
-            companion_columns_ratio: self.project_editor_shell.left_companion_columns_ratio,
-            companion_top_session_id: self.project_editor_companion_terminal_session_id,
-            companion_bottom_session_id: self
-                .project_editor_companion_secondary_terminal_session_id,
-            companion_focused_slot: self.project_editor_companion_focused_terminal_slot,
+            open_views: self.open_views.clone(),
+            view_strip_layout: self.view_strip_layout.clone(),
+            last_view_mode: self.last_open_view_mode,
+            workarea_split_ratio: self.project_editor_shell.workarea_split_ratio,
         }
     }
 
@@ -688,10 +618,8 @@ impl GhostexGpuiApp {
     ) {
         /*
         CDXC:Navigation 2026-08-07:
-        Restore the incoming project's own workarea and companion arrangement.
-        Companion occupants are validated against the workspace model that was
-        just swapped in — a session the reconcile has since removed simply
-        leaves that slot to the ordinary selection sync.
+        Restore the incoming project's own view: which one its panel shows, the one it last had open,
+        and how wide its sessions column is beside it.
         */
         let Some(state) = self
             .agents_workspace_project_id
@@ -699,28 +627,53 @@ impl GhostexGpuiApp {
             .and_then(|project_id| self.project_view_states_by_project.get(project_id))
             .cloned()
         else {
+            /*
+            CDXC:Workarea 2026-09-20 WHY:
+            A project this app has not seen before starts with no tabs at all, not with the previous
+            project's strip: its tabs belong to it, and inheriting them would open pages in a project
+            the user never asked to open them in.
+            */
+            self.open_views.clear();
+            self.view_strip_layout = GpuiViewStripLayout::default();
+            self.view_panel_maximized = false;
+            self.last_open_view_mode = self.open_view_mode();
             self.apply_view_pane_state(cx);
+            self.seed_terminal_view_for_open(cx);
             self.focus_default_surface_for_active_mode(cx);
             self.update_active_mode_cef_child_visibility(cx);
             return;
         };
-        self.project_editor_shell.left_companion_split_enabled = state.companion_split_enabled;
-        self.project_editor_shell.left_companion_split_axis = state.companion_split_axis;
-        self.project_editor_shell.left_companion_width_ratio = state.companion_width_ratio;
-        self.project_editor_shell.left_companion_split_ratio = state.companion_split_ratio;
-        self.project_editor_shell.left_companion_columns_ratio = state.companion_columns_ratio;
-        self.project_editor_companion_terminal_session_id = state
-            .companion_top_session_id
-            .filter(|session_id| self.agents_workspace.has_session(*session_id));
-        self.project_editor_companion_secondary_terminal_session_id = state
-            .companion_bottom_session_id
-            .filter(|session_id| self.agents_workspace.has_session(*session_id));
-        self.project_editor_companion_focused_terminal_slot = state.companion_focused_slot;
+        let workarea_span = self
+            .workarea_split_layout_metrics
+            .map(|metrics| metrics.content_span);
+        self.project_editor_shell
+            .restore_workarea_split_ratio(state.workarea_split_ratio, workarea_span);
         let target_mode = self.available_titlebar_mode_or_agents(state.active_mode);
+        self.last_open_view_mode = state
+            .last_view_mode
+            .filter(|mode| *mode != TitlebarMode::Agents)
+            .or(self.open_view_mode_for(target_mode));
         // The outgoing project was already captured before the workspace swap.
         // Do not record its live pane values under the incoming project here.
+        self.open_views = state
+            .open_views
+            .iter()
+            .copied()
+            .filter(|mode| *mode != TitlebarMode::Agents)
+            .collect();
+        if target_mode != TitlebarMode::Agents && !self.open_views.contains(&target_mode) {
+            self.open_views.push(target_mode);
+        }
+        self.view_strip_layout = state.view_strip_layout.clone();
+        self.view_panel_maximized =
+            self.view_panel_maximized && target_mode != TitlebarMode::Agents;
         self.active_mode = target_mode;
+        // The picker belongs to the panel, not to a project, so it survives a switch only while the
+        // incoming project has no view of its own to show.
+        self.view_panel_picker_open =
+            self.view_panel_picker_open && target_mode == TitlebarMode::Agents;
         self.apply_view_pane_state(cx);
+        self.seed_terminal_view_for_open(cx);
         self.focus_shell_target(
             default_shell_focus_for_mode(
                 target_mode,
@@ -799,6 +752,8 @@ impl GhostexGpuiApp {
         focus, change the titlebar mode, or publish presentation focus: the
         restored layout already says what is surfaced, and a split's other
         panes must re-arm without fighting each other for focus.
+        Parked projects reuse shell ids, so both plan lookup and completion must
+        resolve the complete remote key in the currently active project.
         */
         let Some(active_project_id) = self.agents_workspace_project_id.clone() else {
             return;
@@ -833,61 +788,27 @@ impl GhostexGpuiApp {
                 self.agents_tab_selected_local_runtime_missing(*pane_id, *session_id)
             })
             .filter_map(|(pane_id, session_id)| {
-                self.remote_attach_sessions
-                    .iter()
-                    .find_map(|(key, mapped)| (*mapped == session_id).then(|| key.clone()))
-                    .filter(|key| key.remote_machine_id == remote_machine_id)
+                self.agents_chat_remote_key_for_session(session_id)
                     .map(|key| (pane_id, session_id, key))
             })
             .collect::<Vec<_>>();
 
         for (pane_id, session_id, key) in candidates {
-            if !self.remote_workspace_attach_pending.insert(key.clone()) {
-                continue;
-            }
             let reference = GpuiRemoteAttachSessionReference {
                 remote_machine_id: key.remote_machine_id.clone(),
                 project_id: key.project_id.clone(),
                 session_id: key.session_id.clone(),
             };
-            let prepare_config = config.clone();
-            let prepare_target = target.clone();
-            let background = cx.background_executor().clone();
-            cx.spawn(async move |this, cx| {
-                let prepare_reference = reference.clone();
-                let result = background
-                    .spawn(async move {
-                        /*
-                        Wake is requested here for the same reason the click
-                        path requests it: a restored session whose zmx provider
-                        died while the app was closed must be resumed remotely
-                        before there is anything to attach to.
-                        */
-                        gpui_prepare_remote_attach_terminal_plan(
-                            &prepare_config,
-                            &prepare_target,
-                            &prepare_reference,
-                            true,
-                            true,
-                        )
-                    })
-                    .await;
-                let _ = this.update(cx, |this, cx| {
-                    this.remote_workspace_attach_pending.remove(&key);
-                    let Ok(plan) = result else {
-                        support_logs::append(
-                            support_logs::GpuiSupportLog::TerminalFocus,
-                            "gpui.remoteAttach.surfacedRestorePlanFailed",
-                            serde_json::json!({ "machineId": key.remote_machine_id }),
-                        );
-                        return;
-                    };
-                    this.arm_surfaced_remote_workspace_terminal(
-                        &key, pane_id, session_id, plan, cx,
-                    );
-                });
-            })
-            .detach();
+            self.prepare_gpui_remote_attach_request(
+                reference,
+                config.clone(),
+                target.clone(),
+                crate::app::remote_conn::attach_request::RemoteAttachRequestIntent::Restore {
+                    pane_id,
+                    session_id,
+                },
+                cx,
+            );
         }
     }
 
@@ -906,32 +827,16 @@ impl GhostexGpuiApp {
         still hold, otherwise this payload belongs to a slot that no longer
         exists.
         */
-        if self.remote_attach_sessions.get(key).copied() != Some(session_id)
+        if self.agents_chat_remote_key_for_session(session_id).as_ref() != Some(key)
             || self.agents_workspace.pane_id_for_session(session_id) != Some(pane_id)
             || self.agents_workspace.active_session_in_pane(pane_id) != Some(session_id)
             || !self.agents_tab_selected_local_runtime_missing(pane_id, session_id)
         {
             return;
         }
-        #[cfg(target_os = "macos")]
-        let env_vars = plan
-            .askpass
-            .as_ref()
-            .map(|askpass| {
-                vec![
-                    (
-                        "DISPLAY".to_string(),
-                        env::var("DISPLAY").unwrap_or_else(|_| "localhost:0".to_string()),
-                    ),
-                    (
-                        "SSH_ASKPASS".to_string(),
-                        gpui_path_string(askpass.script.as_path()),
-                    ),
-                    ("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string()),
-                ]
-            })
-            .unwrap_or_default();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+        let env_vars = gpui_remote_ssh_terminal_environment(plan.askpass.as_ref());
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         let env_vars = Vec::new();
         let payload = AgentsTerminalExplicitLaunchPayload {
             working_directory: None,
@@ -955,7 +860,7 @@ impl GhostexGpuiApp {
                 },
                 payload,
             );
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         if let Some(askpass) = plan.askpass {
             self.remote_attach_askpass_scripts
                 .insert(key.clone(), askpass);
@@ -1632,377 +1537,19 @@ impl GhostexGpuiApp {
         )
     }
 
+    /// CDXC:Workarea 2026-09-20 WHY:
+    /// Selecting a session never closes the view panel any more: the Agents column is beside it, so
+    /// the session appears without the view going away. The active-project check stays, because a
+    /// click on another project's session still swaps the whole workspace.
     pub(crate) fn should_keep_project_editor_open_for_workspace_terminal_focus(
         &self,
         key: &GpuiWorkspaceTerminalSessionKey,
     ) -> bool {
-        if !self.active_mode.is_project_editor_mode() || !self.project_editor_companion_is_visible()
-        {
+        if !self.view_panel_open() {
             return false;
         }
-        self.project_editor_companion_active_project_id()
+        self.active_sidebar_project_id()
             .is_some_and(|active_project_id| key.scoped_project_id() == active_project_id)
-    }
-
-    pub(crate) fn retarget_project_editor_companion_to_workspace_terminal(
-        &mut self,
-        mode: TitlebarMode,
-        shell_session_id: TerminalSessionId,
-        workspace_key: &GpuiWorkspaceTerminalSessionKey,
-        focus_companion: bool,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if self.shell_session_for_workspace_terminal_key(workspace_key) != Some(shell_session_id)
-            || self.project_editor_companion_active_project_id().as_deref()
-                != Some(workspace_key.scoped_project_id().as_str())
-        {
-            return;
-        }
-        self.mark_project_editor_mode_awake(mode, cx);
-        if self.project_editor_companion_terminal_session_id == Some(shell_session_id) {
-            self.project_editor_companion_focused_terminal_slot =
-                ProjectEditorCompanionTerminalSlot::Top;
-        } else if self.project_editor_companion_secondary_terminal_session_id
-            == Some(shell_session_id)
-        {
-            self.project_editor_companion_focused_terminal_slot =
-                ProjectEditorCompanionTerminalSlot::Bottom;
-        } else {
-            match self.project_editor_companion_focused_terminal_slot {
-                ProjectEditorCompanionTerminalSlot::Top => {
-                    self.project_editor_companion_terminal_session_id = Some(shell_session_id);
-                }
-                ProjectEditorCompanionTerminalSlot::Bottom
-                    if self
-                        .project_editor_companion_secondary_terminal_session_id
-                        .is_some() =>
-                {
-                    self.project_editor_companion_secondary_terminal_session_id =
-                        Some(shell_session_id);
-                }
-                ProjectEditorCompanionTerminalSlot::Bottom => {
-                    if self.project_editor_companion_terminal_session_id.is_some() {
-                        self.project_editor_companion_secondary_terminal_session_id =
-                            Some(shell_session_id);
-                    } else {
-                        self.project_editor_companion_terminal_session_id = Some(shell_session_id);
-                        self.project_editor_companion_focused_terminal_slot =
-                            ProjectEditorCompanionTerminalSlot::Top;
-                    }
-                }
-            }
-        }
-        self.sync_project_editor_companion_terminal_selection();
-        if focus_companion {
-            self.focus_shell_target(ShellFocusTarget::ProjectEditorCompanion(mode), cx);
-            if let Some(slot_id) = self.project_editor_companion_terminal_slot_for_mode(mode) {
-                self.request_project_editor_companion_session_text_focus_handoff(slot_id, cx);
-            }
-            self.set_sidebar_focus_border_handoff_target(shell_session_id);
-        }
-        self.update_active_mode_cef_child_visibility(cx);
-    }
-
-    pub(crate) fn seed_project_editor_companion_terminal_attach_payload_from_agents_slot(
-        &mut self,
-        mode: TitlebarMode,
-        pane_id: WorkspacePaneId,
-        session_id: TerminalSessionId,
-        workspace_key: &GpuiWorkspaceTerminalSessionKey,
-    ) {
-        if self.shell_session_for_workspace_terminal_key(workspace_key) != Some(session_id) {
-            return;
-        }
-        /*
-        CDXC:CodeEditor 2026-07-06:
-        When a sidebar click keeps a project-editor mode open, the companion
-        pane mounts the session first, so it owns the daemon-built attach
-        payload including any queued startup text. The agents slot keeps a
-        text-free copy of the same attach command so a later Agents-view mount
-        attaches the same zmx session without re-sending startup input.
-        */
-        let Some(runtime_session_id) = self
-            .agents_terminal_runtime_sessions
-            .runtime_session_id_for_shell_session(session_id)
-        else {
-            return;
-        };
-        let agents_slot_id = AgentsTerminalBodyMountSlotId {
-            pane_id,
-            session_id,
-        };
-        let Some(payload) = self
-            .agents_terminal_launch_payload_source
-            .take_explicit_payload_for_mount_slot(runtime_session_id, agents_slot_id)
-        else {
-            return;
-        };
-        let mut agents_payload = payload.clone();
-        agents_payload.initial_input = None;
-        self.agents_terminal_launch_payload_source
-            .insert_explicit_payload_for_mount_slot(
-                runtime_session_id,
-                agents_slot_id,
-                agents_payload,
-            );
-        self.project_editor_companion_terminal_launch_payload_source
-            .insert_explicit_payload_for_mount_slot(
-                runtime_session_id,
-                ProjectEditorCompanionTerminalBodyMountSlotId { mode, session_id },
-                payload,
-            );
-        if let GpuiWorkspaceTerminalSessionKey::Remote(remote_key) = workspace_key {
-            self.clear_project_editor_companion_remote_attach_state_for_key(remote_key);
-        }
-    }
-
-    pub(crate) fn request_project_editor_companion_terminal_attach_payload(
-        &mut self,
-        slot_id: ProjectEditorCompanionTerminalBodyMountSlotId,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        /*
-        CDXC:CodeEditor 2026-07-06:
-        A current companion slot with no live surface and no stored payload
-        asks localhost gxserver for the session's attach metadata, exactly like
-        a sidebar click, then stores the attach command for the exact companion
-        mount slot. Startup text is never sent from this path; it belongs to
-        the first materializing mount only.
-        */
-        if let Some(GpuiWorkspaceTerminalSessionKey::Remote(remote_key)) =
-            self.project_editor_companion_terminal_key_for_slot(slot_id)
-        {
-            let Some(attempt) =
-                self.project_editor_companion_remote_attach_attempt_for_slot(slot_id)
-            else {
-                return;
-            };
-            if self
-                .project_editor_companion_remote_attach_states
-                .get(&slot_id)
-                .is_some_and(|state| state.attempt() == &attempt)
-            {
-                return;
-            }
-            self.project_editor_companion_remote_attach_states.insert(
-                slot_id,
-                GpuiProjectEditorCompanionRemoteAttachState::Preparing(attempt.clone()),
-            );
-            let Some(target) =
-                self.gpui_remote_gxserver_request_target(remote_key.remote_machine_id.as_str())
-            else {
-                self.record_project_editor_companion_remote_attach_unavailable(
-                    slot_id,
-                    attempt,
-                    "Reconnect the remote machine to show this terminal.".to_string(),
-                );
-                cx.notify();
-                return;
-            };
-            let settings_snapshot = shared_settings::shared_sidebar_settings_snapshot();
-            let Some(config) = gpui_remote_machine_config_from_settings(
-                settings_snapshot.object(),
-                remote_key.remote_machine_id.as_str(),
-            ) else {
-                self.record_project_editor_companion_remote_attach_unavailable(
-                    slot_id,
-                    attempt,
-                    "The saved remote machine is missing required SSH settings.".to_string(),
-                );
-                cx.notify();
-                return;
-            };
-            let reference = GpuiRemoteAttachSessionReference {
-                remote_machine_id: remote_key.remote_machine_id.clone(),
-                project_id: remote_key.project_id.clone(),
-                session_id: remote_key.session_id.clone(),
-            };
-            let background = cx.background_executor().clone();
-            cx.spawn(async move |this, cx| {
-                let result = background
-                    .spawn(async move {
-                        gpui_prepare_remote_attach_terminal_plan(
-                            &config, &target, &reference, true, true,
-                        )
-                    })
-                    .await;
-                let _ = this.update(cx, |this, cx| {
-                    if !this
-                        .project_editor_companion_remote_attach_states
-                        .get(&slot_id)
-                        .is_some_and(|state| state.attempt() == &attempt)
-                    {
-                        return;
-                    }
-                    if !this.project_editor_companion_remote_attach_attempt_is_current(
-                        slot_id, &attempt,
-                    ) {
-                        this.project_editor_companion_remote_attach_states
-                            .remove(&slot_id);
-                        return;
-                    }
-                    let plan = match result {
-                        Ok(plan) => plan,
-                        Err(message) => {
-                            this.record_project_editor_companion_remote_attach_unavailable(
-                                slot_id, attempt, message,
-                            );
-                            cx.notify();
-                            return;
-                        }
-                    };
-                    let Some(runtime_session_id) = this
-                        .agents_terminal_runtime_sessions
-                        .runtime_session_id_for_shell_session(slot_id.session_id)
-                    else {
-                        this.project_editor_companion_remote_attach_states
-                            .remove(&slot_id);
-                        return;
-                    };
-                    if this
-                        .agents_gpui_engine_terminals
-                        .get(&slot_id.session_id)
-                        .is_some_and(|record| record.runtime_session_id == runtime_session_id)
-                    {
-                        this.project_editor_companion_remote_attach_states
-                            .remove(&slot_id);
-                        return;
-                    }
-                    #[cfg(target_os = "macos")]
-                    let env_vars = plan
-                        .askpass
-                        .as_ref()
-                        .map(|askpass| {
-                            vec![
-                                (
-                                    "DISPLAY".to_string(),
-                                    env::var("DISPLAY")
-                                        .unwrap_or_else(|_| "localhost:0".to_string()),
-                                ),
-                                (
-                                    "SSH_ASKPASS".to_string(),
-                                    gpui_path_string(askpass.script.as_path()),
-                                ),
-                                ("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string()),
-                            ]
-                        })
-                        .unwrap_or_default();
-                    #[cfg(not(target_os = "macos"))]
-                    let env_vars = Vec::new();
-                    let payload = AgentsTerminalExplicitLaunchPayload {
-                        working_directory: None,
-                        command: Some(plan.terminal_command),
-                        env_vars,
-                        initial_input: None,
-                        wait_after_command: false,
-                    };
-                    if payload.to_ghostty_launch_payload().is_err() {
-                        this.record_project_editor_companion_remote_attach_unavailable(
-                            slot_id,
-                            attempt,
-                            "GPUI could not prepare the remote attach terminal command."
-                                .to_string(),
-                        );
-                        cx.notify();
-                        return;
-                    }
-                    if let Some(session) = this
-                        .agents_workspace
-                        .terminal_sessions
-                        .iter_mut()
-                        .find(|session| session.id == slot_id.session_id)
-                    {
-                        session.title = plan.title;
-                        session.agent_icon = plan.agent_icon;
-                    }
-                    #[cfg(target_os = "macos")]
-                    if let Some(askpass) = plan.askpass {
-                        this.remote_attach_askpass_scripts
-                            .insert(remote_key.clone(), askpass);
-                    }
-                    this.project_editor_companion_terminal_launch_payload_source
-                        .insert_explicit_payload_for_mount_slot(
-                            runtime_session_id,
-                            slot_id,
-                            payload,
-                        );
-                    this.project_editor_companion_remote_attach_states
-                        .remove(&slot_id);
-                    cx.notify();
-                });
-            })
-            .detach();
-            return;
-        }
-        if !self
-            .project_editor_companion_terminal_attach_plan_pending
-            .insert(slot_id)
-        {
-            return;
-        }
-        let Some(key) = self.local_workspace_key_for_shell_session(slot_id.session_id) else {
-            self.project_editor_companion_terminal_attach_plan_pending
-                .remove(&slot_id);
-            return;
-        };
-        let attach_intent = self.local_workspace_attach_intent_for_key(&key);
-        let background = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            let prepare_key = key.clone();
-            let result = background
-                .spawn(async move {
-                    gpui_prepare_local_workspace_attach_terminal_plan(&prepare_key, attach_intent)
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                this.project_editor_companion_terminal_attach_plan_pending
-                    .remove(&slot_id);
-                let Ok(plan) = result else {
-                    return;
-                };
-                if !this.is_current_project_editor_companion_terminal_body_mount_slot(slot_id) {
-                    return;
-                }
-                if this.local_workspace_key_for_shell_session(slot_id.session_id) != Some(key) {
-                    return;
-                }
-                let Some(runtime_session_id) = this
-                    .agents_terminal_runtime_sessions
-                    .runtime_session_id_for_shell_session(slot_id.session_id)
-                else {
-                    return;
-                };
-                if this
-                    .agents_gpui_engine_terminals
-                    .get(&slot_id.session_id)
-                    .is_some_and(|record| record.runtime_session_id == runtime_session_id)
-                {
-                    return;
-                }
-                let payload = AgentsTerminalExplicitLaunchPayload {
-                    working_directory: plan.working_directory,
-                    command: Some(plan.attach_command),
-                    env_vars: Vec::new(),
-                    initial_input: None,
-                    wait_after_command: false,
-                };
-                if payload.to_ghostty_launch_payload().is_err() {
-                    return;
-                }
-                if let Some(session) = this
-                    .agents_workspace
-                    .terminal_sessions
-                    .iter_mut()
-                    .find(|session| session.id == slot_id.session_id)
-                {
-                    session.zmx_session_name = plan.zmx_name;
-                }
-                this.project_editor_companion_terminal_launch_payload_source
-                    .insert_explicit_payload_for_mount_slot(runtime_session_id, slot_id, payload);
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     pub(crate) fn focus_existing_gpui_local_workspace_terminal(
@@ -2024,13 +1571,10 @@ impl GhostexGpuiApp {
         if !self.local_workspace_terminal_can_focus_existing(pane_id, shell_session_id) {
             return false;
         }
+        // The selection rule (session_pane_placement.rs): the session comes to the focused pane
+        // unless it is already on screen in another one.
+        let pane_id = self.pull_workspace_session_into_focused_pane(pane_id, shell_session_id);
 
-        let keep_editor_mode =
-            self.should_keep_project_editor_open_for_local_workspace_terminal_focus(key);
-        let project_editor_mode = self.active_mode;
-        if !keep_editor_mode {
-            self.change_active_mode_with_pane_state(TitlebarMode::Agents, cx);
-        }
         /*
         CDXC:FocusRouting 2026-06-26-06:34:
         Focusing an already-mapped local gxserver session reuses the existing GPUI tab only after the session has a live terminal owner, a reusable viewer recipe, or an inserted attach payload for the exact mount slot. Reconciled sidebar placeholders without attach state intentionally fall through to the gxserver attach pipeline so they cannot mount a default shell.
@@ -2051,32 +1595,18 @@ impl GhostexGpuiApp {
             }),
         );
         self.activate_preferred_agents_chat_launch_intent(shell_session_id, cx);
-        if keep_editor_mode {
-            let workspace_key = GpuiWorkspaceTerminalSessionKey::Local(key.clone());
-            self.seed_project_editor_companion_terminal_attach_payload_from_agents_slot(
-                project_editor_mode,
+        // CDXC:Workarea 2026-09-20 WHY:
+        // Selecting a session focuses its pane in the Agents column and leaves the view panel alone;
+        // it used to have to choose between the companion and switching the whole workarea.
+        self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
+        self.set_sidebar_focus_border_handoff_target(shell_session_id);
+        self.request_agents_session_text_focus_handoff(
+            AgentsTerminalBodyMountSlotId {
                 pane_id,
-                shell_session_id,
-                &workspace_key,
-            );
-            self.retarget_project_editor_companion_to_workspace_terminal(
-                project_editor_mode,
-                shell_session_id,
-                &workspace_key,
-                true,
-                cx,
-            );
-        } else {
-            self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
-            self.set_sidebar_focus_border_handoff_target(shell_session_id);
-            self.request_agents_session_text_focus_handoff(
-                AgentsTerminalBodyMountSlotId {
-                    pane_id,
-                    session_id: shell_session_id,
-                },
-                cx,
-            );
-        }
+                session_id: shell_session_id,
+            },
+            cx,
+        );
         self.scroll_workspace_pane_active_tab(pane_id);
         self.local_app_shot_session_mappings
             .insert(key.session_id.clone(), shell_session_id);
@@ -2106,6 +1636,7 @@ impl GhostexGpuiApp {
     pub(crate) fn select_local_workspace_terminal_keeping_view(
         &mut self,
         key: &GpuiLocalWorkspaceSessionKey,
+        wake_sleeping: bool,
         cx: &mut gpui::Context<Self>,
     ) {
         support_logs::append(
@@ -2117,11 +1648,17 @@ impl GhostexGpuiApp {
             }),
         );
         self.refresh_sidebar_gxserver_bootstrap_if_changed(cx);
-        if self.select_existing_local_workspace_terminal_keeping_view(key, cx) {
+        if !wake_sleeping && self.select_existing_local_workspace_terminal_keeping_view(key, cx) {
             self.reconcile_preferred_agents_chat_launch_intents(cx);
             return;
         }
-        let attach_intent = self.local_workspace_attach_intent_for_key(key);
+        let mapped_attach_intent = self.local_workspace_attach_intent_for_key(key);
+        // The background half of the same one-round-trip wake the ordinary path uses (`wake_sleeping` on the focus message).
+        let attach_intent = if wake_sleeping {
+            GpuiLocalWorkspaceAttachIntent::Wake
+        } else {
+            mapped_attach_intent
+        };
         let requested_pane_id = self
             .local_workspace_session_mappings
             .get(key)
@@ -2163,6 +1700,7 @@ impl GhostexGpuiApp {
         if !self.local_workspace_terminal_can_focus_existing(pane_id, shell_session_id) {
             return false;
         }
+        let pane_id = self.pull_workspace_session_into_focused_pane(pane_id, shell_session_id);
         focus_existing_local_workspace_terminal_tab_model(
             &mut self.agents_workspace,
             &mut self.agents_terminal_runtime_sessions,
@@ -2181,7 +1719,7 @@ impl GhostexGpuiApp {
 
     /// Shared tail of both keep-view paths: reveal the tab in its strip,
     /// publish the selection to the sidebar, persist, and repaint.
-    fn finish_local_workspace_terminal_background_selection(
+    pub(crate) fn finish_local_workspace_terminal_background_selection(
         &mut self,
         key: &GpuiLocalWorkspaceSessionKey,
         pane_id: WorkspacePaneId,
@@ -2267,10 +1805,6 @@ impl GhostexGpuiApp {
         CDXC:FocusRouting 2026-06-26-06:18:
         MacOS decides the workspace tab group at sidebar activation time, then lets async wake/attach complete against that focus intent. GPUI must pass the captured Agents pane through attach completion so focusing another pane while gxserver prepares metadata cannot move the restored session into the wrong tab group.
         */
-        let keep_editor_mode =
-            self.should_keep_project_editor_open_for_local_workspace_terminal_focus(&key);
-        let project_editor_mode = self.active_mode;
-        let workspace_key = GpuiWorkspaceTerminalSessionKey::Local(key.clone());
         let result = insert_gpui_local_workspace_attach_terminal(
             &mut self.agents_workspace,
             &mut self.agents_terminal_runtime_sessions,
@@ -2296,22 +1830,7 @@ impl GhostexGpuiApp {
             }
         };
         self.activate_preferred_agents_chat_launch_intent(session_id, cx);
-        if keep_editor_mode {
-            self.seed_project_editor_companion_terminal_attach_payload_from_agents_slot(
-                project_editor_mode,
-                pane_id,
-                session_id,
-                &workspace_key,
-            );
-            self.retarget_project_editor_companion_to_workspace_terminal(
-                project_editor_mode,
-                session_id,
-                &workspace_key,
-                true,
-                cx,
-            );
-        } else {
-            self.change_active_mode_with_pane_state(TitlebarMode::Agents, cx);
+        {
             self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
             self.set_sidebar_focus_border_handoff_target(session_id);
             self.request_agents_session_text_focus_handoff(
@@ -2332,6 +1851,7 @@ impl GhostexGpuiApp {
         );
         self.persist_shell_layout_state();
         self.update_active_mode_cef_child_visibility(cx);
+        self.reveal_floating_sessions(cx);
         cx.notify();
         true
     }
@@ -2403,6 +1923,7 @@ impl GhostexGpuiApp {
         );
         self.persist_shell_layout_state();
         self.update_active_mode_cef_child_visibility(cx);
+        self.reveal_floating_sessions(cx);
         cx.notify();
         true
     }

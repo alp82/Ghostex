@@ -21,9 +21,12 @@ pub(super) struct ComposerReference {
     /// Byte range of `[label](path)` inside the draft.
     pub(super) range: Range<usize>,
     pub(super) kind: String,
+    /// The reference's own label, `Image #1` for a pasted picture.
+    pub(super) label: String,
     pub(super) path: String,
     /// The visible text, already padded for the icon and truncated to the shared label width.
     pub(super) pill: String,
+    pub(super) revealed: bool,
 }
 
 /// Byte offset of every UTF-16 code-unit boundary in `draft`, so JS string indices land on chars.
@@ -58,8 +61,10 @@ pub(super) fn parse(draft: &str, parsed: &Value) -> Vec<ComposerReference> {
             (start < end).then_some(ComposerReference {
                 range: start..end,
                 kind: reference["kind"].as_str()?.to_owned(),
+                label: reference["label"].as_str()?.to_owned(),
                 path: reference["path"].as_str()?.to_owned(),
                 pill: reference["pill"].as_str()?.to_owned(),
+                revealed: reference["revealed"] == true,
             })
         })
         .collect()
@@ -72,6 +77,7 @@ pub(super) fn replacements(
 ) -> Vec<InlineReplacement> {
     references
         .iter()
+        .filter(|reference| !reference.revealed)
         .filter_map(|reference| {
             let color = markdown_links::composer_color(&reference.kind, appearance)?;
             Some(
@@ -87,7 +93,12 @@ pub(super) fn replacements(
                     // No pill changes the cursor (see native_chat/cursor.rs): a reference inside
                     // the composer keeps the input's own text cursor, and clicking it still
                     // opens what it points at.
-                    .pointer(false),
+                    .pointer(false)
+                    // CDXC:SessionChat 2026-09-20 DECISION:
+                    // User: hovering a composer pill shows the path, URL, or whatever else it
+                    // points at, because the pill hides the markdown destination. React shows the
+                    // same thing from `session-chat-lexical-input.tsx`.
+                    .tooltip(reference.path.clone()),
             )
         })
         .collect()

@@ -7,6 +7,7 @@ use std::{collections::HashMap, time::Duration};
 #[derive(Default)]
 pub(crate) struct ProjectViews {
     entries: HashMap<String, Entry>,
+    pub(crate) website_editor: Option<super::project_websites::WebsiteHomeEditor>,
 }
 struct Entry {
     fingerprint: String,
@@ -25,7 +26,7 @@ pub(crate) struct ProjectViewCommand {
     pub id: String,
     pub operation: String,
 }
-/// The HUD fields the app-modal Settings window needs to render the "Available in" pickers.
+/// The HUD fields the app-modal Settings window needs to render the view scope editors.
 pub(crate) const PROJECT_VIEW_SCOPE_OPTION_HUD_KEYS: [&str; 2] =
     ["projectViewSpaces", "projectViewProjects"];
 
@@ -37,7 +38,7 @@ impl GhostexGpuiApp {
     /// CDXC:Spaces 2026-09-18 WHY:
     /// Settings builds its own hydrate, which omitted the sidebar's spaces and showed an empty picker despite existing spaces.
     /// Reuse the shared runtime's complete local/remote options, including their computer-scoped identities.
-    /// The project list rides along for the same reason: the "Available in" picker lists the sidebar's own
+    /// The project list rides along for the same reason: the scope editor lists the sidebar's own
     /// rows, which only the sidebar runtime can enumerate.
     pub(crate) fn with_project_view_scope_options(&self, mut message: Value) -> Value {
         let Some(hud) = self
@@ -82,35 +83,6 @@ impl GhostexGpuiApp {
             .parked
             .take()?;
         owned.matches_runtime_url(url).then_some(owned)
-    }
-    /// CDXC:Extensions 2026-09-16 DECISION:
-    /// User: keep Start / Restart and Stop removed, but restore Configure view and make it open the clicked view's editor.
-    /// This supersedes the earlier removal of Configure view.
-    pub(crate) fn show_project_view_menu(
-        &self,
-        id: ExtensionId,
-        position: gpui::Point<gpui::Pixels>,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.titlebar_view_lifecycle_menu(TitlebarMode::Extension(id))
-            .menu(
-                "Command output",
-                Box::new(ProjectViewCommand {
-                    id: id.as_str().into(),
-                    operation: "output".into(),
-                }),
-            )
-            .menu(
-                "Configure view",
-                Box::new(ProjectViewCommand {
-                    id: id.as_str().into(),
-                    operation: "configure".into(),
-                }),
-            )
-            .separator()
-            .menu("Extensions", Box::new(OpenGpuiExtensionsModal))
-            .show(position, window, cx);
     }
     fn project_view_key(&self, id: ExtensionId) -> Option<String> {
         let project = self
@@ -162,6 +134,9 @@ impl GhostexGpuiApp {
         &self,
         id: ExtensionId,
     ) -> Option<ProjectWorkareaRealRuntimeUrl> {
+        if self.website_home_editor_is_open(id) {
+            return None;
+        }
         let entry = self
             .project_views
             .entries
@@ -215,7 +190,11 @@ impl GhostexGpuiApp {
             actions: if show_output {
                 vec![ProjectViewOpen, ProjectViewRetry, ProjectViewStop]
             } else if ["failed", "stopped", "unconfigured"].contains(&state) {
-                vec![ProjectViewRetry, ProjectViewConfigure, ProjectViewOutput]
+                if id.as_str() == "storybook" {
+                    vec![ProjectViewRetry, ProjectViewOutput]
+                } else {
+                    vec![ProjectViewRetry, ProjectViewConfigure, ProjectViewOutput]
+                }
             } else {
                 vec![ProjectViewStop, ProjectViewOutput]
             },
@@ -230,7 +209,19 @@ impl GhostexGpuiApp {
         let Some(id) = ExtensionId::new(&action.id) else {
             return;
         };
+        if action.operation == "home" {
+            self.open_website_home_editor(id, window, cx);
+            return;
+        }
         if action.operation == "configure" {
+            if id.as_str() == "storybook" {
+                self.open_view_scope_settings(
+                    TitlebarMode::Extension(id).switcher_index(),
+                    window,
+                    cx,
+                );
+                return;
+            }
             let modal = GpuiAppModalKind::Settings;
             let sidebar_state_message =
                 self.gpui_app_modal_sidebar_state_message_for_open(modal, cx);
@@ -278,6 +269,29 @@ impl GhostexGpuiApp {
         let Some(project_id) = snapshot.active_project_id.as_ref().map(|id| id.0.clone()) else {
             return;
         };
+        for view in super::project_websites::website_views()
+            .into_iter()
+            .filter(|view| view.enabled)
+        {
+            let provider =
+                super::project_websites::website_provider(view.id).expect("website provider");
+            let home = self.website_home(provider, &project_id);
+            let key = format!("{project_id}\n{}", view.id.as_str());
+            let fingerprint = home.clone().unwrap_or_default();
+            if self
+                .project_views
+                .entries
+                .get(&key)
+                .is_some_and(|entry| entry.fingerprint == fingerprint)
+            {
+                continue;
+            }
+            self.project_views.entries.insert(key, Entry {
+                fingerprint, params: Value::Null,
+                status: json!({"state":if home.is_some() {"ready"} else {"unconfigured"}, "url":home, "available":!provider.automatic() || home.is_some()}),
+                operation:None, project_id:project_id.clone(), show_output:false, was_active:false, started:false, parked:None,
+            });
+        }
         let project = self.extension_projects.get(&project_id);
         let repository_origin_url = project.and_then(|p| p.git_remote_origin_url.clone());
         let path = project
@@ -305,10 +319,11 @@ impl GhostexGpuiApp {
                 .map(|r| gpui_remote_scoped_project_id(&r.remote_machine_id, &id))
                 .unwrap_or(id)
         });
-        for view in gpui_custom_views_from_settings()
-            .into_iter()
-            .filter(|v| v.enabled && v.definition.get("source").is_some())
-        {
+        for view in gpui_custom_views_from_settings().into_iter().filter(|v| {
+            v.enabled
+                && v.definition.get("source").is_some()
+                && super::project_websites::website_provider(v.id).is_none()
+        }) {
             let key = format!("{project_id}\n{}", view.id.as_str());
             if text(&view.definition, "availability") == "selected"
                 && !view.definition["projectIds"]
@@ -437,7 +452,7 @@ impl GhostexGpuiApp {
                             entry.status = match result {
                                 Ok(value) => value["status"].clone(),
                                 Err(error) => {
-                                    json!({"state":"failed","available":true,"error":error})
+                                    json!({"state":"failed","available":id.as_str() != "storybook" || entry.status["available"].as_bool().unwrap_or(false),"error":error})
                                 }
                             };
                             app.ensure_project_workarea_runtime_cef_surfaces_for_current_context(
@@ -451,7 +466,22 @@ impl GhostexGpuiApp {
                     if !keep {
                         break;
                     }
-                    background.timer(Duration::from_secs(2)).await;
+                    let delay = this
+                        .update(cx, |app, _| {
+                            let undetected = app.project_views.entries.get(&key).is_some_and(|entry| {
+                                entry.status["available"].as_bool() != Some(true)
+                            });
+                            if id.as_str() == "storybook"
+                                && app.active_mode != TitlebarMode::Extension(id)
+                                && undetected
+                            {
+                                15
+                            } else {
+                                2
+                            }
+                        })
+                        .unwrap_or(2);
+                    background.timer(Duration::from_secs(delay)).await;
                 }
                 let _ = this.update(cx, |app, _| {
                     if app

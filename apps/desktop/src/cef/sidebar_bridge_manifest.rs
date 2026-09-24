@@ -27,7 +27,8 @@ pub(crate) enum SidebarBridgeFunctionId {
     BrowserTabFocus,
     ProjectBoardConversationResponse,
     ResourcesSnapshotRequest,
-    NativeSidebarSnapshot,
+    NativeQuickAccessSnapshot,
+    SidebarRuntimeFacts,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +60,6 @@ pub enum AppModalHostBridgeSurface {
     NativeWindow,
     Sidebar,
     Titlebar,
-    SessionChat,
     FindPrompts,
 }
 
@@ -218,7 +218,6 @@ pub(crate) const APP_MODAL_HOST_BRIDGE_SURFACE_EXTRA_INFO_KEY: &str =
 const APP_MODAL_HOST_BRIDGE_SURFACE_NATIVE_WINDOW: &str = "nativeWindow";
 const APP_MODAL_HOST_BRIDGE_SURFACE_SIDEBAR: &str = "sidebar";
 const APP_MODAL_HOST_BRIDGE_SURFACE_TITLEBAR: &str = "titlebar";
-const APP_MODAL_HOST_BRIDGE_SURFACE_SESSION_CHAT: &str = "sessionChat";
 const APP_MODAL_HOST_BRIDGE_SURFACE_FIND_PROMPTS: &str = "findPrompts";
 pub(crate) const APP_MODAL_HOST_SURFACE_JS_FIELD: &str = "__ghostex_APP_MODAL_HOST_SURFACE__";
 pub(crate) const APP_MODAL_HOST_ID_JS_FIELD: &str = "__ghostex_APP_MODAL_HOST_ID__";
@@ -419,11 +418,16 @@ The sidebar CEF post-function allowlist must have one Rust manifest shared by ma
 CDXC:CefRuntime 2026-06-29-14:45:
 GPUI CEF bridge names, payload budgets, and allowed app-modal/project-workarea surfaces live in this Rust manifest so the macOS browser process and helper renderer consume one ownership point. Keep sidebar, project-workarea, and app-modal handlers surface-specific; this manifest is an allowlist, not a generic IPC bus.
 */
-pub(crate) const SIDEBAR_BRIDGE_FUNCTION_SPECS: [SidebarBridgeFunctionSpec; 28] = [
+pub(crate) const SIDEBAR_BRIDGE_FUNCTION_SPECS: [SidebarBridgeFunctionSpec; 29] = [
     SidebarBridgeFunctionSpec {
-        id: SidebarBridgeFunctionId::NativeSidebarSnapshot,
-        js_function_name: "postNativeSidebarSnapshot",
-        process_message_name: "ghostex.gpui.sidebar.nativeSnapshot",
+        id: SidebarBridgeFunctionId::SidebarRuntimeFacts,
+        js_function_name: "postSidebarRuntimeFacts",
+        process_message_name: "ghostex.gpui.sidebar.runtimeFacts",
+    },
+    SidebarBridgeFunctionSpec {
+        id: SidebarBridgeFunctionId::NativeQuickAccessSnapshot,
+        js_function_name: "postNativeQuickAccessSnapshot",
+        process_message_name: "ghostex.gpui.sidebar.nativeQuickAccess",
     },
     SidebarBridgeFunctionSpec {
         id: SidebarBridgeFunctionId::ActiveProjectContext,
@@ -585,7 +589,7 @@ pub(crate) const PROJECT_WORKAREA_BRIDGE_FUNCTION_SPECS: [ProjectWorkareaBridgeF
     },
 ];
 
-pub(crate) const APP_MODAL_HOST_BRIDGE_SURFACE_SPECS: [AppModalHostBridgeSurfaceSpec; 6] = [
+pub(crate) const APP_MODAL_HOST_BRIDGE_SURFACE_SPECS: [AppModalHostBridgeSurfaceSpec; 5] = [
     AppModalHostBridgeSurfaceSpec {
         surface: AppModalHostBridgeSurface::NativeWindow,
         entry_file_name: "modal-host.html",
@@ -600,6 +604,14 @@ pub(crate) const APP_MODAL_HOST_BRIDGE_SURFACE_SPECS: [AppModalHostBridgeSurface
         extra_info_value: APP_MODAL_HOST_BRIDGE_SURFACE_NATIVE_WINDOW,
         exposes_native_window_identity: true,
     },
+    /*
+    CDXC:Sidebar 2026-09-21 WHY:
+    Nothing loads index.html any more: the sidebar is native Rust, its page was
+    deleted with M4d part 2, and the HTML entry went with it. The surface is
+    kept because the helper's editable-focus grant still asks whether a frame is
+    the sidebar's; it now answers no for every frame, which is correct. Delete it
+    together with that focus path, not on its own.
+    */
     AppModalHostBridgeSurfaceSpec {
         surface: AppModalHostBridgeSurface::Sidebar,
         entry_file_name: "index.html",
@@ -610,20 +622,6 @@ pub(crate) const APP_MODAL_HOST_BRIDGE_SURFACE_SPECS: [AppModalHostBridgeSurface
         surface: AppModalHostBridgeSurface::Titlebar,
         entry_file_name: "titlebar-host.html",
         extra_info_value: APP_MODAL_HOST_BRIDGE_SURFACE_TITLEBAR,
-        exposes_native_window_identity: false,
-    },
-    /*
-    CDXC:SessionChat 2026-07-31:
-    chat.html is the first-party per-session Session Chat pane surface. It is
-    registered here so the renderer installs the bounded ghostexAppModalHost
-    shim for the bundled entry only; it never receives the native-window
-    identity fields, and its gxserver bootstrap arrives through the dedicated
-    session-chat bootstrap process message, not the sidebar install path.
-    */
-    AppModalHostBridgeSurfaceSpec {
-        surface: AppModalHostBridgeSurface::SessionChat,
-        entry_file_name: "chat.html",
-        extra_info_value: APP_MODAL_HOST_BRIDGE_SURFACE_SESSION_CHAT,
         exposes_native_window_identity: false,
     },
     /*

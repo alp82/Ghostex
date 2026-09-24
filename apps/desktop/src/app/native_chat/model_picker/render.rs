@@ -125,7 +125,12 @@ fn tile(
             .size(px(38.0 * scale))
             .text_color(icon_color),
     );
-    let mut name = div().flex().flex_col().items_center().gap(px(scale));
+    let mut name = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .text_center()
+        .gap(px(scale));
     if let Some(version) = entry["version"].as_str() {
         name = name.child(
             div()
@@ -137,11 +142,15 @@ fn tile(
         );
     }
     card = card.child(name.child(label));
-    if model && selected && state["narrow"] == true {
+    if let Some(effort) = state["effortLabel"]
+        .as_str()
+        .filter(|_| model && selected && state["narrow"] == true)
+    {
         card = card.child(
             div()
+                .text_center()
                 .text_color(mix(color, gpui::white(), 0.6))
-                .child(text(state, "effortLabel")),
+                .child(effort.to_owned()),
         );
     }
     card.into_any_element()
@@ -334,7 +343,7 @@ impl Render for ModelPickerWindow {
                     cx.stop_propagation(); window.prevent_default();
                 }
             }))
-            .on_key_up(cx.listener(|view,event: &gpui::KeyUpEvent,_,cx| {
+            .capture_key_up(cx.listener(|view,event: &gpui::KeyUpEvent,_,cx| {
                 view.chat.update(cx,|chat,cx| chat.invoke(json!({"type":"modelPickerKeyUp","key":event.keystroke.key}),cx));
             }))
             .on_action(cx.listener(|view,action: &crate::app::hotkeys::RunConfiguredGhostexHotkey,_,cx| {

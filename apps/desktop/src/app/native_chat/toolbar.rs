@@ -66,6 +66,10 @@ impl NativeChatView {
             "moreActions" => self.show_actions(position,window,cx),
             "maximizeComposer" => self.toggle_maximized(window,cx),
             "summaryMode" => self.invoke(json!({"type":"toggleSummary"}),cx),
+            "attachPath" if cfg!(target_os = "linux") => self.show_chat_menu_at(vec![
+                json!({"label":"Images or files…","command":{"type":"host","action":"pickAttachments","requestId":"native-chat-attachments","selection":"files"}}),
+                json!({"label":"Folders…","command":{"type":"host","action":"pickAttachments","requestId":"native-chat-attachments","selection":"folders"}}),
+            ], position, 200.0, window, cx),
             "attachPath" => self.host("pickAttachments",json!({"requestId":"native-chat-attachments"}),cx),
             "stashPrompt" if !self.draft.trim().is_empty() => self.invoke(json!({"type":"stash","text":self.draft,"draftVersion":{"draftId":self.draft_id,"revision":self.draft_revision}}),cx),
             "stashPrompt" => self.host("stashedPrompts",json!({}),cx),
@@ -114,7 +118,9 @@ impl NativeChatView {
     ) -> AnyElement {
         let options_width = self.option_pills_width(p, window);
         let scale = p.scale;
-        let has_overflow_options = self.snapshot["optionLabels"]["showOptions"] == true
+        // With the merged model picker there is no options pill to move into More actions.
+        let has_overflow_options = (self.snapshot["optionLabels"]["showOptions"] == true
+            && !self.snapshot["modelMenu"].is_object())
             || self.snapshot["contextMeter"].is_object();
         // A control the host cannot serve is never drawn, so it must not claim room either.
         let controls: Vec<Value> = COMPOSER_CONTROLS
@@ -134,16 +140,26 @@ impl NativeChatView {
                 let chat = chat.clone();
                 window.defer(cx, move |_, cx| {
                     let _ = chat.update(cx, |chat, cx| {
-                        if !chat.composer_ready
-                            || chat.composer_measurements.as_ref() == Some(&measurements)
-                        {
+                        if chat.composer_measurements.as_ref() == Some(&measurements) {
                             return;
                         }
                         chat.composer_measurements = Some(measurements.clone());
-                        chat.invoke(
-                            json!({"type":"measureComposer","measurements":measurements}),
-                            cx,
-                        );
+                        // Geometry is available before the session is. Use the same fit rules as
+                        // React immediately, including while the controller is still booting.
+                        if let Ok(measured) = serde_json::from_value(measurements.clone()) {
+                            let fit = ghostex_gx_chat_core::composer::layout::fit_composer_controls(
+                                &measured,
+                            );
+                            std::sync::Arc::make_mut(&mut chat.snapshot)["composerOverflow"] =
+                                json!(fit);
+                            cx.notify();
+                        }
+                        if chat.composer_ready {
+                            chat.invoke(
+                                json!({"type":"measureComposer","measurements":measurements}),
+                                cx,
+                            );
+                        }
                     });
                 });
             },

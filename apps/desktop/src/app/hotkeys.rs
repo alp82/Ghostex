@@ -266,7 +266,9 @@ pub(crate) const GPUI_DEFAULT_GHOSTEX_HOTKEYS: &[(&str, &str)] = &[
     ("openGhostexHelp", ""),
     ("openHotkeys", "cmd+."),
     ("toggleSidebarCollapsed", "cmd+b"),
-    ("toggleCompanionPane", "cmd+alt+b"),
+    ("toggleViewPanel", "cmd+alt+b"),
+    ("expandViewPanel", "cmd+ctrl+e"),
+    ("expandViewPanelFully", "cmd+ctrl+shift+e"),
     ("renameActiveSession", "cmd+r"),
     ("openBrowserPane", "cmd+n"),
     ("switchAgentsView", ""),
@@ -275,6 +277,7 @@ pub(crate) const GPUI_DEFAULT_GHOSTEX_HOTKEYS: &[(&str, &str)] = &[
     ("switchKanbanView", ""),
     ("switchManageView", ""),
     ("switchAutomateView", ""),
+    ("switchTerminalView", ""),
     ("switchTitlebarView1", "alt+1"),
     ("switchTitlebarView2", "alt+2"),
     ("switchTitlebarView3", "alt+3"),
@@ -608,8 +611,7 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
                 session,
             ))
             | GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::TerminalSurface(
-                FirstResponderTerminalSurface::Agents(session)
-                | FirstResponderTerminalSurface::ProjectEditorCompanion(session),
+                FirstResponderTerminalSurface::Agents(session),
             )) => return terminal_model_picker_session == Some(session),
             GpuiKeyboardOwner::CompositedTerminal(_)
             | GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::TerminalSurface(_)) => {
@@ -630,6 +632,14 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
     // CDXC:AgentLauncher 2026-09-09 WHY:
     // The New Thread picker targets the active project, not the focused surface, so its chord must win from every responder (sidebar, Browser, Session Chat, workareas) the same way the model picker does; otherwise it only works while an Agents terminal has focus.
     if action_id == "openNewThreadPalette" {
+        return true;
+    }
+    // CDXC:Workarea 2026-09-21 WHY:
+    // The view panel toggle is window chrome, so it must win from every responder like the New Thread picker. It was only listed for the owners a view leaves behind while it is open, so Cmd+Option+B closed the panel but could not open it again once the keyboard sat with a responder outside those lists: the router passed the chord on to that responder and GPUI never saw it.
+    if matches!(
+        action_id,
+        "toggleViewPanel" | "expandViewPanel" | "expandViewPanelFully"
+    ) {
         return true;
     }
     match owner {
@@ -654,7 +664,6 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
                 | "navigateHistoryBack"
                 | "navigateHistoryForward"
                 | "openNotifications"
-                | "toggleCompanionPane"
                 | "toggleSidebarCollapsed"
         ),
         GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::CefSurface(
@@ -670,22 +679,7 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
                 | "navigateHistoryBack"
                 | "navigateHistoryForward"
                 | "openNotifications"
-                | "toggleCompanionPane"
                 | "toggleSidebarCollapsed"
-        ),
-        GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::CefSurface(
-            FirstResponderCefSurface::ProjectEditorCompanion,
-        )) => matches!(
-            action_id,
-            "createSession"
-                | "deferNotificationAndJumpNext"
-                | "focusLeft"
-                | "focusRight"
-                | "jumpToLatestUnreadNotification"
-                | "navigateHistoryBack"
-                | "navigateHistoryForward"
-                | "openNotifications"
-                | "toggleCompanionPane"
         ),
         GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::CefSurface(
             FirstResponderCefSurface::ProjectWorkarea(_),
@@ -699,22 +693,6 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
                 | "navigateHistoryBack"
                 | "navigateHistoryForward"
                 | "openNotifications"
-                | "toggleCompanionPane"
-        ),
-        GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::CefSurface(
-            FirstResponderCefSurface::SessionChat(_),
-        )) => matches!(
-            action_id,
-            "toggleChatView"
-                | "sessionNote"
-                | "focusNextPaneTab"
-                | "focusNextSession"
-                | "focusPreviousSession"
-                | "focusPreviousPaneTab"
-                | "navigateHistoryBack"
-                | "navigateHistoryForward"
-                | "toggleCompanionPane"
-                | "toggleSidebarCollapsed"
         ),
         GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::CefSurface(_))
         | GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::GpuiWindow)
@@ -849,4 +827,31 @@ pub(crate) fn gpui_configured_hotkey_unbinds_from_settings(
             KeyBinding::new(keystroke.as_str(), gpui::Unbind(action_name.into()), None)
         })
         .collect()
+}
+
+impl GhostexGpuiApp {
+    /// Runs a configured hotkey once its window's keyboard owner has let it through. Returns
+    /// false when nothing took it, so the chord can reach whatever else binds it. The main
+    /// window's root and the floating reveal panel both answer hotkeys through this.
+    pub(crate) fn run_configured_ghostex_hotkey(
+        &mut self,
+        action_id: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        if action_id == "openModelPicker" {
+            return self.request_focused_session_model_picker(cx);
+        }
+        self.handle_gpui_app_modal_sidebar_command(
+            serde_json::json!({
+                "message": {
+                    "actionId": action_id,
+                    "type": "runGhostexHotkeyAction",
+                },
+            }),
+            window,
+            cx,
+        );
+        true
+    }
 }

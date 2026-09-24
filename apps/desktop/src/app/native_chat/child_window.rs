@@ -4,11 +4,36 @@ use super::state::NativeChatView;
 use gpui::{Bounds, Context, Pixels};
 
 impl NativeChatView {
+    pub(crate) fn active_child_window_source(&self, cx: &gpui::App) -> Option<gpui::WindowId> {
+        let source = self.main_window?.window_id();
+        let children = [
+            self.image_viewer.handle.map(|handle| handle.window_id()),
+            self.save_markdown_window
+                .handle
+                .map(|handle| handle.window_id()),
+            self.rewind_window.handle.map(|handle| handle.window_id()),
+            self.context_editor_window
+                .handle
+                .map(|handle| handle.window_id()),
+            self.maximized_window.map(|handle| handle.window_id()),
+            self.model_picker_window.window_id(),
+        ];
+        if let Some(menu_source) = self.active_option_menu_source(cx)
+            && (menu_source == source || children.contains(&Some(menu_source)))
+        {
+            return Some(source);
+        }
+        children
+            .contains(&Some(cx.active_window()?.window_id()))
+            .then_some(source)
+    }
+
     /// CDXC:SessionChat 2026-09-19 DECISION:
     /// User: an open image preview or quick picker is dismissed when the user switches to another session. Both are native child windows that would otherwise stay on screen over the session shown next.
     pub(crate) fn dismiss_windows_for_hidden_pane(&mut self, cx: &mut Context<Self>) {
         self.close_image_viewer(cx);
         self.dismiss_model_picker_for_hidden_pane(cx);
+        self.hide_frosted_overlays(cx);
     }
 
     pub(super) fn pane_windows_open(&self) -> bool {

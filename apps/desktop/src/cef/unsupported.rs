@@ -31,6 +31,7 @@ pub type BrowserPopupOpenHandler = Rc<dyn Fn(String, BrowserPopupPlacement)>;
 
 pub enum BrowserPageMetadataEvent {
     HistoryRequested,
+    FindRequested,
     AddressChanged(String),
     CloseRequested,
     FaviconUrlChanged(Option<String>),
@@ -225,6 +226,12 @@ impl CefBrowser {
 
     pub fn set_visible(&self, _visible: bool) {}
 
+    pub fn bounds_differ(&self, _bounds: Bounds<Pixels>, _scale_factor: f32) -> bool {
+        false
+    }
+
+    pub fn set_motion_hidden(&self, _hidden: bool, _fade_in: std::time::Duration) {}
+
     pub fn order_front(&self) {}
 
     pub fn identifier(&self) -> i32 {
@@ -273,16 +280,6 @@ impl CefBrowser {
         */
     }
 
-    pub fn activate_session_chat(
-        &self,
-        _url: &str,
-        _generation: &str,
-        _bootstrap: SidebarGxserverBootstrap,
-        _initial_snapshot: Option<serde_json::Value>,
-        _initial_presentation: Option<serde_json::Value>,
-    ) {
-    }
-
     pub fn refresh_session_chat_gxserver_bootstrap(
         &self,
         _gxserver_bootstrap: Option<SidebarGxserverBootstrap>,
@@ -313,8 +310,6 @@ impl CefBrowser {
     pub fn find_text(&self, _search_text: &str, _forward: bool, _find_next: bool) {}
 
     pub fn stop_finding(&self, _clear_selection: bool) {}
-
-    pub fn refresh_session_chat_zoom(&self) {}
 
     pub fn zoom_level(&self) -> f64 {
         0.0

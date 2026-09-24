@@ -116,7 +116,6 @@ impl GhostexGpuiApp {
             if !suppressed_by_programmatic_focus {
                 self.reconcile_project_workarea_cef_keyboard_ownership(window, cx);
                 self.reconcile_browser_cef_keyboard_ownership(window, cx);
-                self.reconcile_session_chat_cef_keyboard_ownership(window, cx);
                 if self.reconcile_shell_focus_with_first_responder_target() {
                     self.persist_shell_layout_state();
                     cx.notify();
@@ -130,7 +129,6 @@ impl GhostexGpuiApp {
             suppressed_by_programmatic_focus;
         self.reconcile_project_workarea_cef_keyboard_ownership(window, cx);
         self.reconcile_browser_cef_keyboard_ownership(window, cx);
-        self.reconcile_session_chat_cef_keyboard_ownership(window, cx);
         if !suppressed_by_programmatic_focus {
             if self.reconcile_shell_focus_with_first_responder_target() {
                 self.persist_shell_layout_state();
@@ -141,8 +139,8 @@ impl GhostexGpuiApp {
     }
 
     /// CDXC:FocusRouting 2026-09-14 WHY:
-    /// Publishing session selections from native responder observations caused Code's companion to alternate between the outgoing and incoming sessions through sidebar focus echoes.
-    /// Responder observations only record shell focus and the active companion slot; explicit session actions own selection and sidebar publication.
+    /// Publishing session selections from native responder observations caused the sidepane beside a view to alternate between the outgoing and incoming sessions through sidebar focus echoes.
+    /// Responder observations only record shell focus; explicit session actions own selection and sidebar publication.
     pub(crate) fn reconcile_shell_focus_with_first_responder_target(&mut self) -> bool {
         /*
         Native CEF and terminal child views receive mouse input before their
@@ -155,17 +153,8 @@ impl GhostexGpuiApp {
         let previous_focus = self.shell_focus;
         let previous_browser_pane = self.browser_tabs.focused_pane;
         let previous_browser_tab = self.browser_tabs.active_tab;
-        let previous_companion_slot = self.project_editor_companion_focused_terminal_slot;
 
         match self.first_responder_target {
-            FirstResponderTarget::CefSurface(FirstResponderCefSurface::SessionChat(session_id)) => {
-                if self
-                    .record_shell_focus_for_session_chat(session_id)
-                    .is_none()
-                {
-                    return false;
-                }
-            }
             FirstResponderTarget::CefSurface(FirstResponderCefSurface::BrowserTab(tab_id))
                 if self.active_mode == TitlebarMode::Browser =>
             {
@@ -185,77 +174,29 @@ impl GhostexGpuiApp {
                     slot_key.titlebar_mode(),
                 ));
             }
-            FirstResponderTarget::CefSurface(FirstResponderCefSurface::ProjectEditorCompanion)
-                if self.active_mode.is_project_editor_mode()
-                    && self.project_editor_companion_is_visible() =>
-            {
-                self.set_shell_focus(ShellFocusTarget::ProjectEditorCompanion(self.active_mode));
-            }
-            FirstResponderTarget::TerminalSurface(
-                FirstResponderTerminalSurface::ProjectEditorCompanion(session_id),
-            ) if self.active_mode.is_project_editor_mode()
-                && self.project_editor_companion_is_visible() =>
-            {
-                if self.project_editor_companion_terminal_session_id == Some(session_id) {
-                    self.project_editor_companion_focused_terminal_slot =
-                        ProjectEditorCompanionTerminalSlot::Top;
-                } else if self.project_editor_companion_secondary_terminal_session_id
-                    == Some(session_id)
-                {
-                    self.project_editor_companion_focused_terminal_slot =
-                        ProjectEditorCompanionTerminalSlot::Bottom;
-                } else {
-                    return false;
-                }
-                self.set_shell_focus(ShellFocusTarget::ProjectEditorCompanion(self.active_mode));
-            }
             _ => return false,
         }
 
         self.shell_focus != previous_focus
             || self.browser_tabs.focused_pane != previous_browser_pane
             || self.browser_tabs.active_tab != previous_browser_tab
-            || self.project_editor_companion_focused_terminal_slot != previous_companion_slot
     }
 
-    /// Records shell focus for the pane that shows `session_id`'s chat, the Agents pane or the companion slot, without a keyboard handoff.
+    /// Records shell focus for the Agents pane that shows `session_id`'s chat, without a keyboard handoff.
     /// Shared by the CEF responder observation and the native composer's focus edge.
-    /// Returns `None` when no visible pane shows that chat, otherwise whether shell focus or the companion slot changed.
+    /// Returns `None` when no visible pane shows that chat, otherwise whether shell focus changed.
     pub(crate) fn record_shell_focus_for_session_chat(
         &mut self,
         session_id: TerminalSessionId,
     ) -> Option<bool> {
         let previous_focus = self.shell_focus;
-        let previous_companion_slot = self.project_editor_companion_focused_terminal_slot;
-        if self.active_mode == TitlebarMode::Agents {
-            let pane_id = self.agents_workspace.pane_id_for_session(session_id)?;
-            if self.agents_workspace.active_session_in_pane(pane_id) != Some(session_id) {
-                return None;
-            }
-            self.agents_workspace.focus_pane(pane_id);
-            self.set_shell_focus(ShellFocusTarget::AgentsPane(pane_id));
-        } else if self.active_mode.is_project_editor_mode()
-            && self.project_editor_companion_is_visible()
-        {
-            if self.project_editor_companion_terminal_session_id == Some(session_id) {
-                self.project_editor_companion_focused_terminal_slot =
-                    ProjectEditorCompanionTerminalSlot::Top;
-            } else if self.project_editor_companion_secondary_terminal_session_id
-                == Some(session_id)
-            {
-                self.project_editor_companion_focused_terminal_slot =
-                    ProjectEditorCompanionTerminalSlot::Bottom;
-            } else {
-                return None;
-            }
-            self.set_shell_focus(ShellFocusTarget::ProjectEditorCompanion(self.active_mode));
-        } else {
+        let pane_id = self.agents_workspace.pane_id_for_session(session_id)?;
+        if self.agents_workspace.active_session_in_pane(pane_id) != Some(session_id) {
             return None;
         }
-        Some(
-            self.shell_focus != previous_focus
-                || self.project_editor_companion_focused_terminal_slot != previous_companion_slot,
-        )
+        self.agents_workspace.focus_pane(pane_id);
+        self.set_shell_focus(ShellFocusTarget::AgentsPane(pane_id));
+        Some(self.shell_focus != previous_focus)
     }
 
     #[cfg(target_os = "macos")]
@@ -284,7 +225,7 @@ impl GhostexGpuiApp {
             self.first_responder_target,
             FirstResponderTarget::CefSurface(FirstResponderCefSurface::ProjectWorkarea(
                 ProjectWorkareaCefSurfaceSlotKey::Source | ProjectWorkareaCefSurfaceSlotKey::Manage
-            )) | FirstResponderTarget::CefSurface(FirstResponderCefSurface::SessionChat(_))
+            ))
         );
         let source_menu_changed =
             self.source_workarea_cef_menu_passthrough_active != source_cef_owns_focus;
@@ -369,37 +310,6 @@ impl GhostexGpuiApp {
             return;
         }
         let Some(surface) = self.browser_surfaces.get(&tab_id).cloned() else {
-            return;
-        };
-        let focus_handle = surface.read(cx).focus_handle.clone();
-        if !focus_handle.is_focused(window) {
-            focus_handle.focus(window, cx);
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(crate) fn reconcile_session_chat_cef_keyboard_ownership(
-        &self,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        /*
-        CDXC:FocusRouting 2026-08-17:
-        Chat body clicks reach Chromium before GPUI's hitbox, so AppKit can
-        focus Chat while GPUI remains focused on the command terminal. Mirror
-        the other CEF surfaces by synchronizing the existing GPUI handle once
-        the registered Chat view owns native focus. Do not force the composer;
-        the original Chromium click target remains unchanged.
-        */
-        let FirstResponderTarget::CefSurface(FirstResponderCefSurface::SessionChat(session_id)) =
-            self.first_responder_target
-        else {
-            return;
-        };
-        // CDXC:PromptSearch 2026-08-20: the SessionChat responder class
-        // means "a CEF surface owns this session's pane", which is true of the
-        // Find surface too. Resolve whichever one is mounted.
-        let Some(surface) = self.agents_pane_cef_surface(session_id) else {
             return;
         };
         let focus_handle = surface.read(cx).focus_handle.clone();
@@ -498,13 +408,6 @@ impl GhostexGpuiApp {
                 session_id,
             ));
         }
-        if let Some(session_id) =
-            self.project_editor_companion_terminal_session_id_containing_responder(responder)
-        {
-            return FirstResponderTarget::TerminalSurface(
-                FirstResponderTerminalSurface::ProjectEditorCompanion(session_id),
-            );
-        }
         if let Some(surface) = self.cef_surface_containing_responder(responder, cx) {
             return FirstResponderTarget::CefSurface(surface);
         }
@@ -545,21 +448,6 @@ impl GhostexGpuiApp {
     }
 
     #[cfg(target_os = "macos")]
-    pub(crate) fn project_editor_companion_terminal_session_id_containing_responder(
-        &self,
-        responder: *mut std::ffi::c_void,
-    ) -> Option<TerminalSessionId> {
-        self.project_editor_companion_terminal_host_native_views
-            .iter()
-            .find_map(|(slot_id, host_view)| {
-                terminal_native_view::app_owned_terminal_host_contains_responder(
-                    host_view, responder,
-                )
-                .then_some(slot_id.session_id)
-            })
-    }
-
-    #[cfg(target_os = "macos")]
     pub(crate) fn cef_surface_containing_responder(
         &self,
         responder: *mut std::ffi::c_void,
@@ -583,24 +471,6 @@ impl GhostexGpuiApp {
             },
         ) {
             return Some(FirstResponderCefSurface::ProjectWorkarea(slot_key));
-        }
-        if let Some(session_id) =
-            self.agents_chat_surfaces
-                .iter()
-                .find_map(|(session_id, surface)| {
-                    surface
-                        .read(cx)
-                        .native_view_contains_responder(responder)
-                        .then_some(*session_id)
-                })
-        {
-            /*
-            CDXC:SessionChat 2026-07-31:
-            The chat pane is a first-class work surface: classifying its
-            responder keeps focus arbitration from reclaiming keyboard focus
-            while the user types in the chat composer.
-            */
-            return Some(FirstResponderCefSurface::SessionChat(session_id));
         }
         if self.titlebar_tips_panel.as_ref().is_some_and(|panel| {
             panel
@@ -679,9 +549,6 @@ impl GhostexGpuiApp {
                 force_terminal_appkit_focus_handoff,
             );
             self.sync_command_terminal_ghostty_surface_focus_with_appkit_handoff(
-                force_terminal_appkit_focus_handoff,
-            );
-            self.sync_project_editor_companion_terminal_ghostty_surface_focus_with_appkit_handoff(
                 force_terminal_appkit_focus_handoff,
             );
             self.end_programmatic_focus();
@@ -852,9 +719,6 @@ impl GhostexGpuiApp {
             FirstResponderTarget::TerminalSurface(FirstResponderTerminalSurface::Agents(
                 responder_session_id,
             )) => responder_session_id == session_id,
-            FirstResponderTarget::CefSurface(FirstResponderCefSurface::SessionChat(
-                responder_session_id,
-            )) => active_session_is_in_chat_view && responder_session_id == session_id,
             FirstResponderTarget::GpuiWindow => {
                 if active_session_is_in_chat_view {
                     return true;
@@ -877,44 +741,9 @@ impl GhostexGpuiApp {
                     && self.terminal_text_input_should_track_agents_slot(slot_id)
             }
             FirstResponderTarget::TerminalSurface(FirstResponderTerminalSurface::Command(_))
-            | FirstResponderTarget::TerminalSurface(
-                FirstResponderTerminalSurface::ProjectEditorCompanion(_),
-            )
             | FirstResponderTarget::CefSurface(_)
             | FirstResponderTarget::Other
             | FirstResponderTarget::None => false,
-        }
-    }
-
-    pub(crate) fn project_editor_companion_border_state(
-        &self,
-        mode: TitlebarMode,
-        window: &Window,
-    ) -> WorkspacePaneBorderState {
-        if window.is_window_active()
-            && self.shell_focus == ShellFocusTarget::ProjectEditorCompanion(mode)
-            && (self.first_responder_target == FirstResponderTarget::GpuiWindow
-                || self.first_responder_target
-                    == FirstResponderTarget::CefSurface(
-                        FirstResponderCefSurface::ProjectEditorCompanion,
-                    )
-                || self
-                    .project_editor_companion_focused_terminal_session_id()
-                    .is_some_and(|session_id| {
-                        self.first_responder_target
-                            == FirstResponderTarget::TerminalSurface(
-                                FirstResponderTerminalSurface::ProjectEditorCompanion(session_id),
-                            )
-                            || (self.agents_chat_mode_sessions.contains(&session_id)
-                                && self.first_responder_target
-                                    == FirstResponderTarget::CefSurface(
-                                        FirstResponderCefSurface::SessionChat(session_id),
-                                    ))
-                    }))
-        {
-            WorkspacePaneBorderState::Focused
-        } else {
-            WorkspacePaneBorderState::Neutral
         }
     }
 
@@ -1018,7 +847,6 @@ impl GhostexGpuiApp {
         cx: &mut gpui::Context<Self>,
     ) {
         self.agents_workspace.focus_pane(pane_id);
-        self.sync_project_editor_companion_terminal_selection();
         let focused_pane = self.agents_workspace.focused_pane;
         self.focus_shell_target(ShellFocusTarget::AgentsPane(focused_pane), cx);
         support_logs::append(
@@ -1120,7 +948,6 @@ impl GhostexGpuiApp {
             .is_some_and(|session| session.activity == AgentTerminalActivity::Attention);
         self.agents_workspace.select_tab(pane_id, session_id);
         self.dispatch_gpui_workspace_session_attention_acknowledge(session_id, cx);
-        self.sync_project_editor_companion_terminal_selection();
         self.focus_shell_target(
             ShellFocusTarget::AgentsPane(self.agents_workspace.focused_pane),
             cx,
@@ -1190,28 +1017,6 @@ impl GhostexGpuiApp {
         if attention_acknowledged {
             cx.notify();
         }
-    }
-
-    pub(crate) fn double_click_agents_workspace_tab(
-        &mut self,
-        pane_id: WorkspacePaneId,
-        session_id: TerminalSessionId,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if self
-            .agents_workspace
-            .toggle_focus_mode_from_tab_double_click(pane_id, session_id)
-        {
-            self.dispatch_gpui_workspace_session_attention_acknowledge(session_id, cx);
-            self.focus_shell_target(
-                ShellFocusTarget::AgentsPane(self.agents_workspace.focused_pane),
-                cx,
-            );
-            self.scroll_workspace_pane_active_tab(pane_id);
-            self.scroll_workspace_pane_active_tab(self.agents_workspace.focused_pane);
-            self.persist_shell_layout_state();
-        }
-        cx.notify();
     }
 
     pub(crate) fn activate_agents_terminal_placeholder(
@@ -1453,49 +1258,6 @@ impl GhostexGpuiApp {
         );
     }
 
-    pub(crate) fn refresh_zmx_persistence_companion_terminal_if_stale(
-        &self,
-        mode: TitlebarMode,
-        cx: &gpui::Context<Self>,
-    ) {
-        let Some(slot_id) = self.project_editor_companion_terminal_slot_for_mode(mode) else {
-            return;
-        };
-        // Same gate as the Agents slot: never hand the daemon a parked grid.
-        if !self.agents_gpui_engine_terminal_zmx_grid_is_displayed(slot_id.session_id, cx) {
-            return;
-        }
-        let session_name = self
-            .agents_workspace
-            .session(slot_id.session_id)
-            .and_then(|session| session.zmx_session_name.clone());
-        let grid_size = {
-            #[cfg(target_os = "macos")]
-            let native_size = self
-                .project_editor_companion_terminal_ghostty_surfaces
-                .get(&slot_id)
-                .map(|surface| {
-                    let size = surface.surface_size();
-                    (size.rows, size.columns)
-                });
-            #[cfg(not(target_os = "macos"))]
-            let native_size = None;
-            native_size.or_else(|| {
-                self.agents_gpui_engine_terminals
-                    .get(&slot_id.session_id)
-                    .map(|record| {
-                        let (columns, rows) = record.view.read(cx).model().size();
-                        (rows, columns)
-                    })
-            })
-        };
-        gpui_spawn_zmx_refresh_if_stale_process(
-            session_name,
-            grid_size,
-            "companionTerminalContentMouseDown",
-        );
-    }
-
     pub(crate) fn agents_terminal_refresh_grid_size(
         &self,
         slot_id: AgentsTerminalBodyMountSlotId,
@@ -1547,25 +1309,19 @@ impl GhostexGpuiApp {
 
     /*
     CDXC:Zmx 2026-07-06:
-    Mirrors macOS `zmxPersistenceTerminalSessionIdsForSurfacedPanes`: with a
-    project editor active only the visible companion refreshes, otherwise the
-    visible Agents mount slots do, and rendered command-pane slots always join.
-    Hidden panes must never refresh because `refresh-if-stale` conforms the
-    daemon grid to the passed size, and a hidden pane's stale size would fight
-    the surfaced owner.
+    Mirrors macOS `zmxPersistenceTerminalSessionIdsForSurfacedPanes`: the visible Agents
+    mount slots refresh, and rendered command-pane slots always join. Hidden panes must
+    never refresh because `refresh-if-stale` conforms the daemon grid to the passed size,
+    and a hidden pane's stale size would fight the surfaced owner.
     */
     pub(crate) fn refresh_zmx_persistence_surfaced_terminals_if_stale(
         &self,
         cx: &gpui::Context<Self>,
     ) {
-        if self.active_mode == TitlebarMode::Agents {
+        if self.agents_workspace_visible() {
             for slot_id in self.agents_workspace.rendered_terminal_body_mount_slots() {
                 self.refresh_zmx_persistence_agents_terminal_if_stale(slot_id, cx);
             }
-        } else if let Some(slot_id) =
-            self.project_editor_companion_terminal_slot_for_mode(self.active_mode)
-        {
-            self.refresh_zmx_persistence_companion_terminal_if_stale(slot_id.mode, cx);
         }
         for slot_id in self.command_pane.rendered_terminal_body_mount_slots() {
             self.refresh_zmx_persistence_command_terminal_if_stale(slot_id, cx);
@@ -1577,7 +1333,7 @@ impl GhostexGpuiApp {
     ) -> Option<ZmxPersistenceFocusedTerminalSlot> {
         match self.shell_focus {
             ShellFocusTarget::AgentsPane(pane_id) => {
-                if self.active_mode != TitlebarMode::Agents {
+                if !self.agents_workspace_visible() {
                     return None;
                 }
                 let session_id = self.agents_workspace.active_session_in_pane(pane_id)?;
@@ -1599,9 +1355,6 @@ impl GhostexGpuiApp {
                     .is_current_terminal_body_mount_slot(slot_id)
                     .then_some(ZmxPersistenceFocusedTerminalSlot::Command(slot_id))
             }
-            ShellFocusTarget::ProjectEditorCompanion(mode) => self
-                .project_editor_companion_terminal_slot_for_mode(mode)
-                .map(ZmxPersistenceFocusedTerminalSlot::Companion),
             _ => None,
         }
     }
@@ -1629,9 +1382,6 @@ impl GhostexGpuiApp {
             }
             Some(ZmxPersistenceFocusedTerminalSlot::Command(slot_id)) => {
                 self.refresh_zmx_persistence_command_terminal_if_stale(slot_id, cx);
-            }
-            Some(ZmxPersistenceFocusedTerminalSlot::Companion(slot_id)) => {
-                self.refresh_zmx_persistence_companion_terminal_if_stale(slot_id.mode, cx);
             }
             None => {}
         }
@@ -2185,65 +1935,6 @@ impl GhostexGpuiApp {
         }
     }
 
-    pub(crate) fn forward_project_editor_companion_terminal_mount_slot_mouse_scroll(
-        &mut self,
-        slot_id: ProjectEditorCompanionTerminalBodyMountSlotId,
-        window_position: Point<Pixels>,
-        delta: ScrollDelta,
-        modifiers: Modifiers,
-    ) -> bool {
-        if !self.is_current_project_editor_companion_terminal_body_mount_slot(slot_id) {
-            return false;
-        }
-        let Some(position) = terminal_body_relative_mouse_position_for_slot(
-            &self.project_editor_companion_terminal_mount_slot_bounds,
-            slot_id,
-            window_position,
-        ) else {
-            return false;
-        };
-        let Some(runtime_session_id) = self
-            .agents_terminal_runtime_sessions
-            .runtime_session_id_for_shell_session(slot_id.session_id)
-        else {
-            return false;
-        };
-        let (scroll_x, scroll_y, scroll_mods) = terminal_ghostty_scroll_delta(delta);
-        let mouse_mods = ghostty_mouse_mods_from_gpui_modifiers(modifiers);
-
-        #[cfg(target_os = "macos")]
-        {
-            let Some(surface) = self
-                .project_editor_companion_terminal_ghostty_surfaces
-                .get_mut(&slot_id)
-            else {
-                return false;
-            };
-            if surface.mount_slot_id() != slot_id
-                || surface.runtime_session_id() != runtime_session_id
-            {
-                return false;
-            }
-
-            surface.mouse_pos(position.x, position.y, mouse_mods);
-            surface.mouse_scroll(scroll_x, scroll_y, scroll_mods);
-            true
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = (
-                position,
-                runtime_session_id,
-                scroll_x,
-                scroll_y,
-                scroll_mods,
-                mouse_mods,
-            );
-            false
-        }
-    }
-
     pub(crate) fn select_agents_tab_from_action(
         &mut self,
         pane_id: WorkspacePaneId,
@@ -2274,8 +1965,6 @@ impl GhostexGpuiApp {
         shell_session_id: TerminalSessionId,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.source_code_server_runtime
-            .cancel_remote_prompt_editor_request_for_shell_session(shell_session_id);
         /*
         CDXC:FocusRouting 2026-06-26-06:57:
         Removing a GPUI shell tab must also drop only the process-local gxserver/session mapping for that shell id. Close provider cleanup and acknowledged Sleep transitions remain sidebar-owned through the lifecycle bridge; this cleanup prevents stale GPUI mappings from selecting a deleted tab without fabricating daemon success, deleting gxserver rows, logging ids, or touching persisted private data.
@@ -2288,9 +1977,10 @@ impl GhostexGpuiApp {
             });
         self.remove_agents_chat_surface_for_session(shell_session_id, cx);
         if let Some(remote_key) = scoped_remote_key.as_ref() {
-            self.clear_project_editor_companion_remote_attach_state_for_key(remote_key);
+            self.source_code_server_runtime
+                .cancel_remote_prompt_editor_request_for_remote_session(remote_key);
             self.remote_attach_sessions.remove(remote_key);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
             self.remote_attach_askpass_scripts.remove(remote_key);
         }
         let removed_keys = self

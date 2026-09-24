@@ -8,6 +8,40 @@ use serde_json::Value;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// How many times one menu takes key status back before a key loss closes it after all, so a
+/// program that refocuses the main window on every change cannot keep the two fighting.
+const MAX_REKEYS: u32 = 20;
+/// How long after a panel opens its key status is checked once.
+const SETTLE_KEY_AFTER: Duration = Duration::from_millis(150);
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn GhostexGpuiPointerPressedRecently() -> bool;
+    fn GhostexGpuiApplicationIsActive() -> bool;
+}
+
+/// Whether the key status a menu just lost went where the user sent it: to a pointer press
+/// somewhere in the app, or away with the app itself. Anything else took it without the user.
+fn key_loss_is_dismissal() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { GhostexGpuiPointerPressedRecently() || !GhostexGpuiApplicationIsActive() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+/// Starts watching for presses before the first menu can lose key status to one.
+fn watch_pointer_presses() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        GhostexGpuiPointerPressedRecently();
+    }
+}
 
 pub(in crate::app::native_chat) struct ChatOptionMenu {
     pub(super) chat: gpui::WeakEntity<NativeChatView>,
@@ -21,6 +55,10 @@ pub(in crate::app::native_chat) struct ChatOptionMenu {
     /// Where each depth's panel was anchored, so a panel can reopen in place.
     anchors: Vec<(Bounds<Pixels>, f32, bool)>,
     parent: *mut std::ffi::c_void,
+    /// Opened at the pointer (right-click menus), drawn with `MenuMetrics::CONTEXT`.
+    compact: bool,
+    /// How many times this menu has taken key status back (`retake_key`).
+    rekeys: u32,
 }
 
 pub(super) struct ChatOptionMenuPanel {
@@ -37,12 +75,22 @@ pub(super) struct ChatOptionMenuPanel {
     pub(super) accounts_customize: bool,
     /// Screen bounds of the panel's account preference select, where its dropdown opens.
     pub(super) select_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The model picker's cursor, search field and open side list, when this panel is that picker.
+    pub(super) model_menu: Option<super::model_menu::ModelMenuState>,
     was_active: bool,
     _activation: Subscription,
     _chat_subscription: Option<Subscription>,
 }
 
 impl ChatOptionMenu {
+    pub(super) fn metrics(&self) -> super::geometry::MenuMetrics {
+        if self.compact {
+            super::geometry::MenuMetrics::CONTEXT
+        } else {
+            super::geometry::MenuMetrics::REGULAR
+        }
+    }
+
     pub(in crate::app::native_chat) fn close(
         &mut self,
         command: Option<Value>,
@@ -99,22 +147,58 @@ impl ChatOptionMenu {
         });
     }
 
-    fn check_active(&mut self, cx: &mut Context<Self>) {
-        if self.opening || self.closed {
-            return;
-        }
-        if !self.windows.iter().any(|handle| {
+    fn any_window_active(&self, cx: &mut Context<Self>) -> bool {
+        self.windows.iter().any(|handle| {
             handle
                 .update(cx, |_, window, _| window.is_window_active())
                 .unwrap_or(false)
-        }) {
-            // The press that took the window away is the one a trigger is about to report as a
-            // click, so the trigger it belonged to is remembered before the menu goes (menu_toggle.rs).
-            let _ = self
-                .chat
-                .update(cx, |chat, _| chat.menu_toggle.note_dismissed());
-            self.close_with_focus(None, false, cx);
+        })
+    }
+
+    /// CDXC:SessionChat 2026-09-22 WHY:
+    /// A key loss closes the menu only when the user caused it. On one customer's machine every
+    /// chat menu (model, mode, options) showed for a frame and closed, on the same code that works
+    /// elsewhere: the main window took key status back the moment the menu had it. AppKit does that
+    /// on its own when the app's activation is still completing as the menu opens (a press on an
+    /// inactive Ghostex both activates it and opens the menu), and window-focus utilities do it on
+    /// any focus change. Neither is a press, so unless a mouse button is down, a press was seen
+    /// within the last moments, or the app itself is no longer active, the menu takes key status
+    /// back instead of closing, up to `MAX_REKEYS` times.
+    fn check_active(&mut self, cx: &mut Context<Self>) {
+        if self.opening || self.closed || self.any_window_active(cx) {
+            return;
         }
+        if self.retake_key(cx) {
+            return;
+        }
+        // The press that took the window away is the one a trigger is about to report as a
+        // click, so the trigger it belonged to is remembered before the menu goes (menu_toggle.rs).
+        let _ = self
+            .chat
+            .update(cx, |chat, _| chat.menu_toggle.note_dismissed());
+        self.close_with_focus(None, false, cx);
+    }
+
+    /// Makes the deepest panel key again when nothing the user did took key status away.
+    fn retake_key(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.rekeys >= MAX_REKEYS || key_loss_is_dismissal() {
+            return false;
+        }
+        let Some(handle) = self.windows.last().copied() else {
+            return false;
+        };
+        self.rekeys += 1;
+        let _ = handle.update(cx, |_, window, _| window.activate_window());
+        true
+    }
+
+    /// A panel that opened while the app was still being activated never became key, and so was
+    /// never told it lost it: checked once after it opened, it takes key status the same way.
+    fn settle_key(&mut self, cx: &mut Context<Self>) {
+        if self.opening || self.closed || self.any_window_active(cx) {
+            return;
+        }
+        self.retake_key(cx);
     }
 
     /// Runs a chat command without closing the menu (Switch Account panel controls).
@@ -194,10 +278,17 @@ impl ChatOptionMenu {
         self.truncate(depth, false, cx);
         let scale = self.appearance.scale;
         let available = self.source_bounds;
+        let metrics = self.metrics();
+        let width = if self.compact {
+            super::geometry::fit_width(&rows, width, &self.appearance, cx)
+        } else {
+            width
+        };
         let width = px(width * scale).min(available.size.width - px(24.0 * scale));
         let heights = match super::geometry::measure_rows(
             &rows,
             f32::from(width) / scale,
+            metrics,
             &self.appearance,
             cx,
         ) {
@@ -210,9 +301,9 @@ impl ChatOptionMenu {
                 return;
             }
         };
-        let height = px((14.0
+        let height = px((metrics.chrome()
             + heights.iter().sum::<f32>()
-            + 2.0 * (rows.len().saturating_sub(1)) as f32)
+            + metrics.gap * (rows.len().saturating_sub(1)) as f32)
             * scale)
         .min(available.size.height - px(24.0 * scale));
         let margin = px(12.0 * scale);
@@ -247,10 +338,22 @@ impl ChatOptionMenu {
         let parent = self.parent;
         let accounts_customize = rows.first().is_some_and(|row| row["customize"] == true);
         self.opening = true;
+        // Under window glass the menu's window blurs what is behind it, rounded to the card.
+        let glass = crate::app::helpers::window_glass_active();
+        let corner_radius = px(
+            if rows.first().is_some_and(|row| row["modelMenu"].is_object()) {
+                super::model_menu::CARD_RADIUS
+            } else {
+                metrics.radius
+            } * scale,
+        );
+        let display_id = crate::app::window::popup_frame::display_at(bounds.center(), cx);
         cx.defer(move |cx| {
             let result = cx.open_window(
                 WindowOptions {
+                    kind: crate::app::window::popup_frame::child_window_kind(),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    display_id,
                     titlebar: None,
                     focus: true,
                     show: true,
@@ -259,12 +362,18 @@ impl ChatOptionMenu {
                     is_minimizable: false,
                     app_id: crate::gpui_platform_window_app_id(),
                     icon: crate::gpui_platform_window_icon(),
-                    window_background: gpui::WindowBackgroundAppearance::Transparent,
+                    window_background: if glass {
+                        gpui::WindowBackgroundAppearance::Blurred
+                    } else {
+                        gpui::WindowBackgroundAppearance::Transparent
+                    },
                     ..Default::default()
                 },
                 {
                     let menu = menu.clone();
                     move |window, cx| {
+                        window.set_background_corner_radius(corner_radius);
+                        crate::app::window::popup_frame::strip_gpui_popup_window_frame(window);
                         crate::app::window::attach_gpui_app_modal_window_to_main_window(
                             window, parent,
                         );
@@ -361,9 +470,17 @@ impl ChatOptionMenu {
                                         },
                                     )
                                 })
+                            } else if rows.first().is_some_and(|row| row["modelMenu"].is_object()) {
+                                menu.read(cx).chat.upgrade().map(|chat| {
+                                    cx.observe(&chat, |panel: &mut ChatOptionMenuPanel, _, cx| {
+                                        panel.model_menu_changed(cx)
+                                    })
+                                })
                             } else {
                                 None
                             };
+                            let model_menu =
+                                super::model_menu::ModelMenuState::new(&rows, &menu, window, cx);
                             ChatOptionMenuPanel {
                                 menu,
                                 depth,
@@ -376,6 +493,7 @@ impl ChatOptionMenu {
                                 hover_task: None,
                                 accounts_customize,
                                 select_bounds: Rc::new(Cell::new(Bounds::default())),
+                                model_menu,
                                 was_active: window.is_window_active(),
                                 _activation: activation,
                                 _chat_subscription: chat_subscription,
@@ -385,6 +503,12 @@ impl ChatOptionMenu {
                     }
                 },
             );
+            let settle = menu.clone();
+            cx.spawn(async move |cx| {
+                cx.background_executor().timer(SETTLE_KEY_AFTER).await;
+                let _ = cx.update(|cx| settle.update(cx, |menu, cx| menu.settle_key(cx)));
+            })
+            .detach();
             menu.update(cx, |menu, cx| {
                 menu.opening = false;
                 match result {
@@ -406,6 +530,17 @@ impl ChatOptionMenu {
 }
 
 impl NativeChatView {
+    pub(crate) fn active_option_menu_source(&self, cx: &gpui::App) -> Option<gpui::WindowId> {
+        let active = cx.active_window()?.window_id();
+        let menu = self.option_menu.as_ref()?.read(cx);
+        (!menu.closed
+            && menu
+                .windows
+                .iter()
+                .any(|handle| handle.window_id() == active))
+        .then_some(menu.source.window_id())
+    }
+
     pub(in crate::app::native_chat) fn show_option_menu(
         &mut self,
         kind: &str,
@@ -479,6 +614,7 @@ impl NativeChatView {
         if rows.is_empty() {
             return;
         }
+        watch_pointer_presses();
         if let Some(menu) = self.option_menu.take() {
             menu.update(cx, |menu, cx| menu.close_with_focus(None, false, cx));
         }
@@ -501,6 +637,8 @@ impl NativeChatView {
             closed: false,
             anchors: vec![],
             parent,
+            compact: below,
+            rekeys: 0,
         });
         let anchor = Bounds::new(source_bounds.origin + trigger.origin, trigger.size);
         menu.update(cx, |menu, cx| {

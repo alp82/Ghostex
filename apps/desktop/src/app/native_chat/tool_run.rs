@@ -146,6 +146,9 @@ impl NativeChatView {
         let s = p.scale;
         div()
             .id(key.clone())
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .aria_expanded(expanded)
             .flex()
             .items_center()
             .gap(px(6.0 * s))
@@ -196,8 +199,17 @@ impl NativeChatView {
         let subagent = text(&tool["subagent"], "name");
         let heading = if failed { p.error() } else { p.primary };
         let toggle_key = key.clone();
+        let a11y_label = match (subagent.is_empty(), preview.is_empty()) {
+            (true, true) => format!("Tool {name}"),
+            (true, false) => format!("Tool {name}: {preview}"),
+            (false, _) => format!("Tool {name} ({subagent}): {preview}"),
+        };
         let mut trigger = div()
             .id(key.clone())
+            .role(gpui::Role::Button)
+            .aria_label(a11y_label)
+            .aria_expanded(expanded)
+            .when(failed, |this| this.aria_description("failed"))
             .flex()
             .items_center()
             .min_w_0()
@@ -290,8 +302,9 @@ impl NativeChatView {
                 .into_any_element()
         });
         if expanded && has_detail {
-            let input = text(tool, "input");
-            let output = text(tool, "output");
+            let detail = self.row_detail(&key, "tool", message_id, index as u64);
+            let input = text(&detail, "input");
+            let output = text(&detail, "output");
             let has_call = tool["hasCall"] == true;
             let command = tool["glyph"] == "terminal";
             let mut detail: Vec<AnyElement> = Vec::new();
@@ -303,23 +316,11 @@ impl NativeChatView {
                 } else {
                     None
                 };
-                detail.push(Self::tool_body(
-                    &format!("input:{key}"),
-                    label,
-                    input,
-                    false,
-                    p,
-                ));
+                detail.push(self.tool_body(format!("input:{key}"), label, input, false, p));
             }
             if !output.is_empty() {
                 let label = has_call.then_some("Result");
-                detail.push(Self::tool_body(
-                    &format!("output:{key}"),
-                    label,
-                    output,
-                    failed,
-                    p,
-                ));
+                detail.push(self.tool_body(format!("output:{key}"), label, output, failed, p));
             }
             if !detail.is_empty() {
                 row = row.child(disclosure_body(
@@ -342,7 +343,8 @@ impl NativeChatView {
     /// box, never a Markdown code block: that would put a language header and a
     /// copy control on output the agent never wrote as code.
     fn tool_body(
-        key: &str,
+        &self,
+        key: String,
         label: Option<&str>,
         content: String,
         failed: bool,
@@ -363,21 +365,22 @@ impl NativeChatView {
                 )
             })
             .child(
-                div()
-                    .id(key.to_string())
-                    .min_w_0()
-                    // React caps the block at 16.25 of its own lines plus its padding.
-                    .max_h(px(220.75 * s))
-                    .overflow_y_scroll()
-                    .px(px(10.0 * s))
-                    .py(px(8.0 * s))
-                    .bg(p.input)
-                    .rounded(px(6.0 * s))
-                    .font_family(CHAT_MONO)
-                    .text_size(px(12.6 * s))
-                    .line_height(px(20.5 * s))
-                    .text_color(if failed { p.error() } else { p.muted })
-                    .child(content),
+                self.nested_scroll(
+                    key,
+                    div()
+                        .min_w_0()
+                        // React caps the block at 16.25 of its own lines plus its padding.
+                        .max_h(px(220.75 * s))
+                        .px(px(10.0 * s))
+                        .py(px(8.0 * s))
+                        .bg(p.input)
+                        .rounded(px(6.0 * s))
+                        .font_family(CHAT_MONO)
+                        .text_size(px(12.6 * s))
+                        .line_height(px(20.5 * s))
+                        .text_color(if failed { p.error() } else { p.muted })
+                        .child(content),
+                ),
             )
             .into_any_element()
     }

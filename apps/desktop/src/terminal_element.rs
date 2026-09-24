@@ -63,10 +63,12 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use web_time::Instant;
 
 use futures::StreamExt as _;
 use image::Frame;
 
+use gpui::StatefulInteractiveElement as _;
 use gpui::{
     App, BorderStyle, Bounds, BoxShadow, ClipboardItem, ContentMask, Context, Corners, CursorStyle,
     DevicePixels, DispatchPhase, Element, ElementId, ElementInputHandler, Entity,
@@ -74,10 +76,10 @@ use gpui::{
     FontWeight, Global, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
     IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, Keystroke, LayoutId, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, RenderImage, Rgba, ScrollDelta, ScrollWheelEvent,
-    ShapedLine, SharedString, Size, StrikethroughStyle, Style, Styled, TextAlign, TextRun,
-    UTF16Selection, UnderlineStyle as GpuiUnderlineStyle, Window, canvas, div, fill, outline,
-    point, prelude::FluentBuilder as _, px, size,
+    ParentElement, Pixels, Point, Render, RenderImage, Rgba, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StrikethroughStyle, Style, Styled, TextAlign, TextRun, UTF16Selection,
+    UnderlineStyle as GpuiUnderlineStyle, Window, canvas, div, fill, outline, point,
+    prelude::FluentBuilder as _, px, size,
 };
 use gpui_component::tooltip::{ManagedTooltipExt as _, ManagedTooltipPlacement, Tooltip};
 
@@ -90,6 +92,8 @@ use crate::terminal_model::{
     TerminalExit, TerminalModel, TerminalPasteDiagnostic, TerminalSnapshot, TerminalSpawnConfig,
     TerminalTextRow, UnderlineStyle as CellUnderline, WheelRoute,
 };
+use crate::terminal_scrollbar_reveal::ScrollbarReveal;
+use crate::terminal_wheel;
 
 gpui::actions!(
     ghostex_terminal,
@@ -100,6 +104,10 @@ pub(crate) const TERMINAL_KEY_CONTEXT: &str = "GhostexGpuiTerminal";
 const TERMINAL_CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const TERMINAL_SCROLLBAR_THICKNESS: f32 = 5.0;
 const TERMINAL_SCROLLBAR_MIN_KNOB_HEIGHT: f32 = 24.0;
+/// Extra pointer room beside the track that keeps a revealed bar up while the
+/// pointer travels to it (ghostty's win32 apprt widens the track itself; the
+/// 5px app style is fixed, so only the hover region grows).
+const TERMINAL_SCROLLBAR_GUTTER_PADDING: f32 = 6.0;
 const TERMINAL_SCROLL_BUTTON_SIZE: f32 = 28.125;
 /// Edge inset for the terminal's remaining overlay chrome: scroll-to-top and
 /// scroll-to-bottom sit 13px in from the bottom-right pane edge.
@@ -325,6 +333,10 @@ pub struct TerminalViewSettings {
     pub light_theme: bool,
     pub cursor_shape: TerminalCursorShape,
     pub background_image: Option<TerminalBackgroundImage>,
+    /// How much of the default background the pane paints itself; window glass sets it to 0 so the
+    /// frosted surface behind the pane shows through. Cells with an explicit background still
+    /// paint it in full.
+    pub background_alpha: f32,
     pub cursor_blink: bool,
     pub cursor_opacity: f32,
     pub cursor_text: Option<TerminalConfiguredColor>,
@@ -349,6 +361,7 @@ impl Default for TerminalViewSettings {
             light_theme: false,
             cursor_shape: TerminalCursorShape::Block,
             background_image: None,
+            background_alpha: 1.0,
             cursor_blink: false,
             cursor_opacity: 1.0,
             cursor_text: None,
@@ -564,7 +577,7 @@ pub type TerminalContextMenuHandler = Box<dyn Fn(Point<Pixels>, bool, &mut Windo
 /// Called after this view writes the clipboard for the user (copy on select,
 /// Cmd+C, OSC 52). The element stays host-agnostic: the app installs the copy
 /// sound here, and the standalone demo binary installs nothing.
-pub type TerminalCopyHandler = Box<dyn Fn()>;
+pub type TerminalCopyHandler = Box<dyn Fn(&mut App)>;
 
 /// Entity that owns a live terminal: the P1b model, the latest snapshot, and
 /// the shaped-row cache. Rendered by [`TerminalElement`]; its own `Render`
@@ -606,10 +619,13 @@ pub struct TerminalView {
     /// and release goes to the PTY even if modes change mid-drag.
     reporting_drag: bool,
     left_button_down: bool,
-    /// Fractional wheel rows not yet dispatched (trackpad smoothness).
-    wheel_accum: f32,
-    /// Runtime scrollbar reveal state for hovering or dragging the terminal.
-    scrollbar_visible: bool,
+    /// Sub-row wheel distance not yet dispatched (trackpad smoothness).
+    wheel_accum: terminal_wheel::WheelAccumulator,
+    /// Scroll-activity reveal state for the overlay scrollbar
+    /// ([`terminal_scrollbar_reveal`]).
+    scrollbar_reveal: ScrollbarReveal,
+    /// A fade/auto-hide driver is running for `scrollbar_reveal`.
+    scrollbar_reveal_driving: bool,
     scrollbar_drag_offset: Option<f32>,
     terminal_bounds: Option<Bounds<Pixels>>,
     scroll_button_visibility: TerminalScrollButtonVisibility,
@@ -636,7 +652,10 @@ pub struct TerminalView {
     /// A parked or chat-mode terminal only marks its snapshot stale; the next prepaint of a displayed slot takes the fresh frame. Titles and pwd still sync so the sidebar stays current.
     displayed: bool,
     snapshot_stale: bool,
-    last_prepaint: Option<std::time::Instant>,
+    last_prepaint: Option<web_time::Instant>,
+    /// While a panel slides: the size this terminal first had in the slide, and whether it has
+    /// changed since (`grid_resize_held`).
+    motion_bounds: Option<(Size<Pixels>, bool)>,
 }
 
 pub(crate) use crate::hotkey_label::terminal_overlay_hotkey_chord_label;
@@ -746,8 +765,9 @@ impl TerminalView {
             drag: None,
             reporting_drag: false,
             left_button_down: false,
-            wheel_accum: 0.,
-            scrollbar_visible: false,
+            wheel_accum: terminal_wheel::WheelAccumulator::default(),
+            scrollbar_reveal: ScrollbarReveal::default(),
+            scrollbar_reveal_driving: false,
             scrollbar_drag_offset: None,
             terminal_bounds: None,
             scroll_button_visibility: TerminalScrollButtonVisibility::default(),
@@ -762,6 +782,7 @@ impl TerminalView {
             displayed: true,
             snapshot_stale: false,
             last_prepaint: None,
+            motion_bounds: None,
         }
     }
 
@@ -790,6 +811,7 @@ impl TerminalView {
         self.hover_cell = None;
         self.hovered_link = None;
         self.drag = None;
+        self.scrollbar_reveal.reset();
         self.model.release_viewer_emulator();
     }
 
@@ -850,9 +872,9 @@ impl TerminalView {
         self.copy_handler = Some(handler);
     }
 
-    fn notify_copied(&self) {
+    fn notify_copied(&self, cx: &mut App) {
         if let Some(handler) = &self.copy_handler {
-            handler();
+            handler(cx);
         }
     }
 
@@ -1019,7 +1041,7 @@ impl TerminalView {
             TerminalEvent::ClipboardWriteRequested => {
                 for text in self.model.take_clipboard_write_requests() {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    self.notify_copied();
+                    self.notify_copied(cx);
                 }
             }
         }
@@ -1133,6 +1155,7 @@ impl TerminalView {
             TerminalScrollEdge::Top => VtScrollViewport::Top,
             TerminalScrollEdge::Bottom => VtScrollViewport::Bottom,
         });
+        self.note_scrollbar_activity(cx);
         self.refresh_snapshot();
         cx.notify();
     }
@@ -1223,6 +1246,7 @@ impl TerminalView {
             .unwrap_or(1);
         self.model
             .scroll_viewport_to_row(row.saturating_sub(viewport_len / 2));
+        self.note_scrollbar_activity(cx);
         self.refresh_snapshot();
         cx.notify();
     }
@@ -1727,7 +1751,7 @@ impl TerminalView {
                 text.truncate(text.trim_end().len());
             }
             cx.write_to_clipboard(ClipboardItem::new_string(text));
-            self.notify_copied();
+            self.notify_copied(cx);
             if self.settings.selection_clear_on_copy {
                 self.selection = None;
                 cx.notify();
@@ -1802,6 +1826,8 @@ impl TerminalView {
                     scrollbar.knob.size.height.as_f32() / 2.0
                 };
                 self.scrollbar_drag_offset = Some(grab_offset);
+                self.scrollbar_reveal.set_dragging(true, Instant::now());
+                self.drive_scrollbar_reveal(cx);
                 self.scrollbar_to_pointer(event.position.y, grab_offset);
                 self.refresh_snapshot();
                 cx.notify();
@@ -1936,10 +1962,14 @@ impl TerminalView {
         hovered: bool,
         cx: &mut Context<Self>,
     ) {
-        let visible = hovered || self.scrollbar_drag_offset.is_some();
-        if self.scrollbar_visible != visible {
-            self.scrollbar_visible = visible;
-            cx.notify();
+        let over_gutter = hovered
+            && self
+                .scrollbar_gutter_bounds()
+                .is_some_and(|gutter| gutter.contains(&event.position));
+        self.scrollbar_reveal
+            .set_hovered(over_gutter, Instant::now());
+        if over_gutter {
+            self.drive_scrollbar_reveal(cx);
         }
         if let Some(grab_offset) = self.scrollbar_drag_offset
             && event.pressed_button == Some(MouseButton::Left)
@@ -1976,7 +2006,7 @@ impl TerminalView {
                 };
                 if delta != 0 {
                     self.model.scroll_viewport(VtScrollViewport::Delta(delta));
-
+                    self.note_scrollbar_activity(cx);
                     self.refresh_snapshot();
                 }
             }
@@ -2084,6 +2114,8 @@ impl TerminalView {
         if event.button == MouseButton::Left {
             self.left_button_down = false;
             if self.scrollbar_drag_offset.take().is_some() {
+                self.scrollbar_reveal.set_dragging(false, Instant::now());
+                self.drive_scrollbar_reveal(cx);
                 cx.notify();
                 return;
             }
@@ -2119,11 +2151,76 @@ impl TerminalView {
 
     fn current_scrollbar_layout(&self) -> Option<ScrollbarLayout> {
         layout_scrollbar(
-            self.settings.scrollbar_visible && self.scrollbar_visible,
+            self.settings.scrollbar_visible,
+            self.scrollbar_reveal.alpha(Instant::now()),
             self.frame.as_ref()?.scrollbar,
             self.terminal_bounds?,
             self.settings.light_theme,
         )
+    }
+
+    /// The user moved the viewport: reveal the bar and restart its countdown.
+    /// Output that scrolls the screen on its own is not activity, so a busy
+    /// terminal does not sit behind a permanently lit scrollbar.
+    fn note_scrollbar_activity(&mut self, cx: &mut Context<Self>) {
+        if !self.settings.scrollbar_visible {
+            return;
+        }
+        self.scrollbar_reveal.note_scroll_activity(Instant::now());
+        self.drive_scrollbar_reveal(cx);
+    }
+
+    /// Run the fade and auto-hide clock until the bar is hidden again. The
+    /// state itself decides when it next needs attention, so a bar that is
+    /// simply up costs one wakeup rather than a frame timer.
+    fn drive_scrollbar_reveal(&mut self, cx: &mut Context<Self>) {
+        if self.scrollbar_reveal_driving {
+            return;
+        }
+        self.scrollbar_reveal_driving = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(Some(delay)) = this.update(cx, |view, _cx| {
+                    view.scrollbar_reveal.next_tick(Instant::now())
+                }) else {
+                    break;
+                };
+                cx.background_executor().timer(delay).await;
+                let Ok(keep_running) = this.update(cx, |view, cx| {
+                    if view.scrollbar_reveal.tick(Instant::now()) {
+                        cx.notify();
+                    }
+                    if view.scrollbar_reveal.hidden() {
+                        view.scrollbar_reveal_driving = false;
+                        return false;
+                    }
+                    true
+                }) else {
+                    break;
+                };
+                if !keep_running {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Pointer region that holds the bar open. The visible 5px track is the
+    /// grab target; the few pixels of gutter beside it only keep the bar up
+    /// long enough to aim at it.
+    fn scrollbar_gutter_bounds(&self) -> Option<Bounds<Pixels>> {
+        let bounds = self.terminal_bounds?;
+        let scrollbar = self.frame.as_ref()?.scrollbar;
+        if !self.settings.scrollbar_visible || scrollbar.total <= scrollbar.len {
+            return None;
+        }
+        let width = px(TERMINAL_SCROLLBAR_THICKNESS + TERMINAL_SCROLLBAR_GUTTER_PADDING);
+        Some(Bounds::new(
+            point(bounds.right() - width, bounds.top()),
+            size(width, bounds.size.height),
+        ))
     }
 
     fn scrollbar_to_pointer(&mut self, pointer_y: Pixels, grab_offset: f32) {
@@ -2159,19 +2256,28 @@ impl TerminalView {
             .cached_metrics
             .map(|metrics| metrics.line_height)
             .unwrap_or(px(16.));
-        let lines = match event.delta {
-            ScrollDelta::Pixels(delta) => {
-                // Ghostty's AppKit surface doubles precise trackpad deltas.
-                delta.y.as_f32() / line_height.as_f32() * self.settings.mouse_scroll_precision * 2.0
-            }
-            ScrollDelta::Lines(delta) => delta.y * self.settings.mouse_scroll_discrete,
+        let viewport_height = self.terminal_bounds.map_or_else(
+            || line_height.as_f32(),
+            |bounds| bounds.size.height.as_f32(),
+        );
+        let Some(scroll) = terminal_wheel::normalize(
+            event.delta,
+            event.modifiers.shift,
+            line_height.as_f32(),
+            viewport_height,
+        ) else {
+            return;
         };
-        self.wheel_accum += lines;
-        let steps = self.wheel_accum.trunc() as i32;
+        let steps = terminal_wheel::wheel_rows(
+            &mut self.wheel_accum,
+            scroll,
+            line_height.as_f32(),
+            self.settings.mouse_scroll_precision,
+            self.settings.mouse_scroll_discrete,
+        );
         if steps == 0 {
             return;
         }
-        self.wheel_accum -= steps as f32;
 
         // Shift-wheel always scrolls locally (mirrors the selection
         // override for reporting modes).
@@ -2189,18 +2295,20 @@ impl TerminalView {
                     VtMouseButton::WheelDown
                 };
                 // Wheel reports are press-only events (xterm buttons 64/65).
-                for _ in 0..steps.abs() {
-                    self.model.send_mouse(
-                        &VtMouseInput {
-                            action: VtMouseAction::Press,
-                            button: Some(button),
-                            mods: vt_mods(&event.modifiers),
-                            x,
-                            y,
-                        },
-                        self.left_button_down,
-                    );
-                }
+                // Ghostty queues every repeat onto one io write, so the
+                // program reads a whole notch at once instead of waking up
+                // and repainting per row.
+                self.model.send_mouse_repeat(
+                    &VtMouseInput {
+                        action: VtMouseAction::Press,
+                        button: Some(button),
+                        mods: vt_mods(&event.modifiers),
+                        x,
+                        y,
+                    },
+                    self.left_button_down,
+                    steps.unsigned_abs() as usize,
+                );
             }
             WheelRoute::ArrowKeys => {
                 let key = if steps > 0 {
@@ -2217,15 +2325,14 @@ impl TerminalView {
                     unshifted_codepoint: 0,
                     composing: false,
                 };
-                for _ in 0..steps.abs() {
-                    self.model.send_key(&input);
-                }
+                self.model
+                    .send_key_repeat(&input, steps.unsigned_abs() as usize);
             }
             WheelRoute::Viewport => {
                 // Viewport delta: up (positive wheel) is negative rows.
                 self.model
                     .scroll_viewport(VtScrollViewport::Delta(-(steps as isize)));
-
+                self.note_scrollbar_activity(cx);
                 self.refresh_snapshot();
                 cx.notify();
             }
@@ -2328,7 +2435,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> TerminalLayout {
         self.terminal_bounds = Some(bounds);
-        self.last_prepaint = Some(std::time::Instant::now());
+        self.last_prepaint = Some(web_time::Instant::now());
         if self.snapshot_stale {
             self.snapshot_stale = false;
             self.refresh_snapshot();
@@ -2350,8 +2457,9 @@ impl TerminalView {
             self.row_cache.fill(None);
         }
 
-        // CDXC:DesignSystem 2026-09-15 DECISION:
-        // User: terminal scrollbars share the floating 5px hover-only app style; the thumb must not reserve terminal columns.
+        // CDXC:DesignSystem 2026-09-20 DECISION:
+        // User: terminal scrollbars share the floating 5px app style and the thumb must not reserve terminal columns.
+        // Supersedes the 2026-09-15 "hover-only" reveal: the bar now appears while the viewport is actually scrolled and fades out again (terminal_scrollbar_reveal.rs), matching what ghostty's overlay scrollbars do.
         let content_width = bounds.size.width.max(metrics.cell_width);
         let cols = ((content_width / metrics.cell_width) as u16).max(1);
         let rows = ((bounds.size.height / metrics.line_height) as u16).max(1);
@@ -2359,7 +2467,26 @@ impl TerminalView {
         let cell_width_px = ((metrics.cell_width.as_f32() * scale).round() as u32).max(1);
         let cell_height_px = ((metrics.line_height.as_f32() * scale).round() as u32).max(1);
 
-        let grid_changed = !self.zmx_grid_claim_held && (cols, rows) != self.model.size();
+        // A terminal whose size has not changed since the slide began (one inside the panel that
+        // is opening, laid out at its settled size and only moving with it) resizes once instead
+        // of waiting it out, so it is at its real size by the time the panel fades it in.
+        let held = if grid_resize_held() {
+            match self.motion_bounds {
+                None => {
+                    self.motion_bounds = Some((bounds.size, false));
+                    true
+                }
+                Some((first, moved)) => {
+                    let moved = moved || first != bounds.size;
+                    self.motion_bounds = Some((first, moved));
+                    moved
+                }
+            }
+        } else {
+            self.motion_bounds = None;
+            false
+        };
+        let grid_changed = !self.zmx_grid_claim_held && !held && (cols, rows) != self.model.size();
         if self.frame.is_none() || grid_changed {
             // Resize reflows the vt grid synchronously, so take the fresh
             // frame now instead of waiting for the SIGWINCH redraw wakeup.
@@ -2371,7 +2498,8 @@ impl TerminalView {
             self.row_cache.clear();
             self.refresh_snapshot();
         }
-        if self.pending_zmx_visible_announce || (self.zmx_visibility_claims_enabled && grid_changed)
+        if (self.pending_zmx_visible_announce && !held)
+            || (self.zmx_visibility_claims_enabled && grid_changed)
         {
             // The grid above is the real one for this displayed slot, so the
             // visibility claim carries it (CDXC:Terminal
@@ -2460,7 +2588,8 @@ impl TerminalView {
                 window,
             ),
             scrollbar: layout_scrollbar(
-                self.settings.scrollbar_visible && self.scrollbar_visible,
+                self.settings.scrollbar_visible,
+                self.scrollbar_reveal.alpha(Instant::now()),
                 frame.scrollbar,
                 bounds,
                 self.settings.light_theme,
@@ -2487,7 +2616,26 @@ fn hide_mouse_cursor_until_mouse_moves() {}
 
 impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The screen as text, one node per row, so a screen reader or an e2e run reads what the
+        // terminal shows without pixels. Built only while an assistive client is connected: gpui
+        // calls the closure only then, and the row strings are made inside it.
+        let a11y_rows: Vec<String> = self
+            .frame
+            .as_ref()
+            .map(|frame| frame.rows.iter().map(SnapshotRow::text).collect())
+            .unwrap_or_default();
+        let a11y_label = self.title.clone().unwrap_or_else(|| "Terminal".to_string());
         let mut root = div()
+            .id("terminal-view")
+            .role(gpui::Role::Terminal)
+            .aria_label(a11y_label)
+            .a11y_synthetic_children(move |builder| {
+                for (index, row) in a11y_rows.iter().enumerate() {
+                    let mut node = gpui::accesskit::Node::new(gpui::Role::Label);
+                    node.set_label(row.trim_end().to_string());
+                    builder.push_child(builder.synthetic_node_id(index), node);
+                }
+            })
             .relative()
             .size_full()
             .can_drop(|value, _window, _cx| value.is::<ExternalPaths>())
@@ -3238,7 +3386,14 @@ impl Element for TerminalElement {
             )
         };
 
-        window.paint_quad(fill(bounds, layout.background));
+        let background_alpha = self.terminal.read(cx).settings.background_alpha;
+        window.paint_quad(fill(
+            bounds,
+            Hsla {
+                a: layout.background.a * background_alpha,
+                ..layout.background
+            },
+        ));
         self.paint_background_image(bounds, layout.background, window, cx);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for (row, layout_row) in layout.rows.iter().enumerate() {
@@ -4337,12 +4492,13 @@ fn layout_search(
 }
 
 fn layout_scrollbar(
-    visible: bool,
+    enabled: bool,
+    alpha: f32,
     scrollbar: VtScrollbar,
     bounds: Bounds<Pixels>,
     light_theme: bool,
 ) -> Option<ScrollbarLayout> {
-    if !visible || scrollbar.total <= scrollbar.len || bounds.size.height <= px(0.) {
+    if !enabled || alpha <= 0. || scrollbar.total <= scrollbar.len || bounds.size.height <= px(0.) {
         return None;
     }
 
@@ -4366,10 +4522,12 @@ fn layout_scrollbar(
 
     // CDXC:DesignSystem 2026-09-16 SEE-ALSO:
     // Exact app scrollbar colors are shared with packages/components/ui/scrollbar-theme.css.
+    let mut knob_color: Hsla = gpui::rgb(if light_theme { 0xbcbcbd } else { 0x424346 }).into();
+    knob_color.a *= alpha.clamp(0., 1.);
     Some(ScrollbarLayout {
         slot,
         knob,
-        knob_color: gpui::rgb(if light_theme { 0xbcbcbd } else { 0x424346 }).into(),
+        knob_color,
     })
 }
 
@@ -4526,4 +4684,19 @@ fn layout_marked_text(
         caret_x,
         caret_color: fg,
     })
+}
+
+/// Set while a panel of the window slides open or shut. A terminal whose bounds move keeps its
+/// grid (painted clipped or with an empty margin) and resizes once the panel settles, so a slide
+/// sends the PTY and the zmx daemon one resize instead of one per frame; one whose size stays put
+/// resizes once on its second frame. The pending visible claim waits with it, so it
+/// never announces the size the terminal is about to leave.
+static GRID_RESIZE_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_grid_resize_held(held: bool) {
+    GRID_RESIZE_HELD.store(held, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn grid_resize_held() -> bool {
+    GRID_RESIZE_HELD.load(std::sync::atomic::Ordering::Relaxed)
 }

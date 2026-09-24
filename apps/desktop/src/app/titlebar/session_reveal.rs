@@ -12,23 +12,26 @@ impl GhostexGpuiApp {
         session_id: &str,
         cx: &mut gpui::Context<Self>,
     ) {
+        // CDXC:Sidebar 2026-09-20 DECISION:
+        // User (ruling 7B): the floating reveal is on all three platforms, so Reveal Active Session
+        // floats the sidebar everywhere and never changes its saved collapsed state. This
+        // supersedes the Windows and Linux behaviour of expanding the docked sidebar instead.
         if self.sidebar_collapsed {
-            #[cfg(target_os = "macos")]
+            self.floating_reveal.want.sidebar = true;
             self.update_sidebar_reveal(true, false, cx);
-            #[cfg(not(target_os = "macos"))]
-            self.toggle_gpui_sidebar_collapsed(cx);
         }
-        self.dispatch_gpui_sidebar_host_message(
-            serde_json::json!({
-                "type": "revealSidebarSession",
-                "sessionId": session_id,
-                "requestId": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("current time is after the Unix epoch")
-                    .as_micros() as u64,
-            }),
-            cx,
-        );
+        let request_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("current time is after the Unix epoch")
+            .as_micros() as u64;
+        // This reveal is this app's own, so the runtime never posts it on the facts channel: the
+        // store records it as the newest request (which is what the installed list carries and what
+        // scrolls the row into view) and answers it here rather than waiting for the publish that
+        // used to carry it back (gx_store/runtime_facts.rs). Those two calls are the WHOLE reveal:
+        // the `revealSidebarSession` message that went out beside them until 2026-09-21 was read by
+        // the sidebar page, which is deleted, and by nothing since.
+        self.gx_store_note_local_sidebar_reveal(session_id, request_id);
+        self.gx_store_note_sidebar_reveal(session_id, request_id, cx);
     }
 
     fn active_sidebar_session_reveal_id(&self) -> Option<String> {
@@ -62,6 +65,7 @@ impl GhostexGpuiApp {
             .flex_shrink_0()
             .items_center()
             .justify_center()
+            .rounded(px(TITLEBAR_BUTTON_RADIUS))
             .cursor_default()
             .when(enabled, |this| {
                 this.hover(|this| this.bg(titlebar_button_hover_color()))

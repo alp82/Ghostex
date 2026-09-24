@@ -22,6 +22,7 @@ import { splitSessionChatFileChanges } from '@/packages/core-ui/chat/session-cha
 import {
   nativeChatFileRows,
   nativeChatTerminalTool,
+  nativeChatToolDetail,
   nativeChatToolFold,
   nativeChatToolRows,
 } from './native-transcript-rows';
@@ -37,6 +38,12 @@ import type { SessionChatMinimapMarker } from '../session-chat-presentation/mini
 
 /** The session's directory, which shortens the paths on file-change cards. */
 let workingDirectory: string | undefined;
+
+/** A message's file changes and tool calls, in the order their rows are numbered. */
+function messageToolRows(message: SessionChatMessage) {
+  const changes = splitSessionChatFileChanges(splitSessionChatBlocks(message.blocks).tools);
+  return { files: changes.changes, tools: pairSessionChatToolBlocks(changes.tools) };
+}
 
 function projectMessage(message: SessionChatMessage, agentPath: string) {
   const { tools, prose } = splitSessionChatBlocks(message.blocks);
@@ -71,7 +78,7 @@ function projectMessage(message: SessionChatMessage, agentPath: string) {
       systemCard?.kind === 'agent-message'
         ? { ...systemCard, markdown: sessionChatNativeMarkdown(systemCard.body) }
         : systemCard,
-    files: nativeChatFileRows(changes.changes, workingDirectory),
+    files: nativeChatFileRows(changes.changes, message.id, workingDirectory),
     simpleFileLabel: sessionChatSimpleEditLabel(new Set(changes.changes.map((change) => change.path)).size),
     /* React counts only the work rows for this label: an answered question is conversation, so its card sits outside the group and is not one of the "N tool calls". */
     simpleToolLabel: sessionChatToolCountLabel(toolRows.filter((row) => row.hasCall && !row.exchange).length),
@@ -175,6 +182,19 @@ export class NativeChatPresentation {
     if (direct) return direct;
     const cached = this.modelsById.get(message.id);
     return cached && sameSessionChatMessage(cached.source, message) ? this.message(message) : undefined;
+  }
+
+  /** What an open row shows, read from the message the row was projected from: a tool's arguments and result, or a file card's diff. */
+  rowDetail(kind: string, messageId: string, index: number) {
+    const source = this.modelsById.get(messageId)?.source;
+    if (!source) return undefined;
+    const rows = messageToolRows(source);
+    if (kind === 'file') {
+      const change = rows.files[index];
+      return change ? { lines: change.lines } : undefined;
+    }
+    const pair = rows.tools[index];
+    return pair ? nativeChatToolDetail(pair) : undefined;
   }
 
   /** The full projection when it is cheap or the row is near the tail; otherwise a stable plain-text stand-in queued for backfill. */

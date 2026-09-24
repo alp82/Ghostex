@@ -18,6 +18,10 @@ pub(in crate::app::native_chat) struct ModelPickerWindowState {
 }
 
 impl ModelPickerWindowState {
+    pub(in crate::app::native_chat) fn window_id(&self) -> Option<gpui::WindowId> {
+        self.handle.map(|handle| handle.window_id())
+    }
+
     pub(in crate::app::native_chat) fn is_open(&self) -> bool {
         self.handle.is_some()
     }
@@ -27,7 +31,7 @@ pub(super) struct ModelPickerWindow {
     pub(super) chat: Entity<NativeChatView>,
     pub(super) focus: FocusHandle,
     pub(super) last_size: Option<(f32, f32)>,
-    pub(super) started: std::time::Instant,
+    pub(super) started: web_time::Instant,
     _activation: Subscription,
     _subscription: Subscription,
 }
@@ -126,8 +130,11 @@ impl NativeChatView {
                 )
             });
             let result = geometry.and_then(|(bounds, display_id)| {
+                let display_id =
+                    crate::app::window::popup_frame::display_at(bounds.center(), cx).or(display_id);
                 cx.open_window(
                     WindowOptions {
+                        kind: crate::app::window::popup_frame::child_window_kind(),
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         display_id,
                         app_id: crate::gpui_platform_window_app_id(),
@@ -144,6 +151,7 @@ impl NativeChatView {
                     {
                         let chat = chat.clone();
                         move |window, cx| {
+                            crate::app::window::popup_frame::strip_gpui_popup_window_frame(window);
                             crate::app::window::attach_gpui_app_modal_window_to_main_window(
                                 window, parent,
                             );
@@ -167,12 +175,15 @@ impl NativeChatView {
                                     },
                                 );
                                 let focus = cx.focus_handle();
+                                // GPUI focus alone does not restore AppKit's first responder after
+                                // configuring the child window; key-up must reach this GPUI root too.
+                                super::super::focus::reclaim_keyboard_focus(window);
                                 focus.focus(window, cx);
                                 ModelPickerWindow {
                                     chat,
                                     focus,
                                     last_size: None,
-                                    started: std::time::Instant::now(),
+                                    started: web_time::Instant::now(),
                                     _activation: activation,
                                     _subscription: subscription,
                                 }

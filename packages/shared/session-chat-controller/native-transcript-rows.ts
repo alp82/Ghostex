@@ -26,12 +26,19 @@ import {
 } from '../session-chat-presentation/tool-rows';
 import type { SessionChatMessage } from '../session-chat';
 
+/** A tool's arguments and result as its open row shows them. */
+export function nativeChatToolDetail(pair: SessionChatToolPair) {
+  return {
+    input: clipSessionChatToolBody(pair.call ? formatSessionChatToolInput(pair.call.input) : ''),
+    output: clipSessionChatToolBody(pair.result?.output ?? ''),
+  };
+}
+
 export function nativeChatToolRows(pairs: readonly SessionChatToolPair[], agentPath = '/root') {
   return pairs.map((pair) => {
-    const input = clipSessionChatToolBody(pair.call ? formatSessionChatToolInput(pair.call.input) : '');
-    const output = clipSessionChatToolBody(pair.result?.output ?? '');
+    const { input, output } = nativeChatToolDetail(pair);
     const subagent = sessionChatToolSubagent(pair.call, pair.result, agentPath);
-    // Only the projected row crosses the bridge: the raw blocks would ship every tool argument and result twice.
+    // The arguments and result stay behind: GPUI asks for them only while the row is open (row_details.rs).
     return {
       hasCall: Boolean(pair.call),
       // An answered question is conversation, not work: a standalone run renders the pair as the
@@ -42,8 +49,6 @@ export function nativeChatToolRows(pairs: readonly SessionChatToolPair[], agentP
       name: pair.call?.name ?? 'Result',
       glyph: sessionChatToolGlyph(pair.call?.name ?? ''),
       preview: sessionChatToolPreview(pair),
-      input,
-      output,
       failed: pair.result?.isError === true,
       hasDetail: Boolean(input || output),
       // `self` is a selector pointing back at the conversation being read: React renders
@@ -57,15 +62,21 @@ export function nativeChatToolFold(pairs: readonly SessionChatToolPair[]) {
   return sessionChatToolRunFold(pairs.map((pair) => answeredSessionChatQuestionExchange(pair) !== null));
 }
 
-export function nativeChatFileRows(changes: readonly SessionChatFileChange[], workingDirectory?: string) {
-  return changes.map((change) => {
+export function nativeChatFileRows(
+  changes: readonly SessionChatFileChange[],
+  messageId: string,
+  workingDirectory?: string
+) {
+  return changes.map((change, index) => {
     const counts = sessionChatFileChangeCounts(change.lines);
     const failed = change.result?.isError === true;
     // Only the projected card crosses the bridge: the raw result block would ship the whole write output again.
     return {
       path: change.path,
       action: change.action,
-      lines: change.lines,
+      // The diff stays behind: GPUI asks for it by these two only while the card shows it (row_details.rs).
+      messageId,
+      index,
       // The same opt-out React's card takes (session-chat-file-change-card.tsx): both renderers
       // shorten the folder half against the row's real width, so a character budget on top of that
       // only cuts folders that would have fitted, and the two panes disagree about the same path.

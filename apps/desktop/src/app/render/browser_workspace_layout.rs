@@ -163,7 +163,6 @@ impl GhostexGpuiApp {
                 format!("ghostex-gpui-browser-split-grab-strip-{}", split_id.0),
                 axis,
                 ResizeRailGrabSide::Straddle,
-                self.resize_rail_drag_active(),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -200,7 +199,8 @@ impl GhostexGpuiApp {
             .min_w_0()
             .min_h_0()
             .overflow_hidden()
-            .border_1()
+            .border_r_1()
+            .border_b_1()
             .border_color(browser_pane_border_color_for_state(border_state))
             .bg(workspace_terminal_placeholder_color())
             .child(self.render_browser_toolbar(pane_id, cx))

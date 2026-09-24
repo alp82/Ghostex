@@ -19,7 +19,7 @@ pub(crate) struct GpuiTitlebarAnchoredDropdownState {
 impl Default for GpuiTitlebarAnchoredDropdownState {
     fn default() -> Self {
         Self {
-            position: point(px(0.0), px(TITLEBAR_HEIGHT)),
+            position: point(px(0.0), px(WORKAREA_HEADER_HEIGHT)),
             trigger_bounds: Bounds::default(),
             trigger_bounds_captured: false,
         }
@@ -35,6 +35,7 @@ pub(crate) enum GpuiTitlebarPopupKind {
     Extensions,
     Git,
     Help,
+    More,
     Notifications,
     OpenTargets,
     Resources,
@@ -52,6 +53,7 @@ impl GpuiTitlebarPopupKind {
             Self::Extensions => "extensions",
             Self::Git => "git",
             Self::Help => "help",
+            Self::More => "more",
             Self::Notifications => "notifications",
             Self::OpenTargets => "openTargets",
             Self::Resources => "resources",
@@ -172,6 +174,24 @@ impl GpuiTitlebarPopupWindow {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        // CDXC:Titlebar 2026-09-23 WHY:
+        // Borderless Windows popups still need a native title so accessibility tools can identify their own window without activating the main window behind them.
+        #[cfg(target_os = "windows")]
+        window.set_window_title(match kind {
+            GpuiTitlebarPopupKind::AccountUsage(_) => "Ghostex Account Usage",
+            GpuiTitlebarPopupKind::Actions => "Ghostex Start",
+            GpuiTitlebarPopupKind::BrowserActions(_) => "Ghostex Browser Actions",
+            GpuiTitlebarPopupKind::ContextMenu => "Ghostex Menu",
+            GpuiTitlebarPopupKind::Extensions => "Ghostex Extensions",
+            GpuiTitlebarPopupKind::Git => "Ghostex Commit",
+            GpuiTitlebarPopupKind::Help => "Ghostex Help",
+            GpuiTitlebarPopupKind::More => "Ghostex More",
+            GpuiTitlebarPopupKind::Notifications => "Ghostex Notifications",
+            GpuiTitlebarPopupKind::OpenTargets => "Ghostex Open",
+            GpuiTitlebarPopupKind::Resources => "Ghostex Resources",
+            GpuiTitlebarPopupKind::RemoteSites => "Ghostex Remote Sites",
+            GpuiTitlebarPopupKind::Tips => "Ghostex Tips",
+        });
         let content_kind = match &content {
             GpuiTitlebarPopupContent::AccountUsage(_) => "accountUsage",
             GpuiTitlebarPopupContent::Menu(_) => "menu",
@@ -220,6 +240,22 @@ impl GpuiTitlebarPopupWindow {
                 _dismiss_subscription: dismiss_subscription,
             }
         })
+    }
+
+    pub(crate) fn replace_menu(
+        &mut self,
+        menu: Entity<PopupMenu>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        menu.focus_handle(cx).focus(window, cx);
+        self._dismiss_subscription = Some(cx.subscribe_in(
+            &menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| this.close_from_popup_window(window, cx),
+        ));
+        self.content = GpuiTitlebarPopupContent::Menu(menu);
+        cx.notify();
     }
 
     fn close_from_popup_window(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
@@ -280,18 +316,6 @@ impl GpuiTitlebarPopupWindow {
         }
     }
 
-    pub(crate) fn update_notifications_feed(
-        &mut self,
-        feed: crate::notification_feed::GpuiNotificationFeedState,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if let GpuiTitlebarPopupContent::Reading(panel) = &self.content {
-            panel.update(cx, |panel, cx| {
-                panel.update_notifications_feed(feed, cx);
-            });
-        }
-    }
-
     pub(crate) fn update_tips_sidebar_agent_ids(
         &mut self,
         sidebar_agent_ids: HashSet<String>,
@@ -300,6 +324,18 @@ impl GpuiTitlebarPopupWindow {
         if let GpuiTitlebarPopupContent::Reading(panel) = &self.content {
             panel.update(cx, |panel, cx| {
                 panel.update_tips_sidebar_agent_ids(sidebar_agent_ids, cx);
+            });
+        }
+    }
+
+    pub(crate) fn update_notifications_feed(
+        &mut self,
+        feed: crate::notification_feed::GpuiNotificationFeedState,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let GpuiTitlebarPopupContent::Reading(panel) = &self.content {
+            panel.update(cx, |panel, cx| {
+                panel.update_notifications_feed(feed, cx);
             });
         }
     }
@@ -410,6 +446,28 @@ impl Render for GpuiTitlebarPopupWindow {
                     this.close_from_popup_window(window, cx);
                 }),
             )
+            /*
+            The ⋯ window closes first and the row's own panel opens on the next
+            effect cycle: opening it inline would make the main app close this
+            window while this window is mid-update.
+            */
+            .on_action(
+                cx.listener(|this, action: &OpenGpuiTitlebarMoreMenuItem, window, cx| {
+                    let Some(item) =
+                        crate::app::titlebar::more_menu::GpuiTitlebarMoreMenuItem::from_index(
+                            action.item_index,
+                        )
+                    else {
+                        return;
+                    };
+                    this.update_main_window(cx, move |_, main_window, cx| {
+                        cx.defer_in(main_window, move |app, window, cx| {
+                            app.open_titlebar_more_menu_item(item, window, cx);
+                        });
+                    });
+                    this.close_from_popup_window(window, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &BrowseGpuiExtensions, window, cx| {
                 this.update_main_window(cx, |app, main_window, cx| {
                     app.open_gpui_settings_extensions_page(Some(main_window), cx);
@@ -433,8 +491,7 @@ impl Render for GpuiTitlebarPopupWindow {
                         else {
                             return;
                         };
-                        cx.write_to_clipboard(ClipboardItem::new_string(branch));
-                        gpui_play_copy_sound();
+                        gpui_copy_to_clipboard(ClipboardItem::new_string(branch), cx);
                     });
                 }),
             )
@@ -596,7 +653,7 @@ impl GpuiTitlebarReadingPanel {
         }
     }
 
-    fn update_tips_sidebar_agent_ids(
+    pub(crate) fn update_tips_sidebar_agent_ids(
         &mut self,
         next_sidebar_agent_ids: HashSet<String>,
         cx: &mut gpui::Context<Self>,
@@ -611,7 +668,7 @@ impl GpuiTitlebarReadingPanel {
         cx.notify();
     }
 
-    fn update_tips_runtime_status(
+    pub(crate) fn update_tips_runtime_status(
         &mut self,
         payload: serde_json::Value,
         cx: &mut gpui::Context<Self>,

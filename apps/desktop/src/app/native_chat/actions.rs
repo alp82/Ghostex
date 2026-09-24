@@ -70,7 +70,9 @@ impl NativeChatView {
         let mut rows = Vec::new();
         if self.snapshot["composerOverflow"]["optionsOverflowed"] == true {
             rows.push(json!({"heading":true,"label":"Model settings"}));
-            if self.snapshot["optionLabels"]["showOptions"] == true {
+            if self.snapshot["optionLabels"]["showOptions"] == true
+                && !self.snapshot["modelMenu"].is_object()
+            {
                 rows.push(json!({
                 "label": self.snapshot["optionLabels"]["optionsTitle"].as_str().unwrap_or("Options"),
                 "detail":self.snapshot["optionLabels"]["options"],
@@ -239,10 +241,12 @@ impl NativeChatView {
                 json!({"type":"open","modal":"settings","initialTab":"accounts"}),
             ));
         } else if action.command["type"] == "copyText" {
-            // Copy Path, Copy URL and the transcript's Copy, with the shared copy sound every other chat copy plays.
+            // Copy Path, Copy URL and the transcript's Copy, with the feedback every other chat copy gives.
             if let Some(text) = action.command["text"].as_str() {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_owned()));
-                crate::app::helpers::gpui_play_copy_sound();
+                crate::app::helpers::gpui_copy_to_clipboard(
+                    gpui::ClipboardItem::new_string(text.to_owned()),
+                    cx,
+                );
             }
         } else if action.command["type"] == "appendToDraft" {
             self.append_to_draft(action.command["text"].as_str().unwrap_or_default(), cx);

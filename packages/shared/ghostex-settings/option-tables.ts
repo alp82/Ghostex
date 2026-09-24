@@ -2,9 +2,11 @@ import { formatSidebarHotkeyLabel } from '../hotkey-label';
 import { type SidebarThemeSetting } from '../session-grid-contract-core';
 import { type SessionChatThemeSetting } from '../session-chat';
 import { GHOSTTY_THEME_OPTIONS } from '../ghostty-theme-options';
+import type { DarkThemePreset, LightThemePreset } from './titlebar-color';
 import {
   type AppShotsHotkey,
   type AutoSleepIdleMinutes,
+  type ChatBrain,
   type ChatFileOpenView,
   type CommandsPanelSide,
   type DefaultEditorCommand,
@@ -17,6 +19,10 @@ import {
   type SidebarSpaceSwitchBehavior,
   type SidebarVisibilityMemory,
   type WebLinkOpenTarget,
+  type PanelAnimationSpeed,
+  type WindowGlassMode,
+  type WindowGlassSource,
+  type WindowGlassImagePlacement,
 } from './types';
 
 export const WEB_LINK_OPEN_TARGET_OPTIONS: ReadonlyArray<{
@@ -43,9 +49,40 @@ export const SIDEBAR_THEME_SETTING_OPTIONS: ReadonlyArray<{
   label: string;
   value: SidebarThemeSetting;
 }> = [
-  { label: 'Dark Gray', value: 'dark-2' },
+  { label: 'Dark', value: 'dark-2' },
   { label: 'Light', value: 'plain-light' },
   { label: 'System', value: 'system' },
+];
+
+/**
+ * CDXC:Theming 2026-09-22 DECISION:
+ * User: two Theme dropdowns, one for the light theme and one for the dark theme, list preset themes plus
+ * Custom; Custom reveals that appearance's background contrast and tint controls.
+ */
+export const DARK_THEME_PRESET_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: DarkThemePreset;
+}> = [
+  { label: 'Dark Gray', value: 'gray' },
+  { label: 'Black', value: 'black' },
+  { label: 'Blue', value: 'blue' },
+  { label: 'Green', value: 'green' },
+  { label: 'Red', value: 'red' },
+  { label: 'Purple', value: 'purple' },
+  { label: 'Custom', value: 'custom' },
+];
+
+export const LIGHT_THEME_PRESET_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: LightThemePreset;
+}> = [
+  { label: 'Light Gray', value: 'gray' },
+  { label: 'White', value: 'white' },
+  { label: 'Blue', value: 'blue' },
+  { label: 'Green', value: 'green' },
+  { label: 'Pink', value: 'pink' },
+  { label: 'Orange', value: 'orange' },
+  { label: 'Custom', value: 'custom' },
 ];
 
 export const SESSION_CHAT_THEME_OPTIONS: ReadonlyArray<{
@@ -101,6 +138,42 @@ export const COMMANDS_PANEL_SIDE_OPTIONS: ReadonlyArray<{
 }> = [
   { label: 'Bottom', value: 'bottom' },
   { label: 'Right', value: 'right' },
+];
+
+export const WINDOW_GLASS_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: WindowGlassMode;
+}> = [
+  { label: 'Glass in dark mode', value: 'auto' },
+  { label: 'Always glass', value: 'frosted' },
+  { label: 'Always opaque', value: 'opaque' },
+];
+
+export const WINDOW_GLASS_SOURCE_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: WindowGlassSource;
+}> = [
+  { label: 'Desktop and windows', value: 'desktopAndWindows' },
+  { label: 'Wallpaper only', value: 'wallpaper' },
+  { label: 'Custom image', value: 'customImage' },
+];
+
+export const WINDOW_GLASS_IMAGE_PLACEMENT_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: WindowGlassImagePlacement;
+}> = [
+  { label: 'Moves with the window', value: 'static' },
+  { label: 'Stays with the desktop', value: 'desktop' },
+];
+
+export const PANEL_ANIMATION_SPEED_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: PanelAnimationSpeed;
+}> = [
+  { label: 'Off', value: 'off' },
+  { label: 'Slow', value: 'slow' },
+  { label: 'Normal', value: 'normal' },
+  { label: 'Fast', value: 'fast' },
 ];
 
 /**
@@ -242,6 +315,14 @@ export const GHOSTTY_SCROLLBAR_OPTIONS: ReadonlyArray<{
 }> = [
   { label: 'System', value: 'system' },
   { label: 'Never', value: 'never' },
+];
+
+export const CHAT_BRAIN_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: ChatBrain;
+}> = [
+  { label: 'QuickJS (shipped)', value: 'quickjs' },
+  { label: 'Rust (in development)', value: 'rust' },
 ];
 
 export const PROMPT_EDITOR_BACKEND_OPTIONS: ReadonlyArray<{

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 
 const settingsModalSource = readFileSync(new URL('./settings-modal.tsx', import.meta.url), 'utf8');
+const themeTabSource = readFileSync(new URL('./settings-modal/tabs/theme.tsx', import.meta.url), 'utf8');
 const agentsHubModalSource = readFileSync(new URL('./agents-hub-modal.tsx', import.meta.url), 'utf8');
 const skillsPanelSource = readFileSync(new URL('./bundled-agent-skills-panel.tsx', import.meta.url), 'utf8');
 const settingsModalStylesSource = readFileSync(new URL('./styles/modals.css', import.meta.url), 'utf8');
@@ -405,8 +406,8 @@ describe('settings modal source', () => {
     /*
      * CDXC:Settings 2026-06-28-07:41:
      * Keep Awake is experimental-only in regular macOS Settings, but the
-     * Experimental section must name the hidden Power settings and titlebar
-     * button so search can lead users to the opt-in gate.
+     * Experimental section must name the hidden Power settings and the
+     * sidebar menu entry so search can lead users to the opt-in gate.
      */
     const betaSearch = sourceBetween(
       settingsModalSearchCatalogSource,
@@ -427,8 +428,8 @@ describe('settings modal source', () => {
     expect(betaSearch).toContain('Keep Awake');
     expect(settingsModalSource).toContain('keepAwakeWhileWorkingSessions');
     expect(settingsModalSource).toContain('Keep awake for working sessions');
-    expect(betaSection).toContain('Title bar and Power settings: Keep Awake');
-    expect(betaSection).toContain('Keep Awake title-bar button');
+    expect(betaSection).toContain('Power settings and the sidebar menu: Keep Awake');
+    expect(betaSection).toContain('the Keep Awake menu.');
     expect(mainVisibility).toContain("sectionId === 'power' && !keepAwakeSettingsVisible");
     expect(settingsModalSource).toContain('system: powerSectionRef');
     expect(mainVisibility).toContain('first-launch lid-close preference');
@@ -453,10 +454,12 @@ describe('settings modal source', () => {
     const gatedRows = sourceFrom(settingsModalDebuggingTabSource, '{settings.debuggingMode ? (');
 
     expect(debuggingSearch).toContain("key: 'diagnosticLogging'");
+    expect(debuggingSearch).toContain("key: 'chatBrain'");
     expect(debuggingSearch).toContain("key: 'showSessionCommandCopyActions'");
     expect(debuggingSearch).toContain("key: 'showSessionDetailsCopyAction'");
     expect(settingsModalDebuggingTabSource).toContain('checked={settings.debuggingMode}');
     expect(gatedRows).toContain("visible('controls', 'diagnosticLogging')");
+    expect(gatedRows).toContain("visible('controls', 'chatBrain')");
     expect(gatedRows).toContain("visible('controls', 'showSessionCommandCopyActions')");
     expect(gatedRows).toContain("visible('controls', 'showSessionDetailsCopyAction')");
     expect(settingsModalDebuggingTabSource).toContain(
@@ -724,10 +727,9 @@ describe('settings modal source', () => {
     const appIconSearch = sourceBetween(settingsModalSearchCatalogSource, 'appIcon: {', 'fileOpening: {');
     const appIconField = sourceBetween(settingsModalFieldsSource, 'function AppIconPickerField', 'function SoundField');
 
-    // Section is registered as advanced and grouped under Appearance.
-    expect(settingsNavigation).toContain("id: 'appearance'");
+    // Section is registered as advanced and lives on the Theme page, not General's rail.
+    expect(settingsNavigation).not.toContain("id: 'appearance'");
     expect(settingsNavigation).not.toContain("id: 'appIcon'");
-    expect(settingsNavigation).toContain('mainSettingsGroupSearch.appearance');
     expect(settingsModalSource).toContain('appIcon: appIconSectionRef');
     expect(advancedMainSettings).toContain("'appIconSourceId'");
     expect(appIconSearch).toContain('appIconSourceId');
@@ -762,7 +764,7 @@ describe('settings modal source', () => {
     expect(appIconField).not.toContain('Reveal in Finder');
     expect(appIconField).not.toContain('Reset to default');
     expect(settingsModalSource).not.toContain('function AppIconPickerTile');
-    expect(settingsModalSource).toContain(
+    expect(themeTabSource).toContain(
       "description='Changes the Dock and app-switcher icon. The app file icon may also change when the operating system allows it.'"
     );
   });

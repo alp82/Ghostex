@@ -8,11 +8,12 @@
 //! lays them out.
 
 use super::{appearance::ChatAppearance, state::NativeChatView, transcript::text};
+use crate::app::helpers::ThrottledAnimationExt as _;
 use crate::app::native_chat::cursor::ChatCursor as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnimationExt as _, AnyElement, Context, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, div, list, px, rgba,
+    AnyElement, Context, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, div, list, px, rgba,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -274,9 +275,11 @@ impl NativeChatView {
                 .flex_col()
                 .items_center()
                 .justify_center()
-                // React's dialog is `min(960px, 100% - 2rem)` by `min(860px, 100dvh - 3rem)`, which
-                // on a chat pane this size is the whole pane: the card covers it edge to edge
-                // instead of leaving a strip of transcript showing above the backdrop.
+                // React's dialog is `min(960px, 100% - 2rem)` by `min(860px, 100dvh - 3rem)`: the
+                // padding is that 1rem side and 1.5rem top/bottom inset, and the card's max size
+                // caps it, so a narrow pane still shows the backdrop on both sides of the card.
+                .px(px(16.0 * s))
+                .py(px(24.0 * s))
                 // The dialog's own backdrop tone, dark enough to read the card against a light transcript.
                 .bg(rgba(if p.light { 0x00000061 } else { 0x00000094 }))
                 .font_family(p.font.clone())
@@ -352,9 +355,9 @@ fn subagent_spinner(size: gpui::Pixels, color: gpui::Hsla) -> AnyElement {
         return glyph.into_any_element();
     }
     glyph
-        .with_animation(
+        .with_throttled_animation(
             "subagent-loading-spinner",
-            gpui::Animation::new(std::time::Duration::from_millis(900)).repeat(),
+            std::time::Duration::from_millis(900),
             |svg, delta| {
                 svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
                     delta * std::f32::consts::TAU,

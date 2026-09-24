@@ -22,18 +22,58 @@ use gpui_component::v_flex;
 use crate::app::consts::*;
 use crate::app::helpers::*;
 use crate::app::model::*;
+use crate::app::render::agents_workspace_layout::AgentsWorkspaceLayout;
 use crate::app::render::resize_rail::*;
 use crate::*;
 
 impl GhostexGpuiApp {
+    /// CDXC:Workarea 2026-09-20 WHY:
+    /// The Agents workspace and an open view are siblings in one row, not alternatives. This replaced
+    /// a `match self.active_mode` whose `Agents` arm drew the workspace and whose other arms drew a
+    /// project-editor shell instead of it, which is why a view switch used to unmount every terminal
+    /// and chat in the tree.
     pub(crate) fn render_main_workspace(
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        match self.active_mode {
-            TitlebarMode::Agents => self.render_agents_workspace(window, cx),
-            mode => self.render_project_editor_shell(mode, window, cx),
+        match self.open_view_mode() {
+            Some(mode) => self.render_workarea_with_open_view(Some(mode), window, cx),
+            None if self.view_picker_open() => {
+                self.render_workarea_with_open_view(None, window, cx)
+            }
+            None => {
+                let workspace =
+                    self.render_agents_workspace(AgentsWorkspaceLayout::FullWidth, window, cx);
+                // Closing, the panel's content is gone with the view, so its frame slides shut.
+                let frame = self.panel_motion.view_panel.frame();
+                if !frame.animating {
+                    return workspace;
+                }
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .items_stretch()
+                    .overflow_hidden()
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .h_full()
+                            .child(workspace),
+                    )
+                    .child(crate::app::panel_motion::closing_panel_ghost(
+                        frame,
+                        false,
+                        false,
+                        project_editor_companion_divider_background_color(),
+                        WORKSPACE_SPLIT_HANDLE_THICKNESS,
+                        glass_clear(project_editor_shell_background_color()),
+                    ))
+                    .into_any_element()
+            }
         }
     }
 
@@ -50,7 +90,7 @@ impl GhostexGpuiApp {
             command_pane_workspace_width(window, self.sidebar_width, self.sidebar_collapsed);
         let layout_plan = command_pane_workspace_layout_plan(
             self.command_pane.mode,
-            self.command_pane.has_sessions(),
+            self.command_pane.has_panel_sessions(),
             command_pane_content_height(window),
             self.command_pane.height_ratio,
             self.command_pane_side,
@@ -58,7 +98,39 @@ impl GhostexGpuiApp {
             self.command_pane.width_ratio,
         );
 
+        // Opening, the pane slides in at its settled size; closing, its frame slides shut
+        // (panel_motion.rs). The bottom dock stays anchored at its top edge, the right dock at its
+        // right edge.
+        let frame = self.panel_motion.command_pane.frame();
+        let docked_right = self.command_pane_side == GpuiCommandPaneSide::Right;
+        let closing_ghost = |extent: f32| {
+            crate::app::panel_motion::closing_panel_ghost(
+                crate::app::panel_motion::PanelFrame { extent, ..frame },
+                !docked_right,
+                false,
+                workspace_pane_border_color(),
+                COMMAND_PANE_SPLIT_HANDLE_THICKNESS,
+                glass_clear(command_pane_chrome_color()),
+            )
+        };
+
         match layout_plan {
+            CommandPaneWorkspaceLayoutPlan::Hidden if frame.animating && docked_right => h_flex()
+                .id("ghostex-gpui-workspace-without-command-pane")
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .items_stretch()
+                .overflow_hidden()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .child(self.render_main_workspace(window, cx)),
+                )
+                .child(closing_ghost(frame.extent))
+                .into_any_element(),
             CommandPaneWorkspaceLayoutPlan::Hidden => v_flex()
                 .id("ghostex-gpui-workspace-without-command-pane")
                 .flex_1()
@@ -66,6 +138,9 @@ impl GhostexGpuiApp {
                 .min_h_0()
                 .overflow_hidden()
                 .child(self.render_main_workspace(window, cx))
+                .when(frame.animating, |this| {
+                    this.child(closing_ghost(frame.extent))
+                })
                 .into_any_element(),
             CommandPaneWorkspaceLayoutPlan::Pinned { panel_height } => v_flex()
                 .id("ghostex-gpui-workspace-with-command-pinned")
@@ -75,14 +150,31 @@ impl GhostexGpuiApp {
                 .min_h_0()
                 .overflow_hidden()
                 .child(self.render_main_workspace(window, cx))
-                .child(self.render_command_pane_resize_divider(None, cx))
-                .child(self.render_command_pane_panel(
-                    GpuiCommandPaneSide::Bottom,
-                    panel_height,
-                    false,
-                    command_pane_panel_chrome_width(workspace_width, false),
-                    cx,
-                ))
+                .children({
+                    let divider = self.render_command_pane_resize_divider(None, cx);
+                    let panel = self.render_command_pane_panel(
+                        GpuiCommandPaneSide::Bottom,
+                        panel_height,
+                        false,
+                        command_pane_panel_chrome_width(workspace_width, false),
+                        cx,
+                    );
+                    if frame.animating {
+                        vec![
+                            crate::app::panel_motion::clip_panel_vertically(
+                                frame,
+                                v_flex()
+                                    .w_full()
+                                    .child(divider)
+                                    .child(panel)
+                                    .into_any_element(),
+                            )
+                            .into_any_element(),
+                        ]
+                    } else {
+                        vec![divider, panel]
+                    }
+                })
                 .into_any_element(),
             CommandPaneWorkspaceLayoutPlan::PinnedRight { panel_width } => h_flex()
                 /*
@@ -99,14 +191,50 @@ impl GhostexGpuiApp {
                 .items_stretch()
                 .overflow_hidden()
                 .child(self.render_main_workspace(window, cx))
-                .child(self.render_command_pane_side_divider(cx))
-                .child(self.render_command_pane_panel(
-                    GpuiCommandPaneSide::Right,
-                    panel_width,
-                    false,
-                    command_pane_panel_chrome_width(panel_width, false),
-                    cx,
-                ))
+                .children({
+                    /*
+                    CDXC:Titlebar 2026-09-20 WHY:
+                    The right dock and its rail keep their old top edge, one header height down: the
+                    floating header would otherwise cover the command pane's own tab bar and its grab
+                    strip. Only the Agents column, and only while its content is the GPUI chat the fade
+                    is drawn over, reaches the window's top edge.
+                    */
+                    let divider = v_flex()
+                        .flex_shrink_0()
+                        .h_full()
+                        .pt(px(WORKAREA_HEADER_HEIGHT))
+                        .child(self.render_command_pane_side_divider(cx))
+                        .into_any_element();
+                    let panel = v_flex()
+                        .flex_shrink_0()
+                        .h_full()
+                        .pt(px(WORKAREA_HEADER_HEIGHT))
+                        .child(self.render_command_pane_panel(
+                            GpuiCommandPaneSide::Right,
+                            panel_width,
+                            false,
+                            command_pane_panel_chrome_width(panel_width, false),
+                            cx,
+                        ))
+                        .into_any_element();
+                    if frame.animating {
+                        vec![
+                            crate::app::panel_motion::clip_panel_horizontally(
+                                frame,
+                                true,
+                                h_flex()
+                                    .h_full()
+                                    .items_stretch()
+                                    .child(divider)
+                                    .child(panel)
+                                    .into_any_element(),
+                            )
+                            .into_any_element(),
+                        ]
+                    } else {
+                        vec![divider, panel]
+                    }
+                })
                 .into_any_element(),
             CommandPaneWorkspaceLayoutPlan::Floating {
                 panel_height,
@@ -152,7 +280,34 @@ impl GhostexGpuiApp {
                 .min_w_0()
                 .min_h_0()
                 .overflow_hidden()
-                .child(self.render_main_workspace(window, cx))
+                .map(|this| {
+                    if !frame.animating {
+                        return this.child(self.render_main_workspace(window, cx));
+                    }
+                    if docked_right {
+                        return this.child(
+                            h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .min_h_0()
+                                .items_stretch()
+                                .overflow_hidden()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .min_h_0()
+                                        .child(self.render_main_workspace(window, cx)),
+                                )
+                                .child(closing_ghost(frame.extent)),
+                        );
+                    }
+                    // The strip below is already the bottom of the collapsed pane.
+                    this.child(self.render_main_workspace(window, cx))
+                        .child(closing_ghost(
+                            (frame.extent - bottom_reservation.height).max(0.0),
+                        ))
+                })
                 .child(self.render_command_pane_bottom_reservation(
                     bottom_reservation,
                     workspace_width,
@@ -208,7 +363,11 @@ impl GhostexGpuiApp {
                 this.min_h(px(COMMAND_PANE_TAB_BAR_HEIGHT))
             })
             .overflow_hidden()
-            .bg(command_pane_chrome_color())
+            .bg(if floating {
+                command_pane_chrome_color()
+            } else {
+                glass_clear(command_pane_chrome_color())
+            })
             .when(floating, |this| {
                 this.absolute()
                     .left(px(COMMAND_PANE_FLOATING_MARGIN))
@@ -229,18 +388,17 @@ impl GhostexGpuiApp {
                     .min_w_0()
                     .min_h_0()
                     .mr(px(COMMAND_PANE_OUTER_CONTENT_RIGHT_INSET))
+                    // Opening, the pane's frame slides in empty and its tabs and terminals fade in
+                    // near the end, so they are never seen half revealed (panel_motion.rs).
+                    .opacity(
+                        self.panel_motion
+                            .command_pane
+                            .frame()
+                            .opening_content_opacity(),
+                    )
                     .when_some(
                         self.command_pane
-                            .focus_mode_group
-                            .and_then(|group_id| self.command_pane.find_leaf(group_id))
-                            .filter(|leaf| {
-                                self.command_pane
-                                    .focus_mode_eligible_group_count_without_focus()
-                                    > 1
-                                    && self
-                                        .command_pane
-                                        .group_is_focus_mode_eligible_without_focus(leaf.group_id)
-                            }),
+                            .focus_mode_leaf_for_dock(CommandPaneDock::Panel),
                         |this, focus_leaf| {
                             this.child(self.render_command_pane_leaf(
                                 focus_leaf,
@@ -252,16 +410,7 @@ impl GhostexGpuiApp {
                     )
                     .when(
                         self.command_pane
-                            .focus_mode_group
-                            .and_then(|group_id| self.command_pane.find_leaf(group_id))
-                            .filter(|leaf| {
-                                self.command_pane
-                                    .focus_mode_eligible_group_count_without_focus()
-                                    > 1
-                                    && self
-                                        .command_pane
-                                        .group_is_focus_mode_eligible_without_focus(leaf.group_id)
-                            })
+                            .focus_mode_leaf_for_dock(CommandPaneDock::Panel)
                             .is_none(),
                         |this| {
                             this.child(self.render_command_pane_node(
@@ -276,13 +425,10 @@ impl GhostexGpuiApp {
             .into_any_element()
     }
 
-    /// The workspace on the leading side of the command pane boundary is a CEF page in every view but
-    /// Agents, and in Agents whenever a pane shows React chat; the grab strip then lies wholly over the
-    /// command pane, which is always GPUI-painted.
+    /// When the view panel shows a native child, the grab strip lies wholly over the command pane,
+    /// which is always GPUI-painted.
     fn command_pane_boundary_grab_side(&self) -> ResizeRailGrabSide {
-        let workspace_is_cef = self.active_mode != TitlebarMode::Agents
-            || self.workspace_node_shows_cef_chat(&self.agents_workspace.root);
-        if workspace_is_cef {
+        if self.view_panel_shows_native_surface() {
             ResizeRailGrabSide::Trailing
         } else {
             ResizeRailGrabSide::Straddle
@@ -315,7 +461,6 @@ impl GhostexGpuiApp {
                     "ghostex-gpui-command-pane-side-grab-strip",
                     WorkspaceSplitAxis::Horizontal,
                     grab_side,
-                    self.resize_rail_drag_active(),
                 )
                 .on_hover(cx.listener(|this, hovered, _, cx| {
                     this.set_command_resize_hovering(
@@ -388,7 +533,6 @@ impl GhostexGpuiApp {
                     "ghostex-gpui-command-pane-resize-grab-strip",
                     WorkspaceSplitAxis::Vertical,
                     grab_side,
-                    self.resize_rail_drag_active(),
                 )
                 .on_hover(cx.listener(|this, hovered, _, cx| {
                     this.set_command_resize_hovering(
@@ -569,7 +713,6 @@ impl GhostexGpuiApp {
                 format!("ghostex-gpui-command-split-grab-strip-{}", split_id.0),
                 axis,
                 ResizeRailGrabSide::Straddle,
-                self.resize_rail_drag_active(),
             )
             .on_hover(cx.listener(move |this, hovered, _, cx| {
                 this.set_command_resize_hovering(

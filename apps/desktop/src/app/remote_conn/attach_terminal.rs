@@ -121,108 +121,45 @@ impl GhostexGpuiApp {
             } else {
                 placement
             };
-        if self.focus_existing_gpui_remote_attach_terminal(&key, cx) {
+        // The marks moved above, in this same frame, for this same key, so the tab's focus below
+        // must not send the runtime a second, identical tab selection.
+        if self.focus_existing_gpui_remote_attach_terminal(&key, true, cx) {
             return;
         }
-        let prepare_reference = reference.clone();
         let open_chat_early = placement == AgentsWorkspaceNewTerminalPlacement::Tab
             && self
                 .pending_agents_chat_launch_intents
                 .contains(&GpuiWorkspaceTerminalSessionKey::Remote(key.clone()));
         let preview_pane_id = requested_pane_id.unwrap_or(self.agents_workspace.focused_pane);
-        let update_reference = reference;
-        let failed_open_key = key.clone();
-        let remote_machine_id = key.remote_machine_id;
-        let background = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            if open_chat_early {
-                let preview_target = target.clone();
-                let preview_reference = prepare_reference.clone();
-                let preview = background
-                    .spawn(async move {
-                        gpui_remote_gxserver_rpc_result(
-                            &preview_target,
-                            "/api/attachSessionMetadata",
-                            &serde_json::json!({
-                                "projectId": preview_reference.project_id,
-                                "sessionId": preview_reference.session_id,
-                            }),
-                            std::time::Duration::from_secs(15),
-                        )
-                    })
-                    .await;
-                if let Ok(metadata) = preview {
-                    let _ = this.update(cx, |this, cx| {
-                        this.show_pending_agents_chat_launch(
-                            GpuiWorkspaceTerminalSessionKey::Remote(
-                                GpuiRemoteAttachSessionKey::from(&prepare_reference),
-                            ),
-                            &metadata,
-                            preview_pane_id,
-                            this.pending_keep_view_remote_focus
-                                .contains(&GpuiRemoteAttachSessionKey::from(&prepare_reference)),
-                            cx,
-                        );
-                    });
-                }
-            }
-            let result = background
-                .spawn(async move {
-                    gpui_prepare_remote_attach_terminal_plan(
-                        &config,
-                        &target,
-                        &prepare_reference,
-                        true,
-                        true,
-                    )
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| match result {
-                Ok(plan) => {
-                    this.open_gpui_remote_attach_terminal(
-                        update_reference,
-                        plan,
-                        requested_pane_id,
-                        placement,
-                        GpuiRemoteAttachOpenIntent::AttachExistingSession,
-                        cx,
-                    );
-                    this.refresh_gpui_remote_gxserver_presentation_in_background(
-                        remote_machine_id,
-                        false,
-                        cx,
-                    );
-                }
-                Err(message) => {
-                    this.pending_keep_view_remote_focus.remove(&failed_open_key);
-                    support_logs::append(
-                        support_logs::GpuiSupportLog::TerminalFocus,
-                        "gpui.remoteAttach.planFailed",
-                        serde_json::json!({ "machineId": remote_machine_id }),
-                    );
-                    this.dispatch_gpui_app_modal_toast(
-                        "warning",
-                        "Remote attach unavailable",
-                        message.as_str(),
-                        cx,
-                    );
-                }
-            });
-        })
-        .detach();
+        self.prepare_gpui_remote_attach_request(
+            reference,
+            config,
+            target,
+            super::attach_request::RemoteAttachRequestIntent::Open {
+                requested_pane_id,
+                placement,
+                preview_pane_id: open_chat_early.then_some(preview_pane_id),
+            },
+            cx,
+        );
     }
 
-    /// Consumes the keep-view intent parked for this remote session by the
-    /// native open action. True only when the remembered view is not Agents,
-    /// so the caller skips the mode switch and the focus handoff; on Agents the
-    /// ordinary path runs, which is a no-op mode change plus the usual focus.
+    /// Consumes the keep-view intent parked for this remote session by the native open action.
+    ///
+    /// CDXC:Workarea 2026-09-20 WHY:
+    /// A remote attach armed to keep the view must not pull the keyboard out of it. The view panel
+    /// itself no longer goes anywhere when a session opens, so this only decides focus now.
     fn take_remote_keep_view_focus(&mut self, key: &GpuiRemoteAttachSessionKey) -> bool {
-        self.pending_keep_view_remote_focus.remove(key) && self.active_mode != TitlebarMode::Agents
+        self.pending_keep_view_remote_focus.remove(key)
     }
 
+    /// Selects the live tab of a remote session, when it has one. `marks_moved` says the caller
+    /// already moved the sidebar focus to this session in this frame
+    /// (`begin_gpui_remote_attach_terminal_open`), so it is not sent again.
     pub(crate) fn focus_existing_gpui_remote_attach_terminal(
         &mut self,
         key: &GpuiRemoteAttachSessionKey,
+        marks_moved: bool,
         cx: &mut gpui::Context<Self>,
     ) -> bool {
         let Some(session_id) = self.remote_attach_sessions.get(key).copied() else {
@@ -249,7 +186,15 @@ impl GhostexGpuiApp {
             }
             return false;
         };
-        if self.agents_tab_selected_local_runtime_missing(pane_id, session_id)
+        // A sleeping tab still has a mapping, but Resume must prepare a new attach plan
+        // so the remote wakeSession request runs before this same tab is re-armed.
+        if self
+            .agents_workspace
+            .session(session_id)
+            .is_some_and(|session| {
+                session.presentation_state == TerminalSessionPresentationState::Sleeping
+            })
+            || self.agents_tab_selected_local_runtime_missing(pane_id, session_id)
             || (self.agents_chat_mode_sessions.contains(&session_id)
                 && self
                     .agents_workspace
@@ -267,30 +212,11 @@ impl GhostexGpuiApp {
             */
             return false;
         }
-        let workspace_key = GpuiWorkspaceTerminalSessionKey::Remote(key.clone());
-        let keep_editor_mode =
-            self.should_keep_project_editor_open_for_workspace_terminal_focus(&workspace_key);
-        let project_editor_mode = self.active_mode;
         self.agents_workspace.select_tab(pane_id, session_id);
         self.activate_preferred_agents_chat_launch_intent(session_id, cx);
-        if keep_editor_mode {
-            self.seed_project_editor_companion_terminal_attach_payload_from_agents_slot(
-                project_editor_mode,
-                pane_id,
-                session_id,
-                &workspace_key,
-            );
-            self.retarget_project_editor_companion_to_workspace_terminal(
-                project_editor_mode,
-                session_id,
-                &workspace_key,
-                true,
-                cx,
-            );
-        } else if self.take_remote_keep_view_focus(key) {
-            // Keep-view focus: the tab is selected, the remembered view stays.
+        if self.take_remote_keep_view_focus(key) {
+            // Keep-view focus: the tab is selected, but the keyboard stays where it is.
         } else {
-            self.change_active_mode_with_pane_state(TitlebarMode::Agents, cx);
             self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
             self.request_agents_session_text_focus_handoff(
                 AgentsTerminalBodyMountSlotId {
@@ -302,7 +228,9 @@ impl GhostexGpuiApp {
         }
         self.scroll_workspace_pane_active_tab(pane_id);
         self.persist_shell_layout_state();
-        self.set_sidebar_gxserver_remote_attach_focus_state(key, cx);
+        if !marks_moved {
+            self.set_sidebar_gxserver_remote_attach_focus_state(key, cx);
+        }
         self.reconcile_preferred_agents_chat_launch_intents(cx);
         cx.notify();
         true
@@ -382,28 +310,12 @@ impl GhostexGpuiApp {
         let tab_agent_icon = projected_tab_session
             .and_then(|session| session.agent_icon)
             .or(plan.agent_icon);
-        if self.focus_existing_gpui_remote_attach_terminal(&key, cx) {
+        if self.focus_existing_gpui_remote_attach_terminal(&key, false, cx) {
             return;
         }
-        #[cfg(target_os = "macos")]
-        let env_vars = plan
-            .askpass
-            .as_ref()
-            .map(|askpass| {
-                vec![
-                    (
-                        "DISPLAY".to_string(),
-                        env::var("DISPLAY").unwrap_or_else(|_| "localhost:0".to_string()),
-                    ),
-                    (
-                        "SSH_ASKPASS".to_string(),
-                        gpui_path_string(askpass.script.as_path()),
-                    ),
-                    ("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string()),
-                ]
-            })
-            .unwrap_or_default();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+        let env_vars = gpui_remote_ssh_terminal_environment(plan.askpass.as_ref());
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         let env_vars = Vec::new();
         let payload = AgentsTerminalExplicitLaunchPayload {
             working_directory: None,
@@ -480,35 +392,17 @@ impl GhostexGpuiApp {
                         false,
                     );
                 }
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
                 if let Some(askpass) = plan.askpass {
                     self.remote_attach_askpass_scripts
                         .insert(key.clone(), askpass);
                 }
                 self.agents_workspace
                     .select_tab(placed_pane_id, existing_session_id);
-                let workspace_key = GpuiWorkspaceTerminalSessionKey::Remote(key.clone());
                 self.activate_preferred_agents_chat_launch_intent(existing_session_id, cx);
-                if self.should_keep_project_editor_open_for_workspace_terminal_focus(&workspace_key)
-                {
-                    let project_editor_mode = self.active_mode;
-                    self.seed_project_editor_companion_terminal_attach_payload_from_agents_slot(
-                        project_editor_mode,
-                        placed_pane_id,
-                        existing_session_id,
-                        &workspace_key,
-                    );
-                    self.retarget_project_editor_companion_to_workspace_terminal(
-                        project_editor_mode,
-                        existing_session_id,
-                        &workspace_key,
-                        true,
-                        cx,
-                    );
-                } else if self.take_remote_keep_view_focus(&key) {
-                    // Keep-view focus: the tab is re-armed, the remembered view stays.
+                if self.take_remote_keep_view_focus(&key) {
+                    // Keep-view focus: the tab is re-armed, but the keyboard stays where it is.
                 } else {
-                    self.change_active_mode_with_pane_state(TitlebarMode::Agents, cx);
                     self.focus_shell_target(ShellFocusTarget::AgentsPane(placed_pane_id), cx);
                     self.request_agents_session_text_focus_handoff(mount_slot_id, cx);
                 }
@@ -582,33 +476,16 @@ impl GhostexGpuiApp {
         };
         self.agents_terminal_launch_payload_source
             .insert_explicit_payload_for_mount_slot(runtime_session_id, mount_slot_id, payload);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         if let Some(askpass) = plan.askpass {
             self.remote_attach_askpass_scripts
                 .insert(key.clone(), askpass);
         }
         self.remote_attach_sessions.insert(key.clone(), session_id);
-        let workspace_key = GpuiWorkspaceTerminalSessionKey::Remote(key.clone());
         self.activate_preferred_agents_chat_launch_intent(session_id, cx);
-        if self.should_keep_project_editor_open_for_workspace_terminal_focus(&workspace_key) {
-            let project_editor_mode = self.active_mode;
-            self.seed_project_editor_companion_terminal_attach_payload_from_agents_slot(
-                project_editor_mode,
-                pane_id,
-                session_id,
-                &workspace_key,
-            );
-            self.retarget_project_editor_companion_to_workspace_terminal(
-                project_editor_mode,
-                session_id,
-                &workspace_key,
-                true,
-                cx,
-            );
-        } else if self.take_remote_keep_view_focus(&key) {
-            // Keep-view focus: the tab is created, the remembered view stays.
+        if self.take_remote_keep_view_focus(&key) {
+            // Keep-view focus: the tab is created, but the keyboard stays where it is.
         } else {
-            self.change_active_mode_with_pane_state(TitlebarMode::Agents, cx);
             self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
             self.request_agents_session_text_focus_handoff(mount_slot_id, cx);
         }

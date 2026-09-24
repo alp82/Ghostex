@@ -22,7 +22,6 @@ pub(crate) enum FocusedSurfaceCloseDecision {
         session_id: CommandSessionId,
     },
     InterceptNoOp,
-    CloseProjectEditorCompanionSession(TitlebarMode),
     CloseAgentsActiveTab,
     CloseBrowserActiveTab,
     NoOp,
@@ -36,7 +35,7 @@ pub(crate) fn focused_command_pane_close_decision(
     CDXC:CommandPane 2026-06-26-05:33:
     Cmd-W should follow native command-panel responder ownership. Expanded live command focus closes awake command tabs, expanded live sleeping placeholders consume the shortcut without closing, and stale/collapsed command focus falls through to the active workspace or Browser close path instead of swallowing Cmd-W.
     */
-    if shell_focus != ShellFocusTarget::CommandPane || !command_pane.is_expanded() {
+    if shell_focus != ShellFocusTarget::CommandPane || !command_pane.focused_group_dock_visible() {
         return FocusedCommandPaneCloseDecision::FallThroughToActiveMode;
     }
 
@@ -85,11 +84,6 @@ pub(crate) fn focused_surface_close_decision(
     }
 
     match shell_focus {
-        ShellFocusTarget::ProjectEditorCompanion(mode)
-            if active_mode == mode && mode.is_project_editor_mode() =>
-        {
-            FocusedSurfaceCloseDecision::CloseProjectEditorCompanionSession(mode)
-        }
         ShellFocusTarget::ProjectEditorSurface(mode) if mode.is_project_editor_mode() => {
             FocusedSurfaceCloseDecision::NoOp
         }
@@ -98,9 +92,10 @@ pub(crate) fn focused_surface_close_decision(
         {
             FocusedSurfaceCloseDecision::CloseBrowserActiveTab
         }
-        ShellFocusTarget::AgentsPane(_) if active_mode == TitlebarMode::Agents => {
-            FocusedSurfaceCloseDecision::CloseAgentsActiveTab
-        }
+        // CDXC:FocusRouting 2026-09-20 WHY:
+        // Cmd+W in an Agents pane closes its tab whatever the view panel shows, because the pane is
+        // on screen either way. The Commands pane still hands the decision to the active view.
+        ShellFocusTarget::AgentsPane(_) => FocusedSurfaceCloseDecision::CloseAgentsActiveTab,
         ShellFocusTarget::CommandPane => match active_mode {
             TitlebarMode::Agents => FocusedSurfaceCloseDecision::CloseAgentsActiveTab,
             TitlebarMode::Browser => FocusedSurfaceCloseDecision::CloseBrowserActiveTab,
@@ -108,13 +103,12 @@ pub(crate) fn focused_surface_close_decision(
             | TitlebarMode::Kanban
             | TitlebarMode::Automate
             | TitlebarMode::Manage
+            | TitlebarMode::Terminal
             | TitlebarMode::Extension(_) => FocusedSurfaceCloseDecision::NoOp,
         },
-        ShellFocusTarget::AgentsPane(_)
-        | ShellFocusTarget::BrowserSurface
+        ShellFocusTarget::BrowserSurface
         | ShellFocusTarget::BrowserPane(_)
-        | ShellFocusTarget::ProjectEditorSurface(_)
-        | ShellFocusTarget::ProjectEditorCompanion(_) => FocusedSurfaceCloseDecision::NoOp,
+        | ShellFocusTarget::ProjectEditorSurface(_) => FocusedSurfaceCloseDecision::NoOp,
     }
 }
 
@@ -151,7 +145,7 @@ pub(crate) fn focused_command_pane_sleep_target(
     CDXC:FocusMode 2026-06-25-14:56:
     Sleep Focused Session should target the active command terminal only when the command pane owns shell focus and is visibly expanded, matching native focused-session routing from AppKit first responder state. Collapsed strips, non-command focus, missing sessions, and already sleeping command tabs must no-op instead of mutating stale command state.
     */
-    if shell_focus != ShellFocusTarget::CommandPane || !command_pane.is_expanded() {
+    if shell_focus != ShellFocusTarget::CommandPane || !command_pane.focused_group_dock_visible() {
         return None;
     }
 
@@ -170,7 +164,7 @@ pub(crate) fn focused_command_pane_rename_target(
     CDXC:FocusMode 2026-06-25-16:33:
     Rename Active Session is a focused-session action in native command panes. In GPUI, route it only when the expanded command pane owns shell focus, then open the shared Rename Session modal for the active command tab without deriving titles from command text, paths, output, or persisted shell JSON.
     */
-    if shell_focus != ShellFocusTarget::CommandPane || !command_pane.is_expanded() {
+    if shell_focus != ShellFocusTarget::CommandPane || !command_pane.focused_group_dock_visible() {
         return None;
     }
     command_pane.focused_group_active_session_id()
@@ -184,7 +178,7 @@ pub(crate) fn focused_command_pane_wake_target(
     CDXC:FocusMode 2026-06-25-15:01:
     Wake Focused Session is the inverse focused command-terminal lifecycle action. Resolve only the expanded command pane's active sleeping tab while it owns shell focus, matching native command-palette focused-session routing without waking non-command focus, running command tabs, or collapsed command strips.
     */
-    if shell_focus != ShellFocusTarget::CommandPane || !command_pane.is_expanded() {
+    if shell_focus != ShellFocusTarget::CommandPane || !command_pane.focused_group_dock_visible() {
         return None;
     }
 

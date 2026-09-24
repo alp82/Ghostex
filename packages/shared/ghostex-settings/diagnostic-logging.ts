@@ -84,17 +84,17 @@ export const DIAGNOSTIC_LOGGING_SCENARIOS = [
     logFiles: ['native-layout-layering-debug.log'],
   },
   {
-    description: 'Titlebar mode switching, route handoff, project-surface wake, and AppKit settle timings.',
+    description: 'View switching, route handoff, project-surface wake, and AppKit settle timings.',
     group: 'macOS',
     id: 'native.mode.switcher',
-    label: 'Mode switcher and titlebar routing',
+    label: 'View switching and header routing',
     logFiles: ['native-mode-switcher-debug.log'],
   },
   {
-    description: 'Sidebar and titlebar WebKit lifecycle, titlebar event-loop stalls, and Resources sampler timing.',
+    description: 'Sidebar and header WebKit lifecycle, chrome event-loop stalls, and Resources sampler timing.',
     group: 'macOS',
     id: 'native.chrome.responsiveness',
-    label: 'Sidebar and titlebar responsiveness',
+    label: 'Sidebar and header responsiveness',
     logFiles: ['native-chrome-responsiveness-debug.log', 'sidebar-refresh-debug.log'],
   },
   {
@@ -211,6 +211,22 @@ export const DIAGNOSTIC_LOGGING_SCENARIOS = [
     group: 'GPUI',
     id: 'gpui.sessionChat.viewState',
     label: 'GPUI session chat view state',
+    logFiles: ['gpui-session-chat-debug.jsonl'],
+  },
+  {
+    description:
+      'Records everything the chat brain receives and a fingerprint of everything it draws, so a chat problem can be reproduced exactly. Unlike every other scenario this recording contains your conversation itself, including message text, file paths, and agent output. It is written only to /tmp/gx-chat, readable only by you, and it is deleted when the computer restarts. Turn it on only while capturing a chat problem, and turn it off afterwards.',
+    group: 'GPUI',
+    id: 'native.chat.replay',
+    label: 'Chat recording for reproducing a problem (contains your conversation)',
+    logFiles: ['/tmp/gx-chat/*.jsonl'],
+  },
+  {
+    description:
+      'Runs the new chat engine beside the one in use and counts where the two disagree, so the new one can be checked against your real chats before it takes over. The shadow draws nothing and sends nothing: it only compares. The log holds counts and field names, never message text, titles, or paths, and the comparison costs extra memory and processor time while it is on.',
+    group: 'GPUI',
+    id: 'native.chat.shadow',
+    label: 'Chat engine shadow comparison',
     logFiles: ['gpui-session-chat-debug.jsonl'],
   },
   {

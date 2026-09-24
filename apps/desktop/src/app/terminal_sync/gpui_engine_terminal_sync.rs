@@ -49,7 +49,7 @@ impl GhostexGpuiApp {
                         })
                 });
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         {
             let retained_askpass = self
                 .agents_gpui_terminal_viewer_recipes
@@ -624,10 +624,15 @@ impl GhostexGpuiApp {
         #[cfg(not(target_os = "macos"))]
         let mut engine_config =
             terminal_gpui_engine::GpuiTerminalEngineConfig::from_shared(settings);
-        engine_config.apply_color_scheme(settings, gpui_system_uses_light_appearance());
+        engine_config.apply_color_scheme(
+            settings,
+            gpui_system_uses_light_appearance(),
+            gpui_terminal_theme_background(settings),
+        );
         engine_config.view.scroll_to_bottom_when_typing = settings.scroll_to_bottom_when_typing;
         engine_config.view.background_image =
             terminal_gpui_engine::terminal_background_image_from_settings(settings);
+        engine_config.view.background_alpha = terminal_default_background_alpha();
         let viewer_recipe = GpuiTerminalViewerRecipe {
             runtime_session_id,
             working_directory: working_directory.clone(),
@@ -644,7 +649,29 @@ impl GhostexGpuiApp {
         let font = terminal_gpui_engine::gpui_engine_terminal_font_config(&engine_config);
         let (sink, event_rx) = terminal_element::TerminalView::event_channel();
         let spawn_started = Instant::now();
-        let mut model = terminal_model::TerminalModel::spawn(spawn_config, sink).ok()?;
+        let argument_utf16_length = spawn_config
+            .args
+            .iter()
+            .map(|argument| argument.encode_utf16().count() + 1)
+            .sum::<usize>();
+        let mut model = match terminal_model::TerminalModel::spawn(spawn_config, sink) {
+            Ok(model) => model,
+            Err(error) => {
+                let os_error = error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                    .and_then(std::io::Error::raw_os_error);
+                support_logs::append(
+                    support_logs::GpuiSupportLog::TerminalFocus,
+                    "gpui.terminalEngine.spawnFailed",
+                    serde_json::json!({
+                        "osErrorCode": os_error,
+                        "argumentUtf16Length": argument_utf16_length,
+                    }),
+                );
+                return None;
+            }
+        };
         support_logs::append_temporary(
             support_logs::GpuiSupportLog::TerminalFocus,
             "TEMP.remoteNewTerminal.engineProcessSpawned",
@@ -692,7 +719,7 @@ impl GhostexGpuiApp {
                 cx,
             );
             view.apply_settings(view_settings);
-            view.set_copy_handler(Box::new(gpui_play_copy_sound));
+            view.set_copy_handler(Box::new(gpui_copy_feedback));
             if uses_zmx_visibility_claims {
                 view.enable_zmx_visibility_claims();
             }
@@ -809,7 +836,12 @@ impl GhostexGpuiApp {
                 let working_directory = osc_states
                     .get(&runtime_session_id)
                     .and_then(|state| state.pwd.clone());
-                self.open_gpui_engine_terminal_action_url(url, working_directory.as_deref(), cx);
+                self.open_gpui_engine_terminal_action_url(
+                    url,
+                    working_directory.as_deref(),
+                    target,
+                    cx,
+                );
             }
             TerminalViewEvent::PasteRequested => {
                 let _ = self.paste_into_focused_terminal_from_clipboard(cx);
@@ -943,7 +975,7 @@ impl GhostexGpuiApp {
                 );
             }
             TerminalAgentActionRequest::DelayedActions => {
-                let _ = self.open_gpui_delayed_send_modal_for_focused_agents_session(cx);
+                let _ = self.open_gpui_delayed_send_modal_for_agents_session(session_id, cx);
             }
             TerminalAgentActionRequest::CloseAfterDone => {
                 let _ = self.toggle_gpui_close_after_done_for_agents_session(session_id, cx);

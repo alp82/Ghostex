@@ -314,7 +314,7 @@ type SurfaceKeyOsEvent<'a> = Option<&'a mut cef::sys::XEvent>;
 
 /*
 CDXC:Browser 2026-09-09 SEE-ALSO:
-Browser CEF child views own page keystrokes, so history must be handled here as well as the GPUI Browser key context in main.rs.
+Browser CEF child views own page keystrokes, so history, reload (F5 and primary+R) and non-macOS find must be handled here as well as the GPUI Browser key context in main.rs.
 Other pages keep their page-owned shortcuts; Windows retains its existing surface zoom commands.
 */
 wrap_keyboard_handler! {
@@ -350,6 +350,30 @@ wrap_keyboard_handler! {
             if event.windows_key_code == history_key && modifiers == history_modifier {
                 if let Some(handler) = &self.page_metadata_handler {
                     handler(BrowserPageMetadataEvent::HistoryRequested);
+                    return 1;
+                }
+            }
+            let primary = if cfg!(target_os = "macos") {
+                command
+            } else {
+                control
+            };
+            // CDXC:Browser 2026-09-21 WHY:
+            // Windows and Linux deliver keys straight to the focused Chromium child window, so the GPUI Find binding never sees Ctrl+F while the page owns the keyboard. macOS reaches that binding through AppKit key equivalents, so raising it here too would be a second path for the same chord.
+            if cfg!(not(target_os = "macos"))
+                && event.windows_key_code == 0x46
+                && modifiers == primary
+            {
+                if let Some(handler) = &self.page_metadata_handler {
+                    handler(BrowserPageMetadataEvent::FindRequested);
+                    return 1;
+                }
+            }
+            let reload_chord = (event.windows_key_code == 0x74 && modifiers == 0)
+                || (event.windows_key_code == 0x52 && modifiers == primary);
+            if reload_chord && self.page_metadata_handler.is_some() {
+                if let Some(browser) = browser.as_deref() {
+                    browser.reload();
                     return 1;
                 }
             }
@@ -424,6 +448,13 @@ pub(crate) fn cef_origins_match(lhs: &str, rhs: &str) -> bool {
     }
 }
 
+/// CDXC:CefRuntime 2026-09-23 WHY:
+/// GPUI's Windows event loop calls ExitProcess after its quit callback, so shutdown after Application::run is unreachable. The app-level observer survives closing the main view; its future runs after GPUI removes the windows and flushes their drops, before Windows tears down CEF's DLL and worker threads.
+#[cfg(target_os = "windows")]
+pub(crate) fn register_windows_shutdown(cx: &gpui::App) {
+    cx.on_app_quit(|_| async { shutdown() }).detach();
+}
+
 #[allow(dead_code)]
 pub fn shutdown() {
     let Some(state) = CEF_RUNTIME.get() else {
@@ -443,6 +474,7 @@ pub fn shutdown() {
     CEF_GLOBAL_REQUEST_CONTEXT.with(|context| {
         context.borrow_mut().take();
     });
+    clear_remote_browser_contexts();
     platform::invalidate_message_pump();
     cef::shutdown();
     CEF_CONTEXT_INITIALIZED.store(false, Ordering::Release);

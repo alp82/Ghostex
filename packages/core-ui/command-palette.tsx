@@ -439,6 +439,9 @@ export function CommandPalette({
   const kanbanViewTabHidden = useSidebarStore(
     (state) => (state.hud.settings?.kanbanViewTabHidden ?? DEFAULT_ghostex_SETTINGS.kanbanViewTabHidden) === true
   );
+  const terminalViewTabHidden = useSidebarStore(
+    (state) => (state.hud.settings?.terminalViewTabHidden ?? DEFAULT_ghostex_SETTINGS.terminalViewTabHidden) === true
+  );
   /*
    * CDXC:Extensions 2026-09-18 WHY:
    * A view narrowed to other projects or other spaces is just as unreachable as one switched off, so it
@@ -470,6 +473,9 @@ export function CommandPalette({
     if (kanbanViewTabHidden || outOfScope('kanban')) {
       hidden.add('switchKanbanView');
     }
+    if (terminalViewTabHidden || outOfScope('terminal')) {
+      hidden.add('switchTerminalView');
+    }
     return hidden;
   }, [
     activeProjectId,
@@ -478,6 +484,7 @@ export function CommandPalette({
     codeViewTabHidden,
     docsViewTabHidden,
     kanbanViewTabHidden,
+    terminalViewTabHidden,
     viewScopes,
   ]);
   const normalizedHotkeys = useMemo(() => normalizeghostexHotkeySettings(hotkeys), [hotkeys]);
@@ -1011,7 +1018,11 @@ function BuiltInCommandIcon({ command }: { command: BuiltInPaletteCommand }) {
   if (action.kind === 'toggleSidebarCollapsed') {
     return <IconLayoutSidebar aria-hidden='true' />;
   }
-  if (action.kind === 'toggleCompanionPane') {
+  if (
+    action.kind === 'toggleViewPanel' ||
+    action.kind === 'expandViewPanel' ||
+    action.kind === 'expandViewPanelFully'
+  ) {
     return <IconLayoutSidebarRightExpand aria-hidden='true' />;
   }
   if (action.kind === 'renameActiveSession') {

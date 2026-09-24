@@ -21,6 +21,7 @@ import { getDragNativeEvent, hasPointerDragMovedPastThreshold } from './sidebar-
 import { resolveSelectedSidebarSpaceId, type SidebarSpaceSessionSummary } from './sidebar-app/space-filtering';
 import { getSidebarReorderActivationConstraints } from './sidebar-reorder-activation';
 import { DEFAULT_SIDEBAR_SPACE_ICON, type SidebarSpace, type SidebarSpacesState } from './spaces';
+import { resolveSidebarSpaceDisplayColor } from './space-colors';
 import type { WebviewApi } from './webview-api';
 
 /*
@@ -740,7 +741,7 @@ export function SpaceFilterRow({
       const space = spaces.spaces[source.spaceId];
       if (!point || !rect || !space) return;
       setDragPreview({
-        color: space.color,
+        color: resolveSidebarSpaceDisplayColor(space.color),
         containsActiveSession: activeSessionSpaceId === source.spaceId,
         height: rect.height,
         icon: resolveSidebarSpaceIcon(space.icon),
@@ -966,19 +967,6 @@ export function SpaceFilterRow({
           onDismiss={dismissMenus}
           vscode={vscode}
         >
-          <button
-            className='session-context-menu-item'
-            onClick={() => {
-              dismissMenus();
-              openSpaceEditor();
-            }}
-            role='menuitem'
-            type='button'
-          >
-            <IconPlus aria-hidden='true' className='session-context-menu-icon' size={14} stroke={2} />
-            New Space
-          </button>
-          {overflowSpaces.length > 0 ? <div className='session-context-menu-divider' role='separator' /> : null}
           {overflowSpaces.map((space) => (
             <button
               aria-label={getSpaceSessionStatusLabel(space.name, sessionSummaryBySpaceId[space.spaceId])}
@@ -994,7 +982,7 @@ export function SpaceFilterRow({
             >
               <SidebarCommandIconGlyph
                 className='session-context-menu-icon'
-                color={space.color}
+                color={resolveSidebarSpaceDisplayColor(space.color)}
                 icon={resolveSidebarSpaceIcon(space.icon)}
                 size={14}
               />
@@ -1005,6 +993,20 @@ export function SpaceFilterRow({
               ) : null}
             </button>
           ))}
+          {/* CDXC:Spaces 2026-09-20 DECISION: User: the More menu lists the overflowing Spaces first and puts New Space last, under a separator. */}
+          {overflowSpaces.length > 0 ? <div className='session-context-menu-divider' role='separator' /> : null}
+          <button
+            className='session-context-menu-item'
+            onClick={() => {
+              dismissMenus();
+              openSpaceEditor();
+            }}
+            role='menuitem'
+            type='button'
+          >
+            <IconPlus aria-hidden='true' className='session-context-menu-icon' size={14} stroke={2} />
+            New Space
+          </button>
         </SidebarContextMenuPortal>
       ) : null}
       {otherMenuPosition ? (
@@ -1104,7 +1106,7 @@ function SpaceFilterButton({
     sensors: spaceSensors,
     type: `space:${sectionKey}`,
   });
-  const style = { '--sidebar-space-color': space.color } as CSSProperties;
+  const style = { '--sidebar-space-color': resolveSidebarSpaceDisplayColor(space.color) } as CSSProperties;
 
   return (
     <AppTooltip content={getSpaceSessionStatusLabel(space.name, sessionSummary)}>
@@ -1130,7 +1132,7 @@ function SpaceFilterButton({
       >
         <SidebarCommandIconGlyph
           className='sidebar-space-filter-icon'
-          color={space.color}
+          color={resolveSidebarSpaceDisplayColor(space.color)}
           icon={resolveSidebarSpaceIcon(space.icon)}
           size={16}
         />

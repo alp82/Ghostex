@@ -18,12 +18,7 @@ import {
   validateGpuiGxserverBootstrap,
 } from './helpers/bootstrap';
 import { sameStringSet } from './helpers/records';
-import {
-  isCustomSessionTagsState,
-  isSidebarProjectCollectionsState,
-  isSidebarSpacesState,
-  parseGpuiRemotePresentationProjectId,
-} from './helpers/remote-presentation';
+import { isCustomSessionTagsState, parseGpuiRemotePresentationProjectId } from './helpers/remote-presentation';
 import type {
   GpuiGxserverBootstrap,
   GpuiSidebarRuntimeSnapshotKind,
@@ -146,9 +141,8 @@ export const gpuiSidebarRuntimePresentationStreamMethods = {
       client.fetchProjectList().catch(() => undefined),
       client.fetchRecentProjects().catch(() => undefined),
       client.fetchSidebarHud(validated.initialActiveProjectId),
-      client.fetchWorkspaceSessionGroups().catch(() => undefined),
     ])
-      .then(([snapshot, appUserData, domainProjects, recentProjects, sidebarHud, workspaceGroups]) => {
+      .then(([snapshot, appUserData, domainProjects, recentProjects, sidebarHud]) => {
         if (this.client !== client) {
           return;
         }
@@ -156,7 +150,6 @@ export const gpuiSidebarRuntimePresentationStreamMethods = {
         this.domainProjects = domainProjects ? [...domainProjects] : [];
         this.recentProjects = recentProjects ? [...recentProjects] : [];
         this.sidebarHud = sidebarHud;
-        this.adoptWorkspaceGroupsFromGxserver(workspaceGroups);
         this.applyPresentationSnapshot(snapshot, 'hydrate');
         this.openPresentationSubscription(validated.clientId, snapshot.revision);
       })
@@ -234,12 +227,19 @@ export const gpuiSidebarRuntimePresentationStreamMethods = {
         void this.refreshNotificationFeed();
       },
       onRendererCommand: (command) => this.handleGxserverRendererCommand(command),
-      onSidebarProjectCollections: (state) => {
-        this.forwardSidebarProjectCollectionsFromGxserver(state);
-      },
-      onSidebarSpaces: (state) => {
-        this.forwardSidebarSpacesFromGxserver(state);
-      },
+      /*
+      CDXC:Projects 2026-09-21 WHY:
+      This computer's project collections and Spaces documents are NOT taken off this socket any
+      more, exactly as the workspace session groups document stopped being in M5 piece 7c. The app
+      owns both, and its pending-push guard is the only thing that knows whether a local edit is
+      still on its way to the daemon; forwarding the daemon's echo straight into the page put a
+      document the guard had refused back into the page's copy, which is the base its next edit is
+      computed from. Nothing in this runtime holds either document now: the local relay and the
+      hand-back that replaced it were both deleted on 2026-09-21. A REMOTE machine's copies still
+      arrive through `forwardRemoteSidebar*FromGxserver`, because this runtime still owns those.
+      SEE-ALSO: apps/desktop/src/app/gx_store/project_docs.rs,
+      tooling/gx-core/sidebar-page-frozen/metadata.ts.
+      */
       onCustomSessionTags: (state) => {
         this.forwardCustomSessionTagsFromGxserver(state);
       },
@@ -258,13 +258,6 @@ export const gpuiSidebarRuntimePresentationStreamMethods = {
       */
       onSnapshotCurrent: () => {
         this.notePresentationStreamAcknowledged();
-      },
-      onWorkspaceGroups: (state) => {
-        const previous = this.workspaceGroups;
-        this.adoptWorkspaceGroupsFromGxserver(state);
-        if (this.workspaceGroups !== previous) {
-          this.publishPresentation('patch');
-        }
       },
     });
   },
@@ -354,16 +347,11 @@ export const gpuiSidebarRuntimePresentationStreamMethods = {
     const projectedSnapshot = this.projectLocalPresentationAttentionAcknowledgementGuards(snapshot);
     this.presentation = projectedSnapshot;
     this.syncLocalPresentationAttentionTracking(previousSessions, projectedSnapshot.sessions);
-    if (isSidebarProjectCollectionsState(snapshot.sidebarProjectCollections)) {
-      this.forwardSidebarProjectCollectionsFromGxserver(snapshot.sidebarProjectCollections);
-    }
-    if (isSidebarSpacesState(snapshot.sidebarSpaces)) {
-      this.forwardSidebarSpacesFromGxserver(snapshot.sidebarSpaces);
-    }
+    // The snapshot's own copies of the two project documents go the same way as the socket's, and
+    // for the same reason: the app judges them behind the guard and hands the result back.
     if (isCustomSessionTagsState(snapshot.customSessionTags)) {
       this.forwardCustomSessionTagsFromGxserver(snapshot.customSessionTags);
     }
-    this.adoptWorkspaceGroupsFromGxserver(snapshot.workspaceGroups);
     this.publishPresentation(kind);
     this.notifyNativeGxserverPresentationReady();
     if (kind === 'hydrate') {

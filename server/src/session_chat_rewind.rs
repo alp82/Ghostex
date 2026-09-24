@@ -299,14 +299,36 @@ fn confirm_quoted_lines(region: &[String]) -> Option<Vec<String>> {
 /// CDXC:SessionChat 2026-09-19 WHY:
 /// The confirmation dialog word-wraps a prompt wider than the terminal across several `│` lines with no ellipsis, so its first screen line alone is an unmarked prefix that `row_matches_prompt` rightly refuses, and every long prompt failed to rewind.
 /// Rejoin the wrapped lines one at a time and compare without whitespace (a wrap can fall on a space or inside a long word); the quote still has to be the WHOLE first line, or an ellipsis-marked prefix of it.
-fn confirm_quote_matches_prompt(quoted: &[String], target_first_line: &str) -> bool {
+fn confirm_quote_matches_prompt(
+    quoted: &[String],
+    target_first_line: &str,
+    target_confirm_cap: Option<&str>,
+) -> bool {
     let strip = |text: &str| text.split_whitespace().collect::<String>();
     let target = strip(target_first_line);
+    let cap = target_confirm_cap.map(strip);
     let mut joined = String::new();
     quoted.iter().any(|line| {
         joined.push_str(&strip(line));
-        row_matches_prompt(&joined, &target)
+        row_matches_prompt(&joined, &target) || cap.as_deref() == Some(joined.as_str())
     })
+}
+
+/// UTF-16 units of a prompt the confirmation dialog quotes before it cuts the text off.
+const CLAUDE_REWIND_CONFIRM_QUOTE_UNITS: usize = 500;
+
+/// CDXC:SessionChat 2026-09-21 WHY:
+/// The confirmation dialog quotes `prompt.trim().slice(0, 500)` with NO ellipsis (measured in Claude Code 2.1.278), so a prompt whose first line runs past 500 UTF-16 units is quoted as an unmarked prefix and could never be rewound to.
+/// Accepting any prefix would reintroduce the `test 3` / `test 33` mistake, so compute the exact cut Claude makes and accept only that; `None` when the cut does not shorten the first line.
+fn claude_confirm_quote_cap(text: &str) -> Option<String> {
+    let text = text.trim();
+    let mut units = 0;
+    let end = text.char_indices().find_map(|(index, ch)| {
+        units += ch.len_utf16();
+        (units > CLAUDE_REWIND_CONFIRM_QUOTE_UNITS).then_some(index)
+    })?;
+    let capped = prompt_first_line(&text[..end]);
+    (capped != prompt_first_line(text)).then_some(capped)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -375,6 +397,8 @@ struct ClaudeRewindTarget {
     leaf_id: Option<String>,
     /// First line of the prompt, space-collapsed, for screen verification.
     first_line: String,
+    /// What the confirmation dialog quotes instead when it cuts that line short.
+    confirm_cap: Option<String>,
     /// Selectable prompts and local commands that come AFTER the target.
     /// The list starts on `(current)`, so reaching the target costs one more
     /// press than that.
@@ -530,6 +554,7 @@ fn resolve_rewind_target(
         message_id: target.lineage.id.clone(),
         leaf_id: target.lineage.parent_id.clone(),
         first_line,
+        confirm_cap: claude_confirm_quote_cap(&text),
         prompts_after: prompts.len() - position - 1,
     })
 }
@@ -836,30 +861,34 @@ impl RewindDriver<'_> {
         the handler ran before this job reached the front of the session's send
         queue. What matters is the state of the screen one instant before the
         first keystroke.
+
+        CDXC:SessionChat 2026-09-21 WHY:
+        The composer is waited for, like every send, instead of being judged from one capture. A rewind asked for right after stopping a turn, or queued behind a /model write, reads a frame Claude is still repainting; that frame has no input box and the single capture refused a rewind that would have worked 100 ms later.
         */
-        let screen = self.capture().await.ok_or_else(|| {
-            session_not_running(
+        if self.capture().await.is_none() {
+            return Err(session_not_running(
                 "The session's screen could not be read, so the rewind was not started."
                     .to_string(),
-            )
-        })?;
-        match composer_draft(&screen) {
-            Some(draft) if draft.is_empty() => {}
-            Some(draft) if is_restored_draft(self.project_id, self.session_id, &draft) => {
-                self.clear_restored_draft(&draft).await?;
-            }
-            Some(_) => {
+            ));
+        }
+        let draft = self
+            .wait_for("composer", composer_draft)
+            .await
+            .map_err(|error| match error.code {
+                "timeout" => agent_busy(
+                    "Claude Code is not showing its input box, so the rewind was not started."
+                        .to_string(),
+                ),
+                _ => error,
+            })?;
+        if !draft.is_empty() {
+            if !is_restored_draft(self.project_id, self.session_id, &draft) {
                 return Err(agent_busy(
                     "The terminal composer holds unsent text, so the rewind was not started. Send it or clear it in the terminal first."
                         .to_string(),
-                ))
+                ));
             }
-            None => {
-                return Err(agent_busy(
-                    "Claude Code is not showing its input box, so the rewind was not started."
-                        .to_string(),
-                ))
-            }
+            self.clear_restored_draft(&draft).await?;
         }
 
         self.write(CLAUDE_REWIND_COMMAND).await?;
@@ -974,7 +1003,11 @@ impl RewindDriver<'_> {
                 confirm_quoted_lines(region)
             })
             .await?;
-        if !confirm_quote_matches_prompt(&quoted, &plan.target_first_line) {
+        let confirm_cap = plan
+            .claude_target
+            .as_ref()
+            .and_then(|(_, target)| target.confirm_cap.as_deref());
+        if !confirm_quote_matches_prompt(&quoted, &plan.target_first_line, confirm_cap) {
             return Err(dialog_mismatch(
                 "confirmation",
                 &format!(

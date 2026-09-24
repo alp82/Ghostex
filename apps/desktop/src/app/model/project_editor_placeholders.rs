@@ -31,7 +31,10 @@ pub(crate) enum ProjectEditorPlaceholderAction {
 
 impl ProjectEditorPlaceholderSignature {
     pub(crate) fn for_mode(mode: TitlebarMode) -> Option<Self> {
-        if matches!(mode, TitlebarMode::Agents | TitlebarMode::Browser) {
+        if matches!(
+            mode,
+            TitlebarMode::Agents | TitlebarMode::Browser | TitlebarMode::Terminal
+        ) {
             return None;
         }
 
@@ -88,7 +91,7 @@ impl ProjectEditorSleepingPlaceholderSignature {
     pub(crate) fn for_mode(mode: TitlebarMode) -> Option<Self> {
         /*
         CDXC:CodeEditor 2026-06-28-17:09:
-        Sleeping/restored Source, Browser, Kanban, Automate, and Docs visible copy is private-detail-free shell state. It must not include project/session/URL details, create CEF views, mount bridges, replace placeholders, or introduce WKWebView/WebKit paths.
+        Sleeping/restored Source, Browser, Kanban, Automate, and Docs visible copy is private-detail-free shell state. It must not include project/session/URL details, create CEF views, mount bridges, replace placeholders, or introduce WKWebView/WebKit paths. Since 2026-09-22 the Browser draws its sleeping tab's favicon, title and host instead of this copy (see `render/browser_sleeping_placeholder.rs`); the Browser line here is unused.
         */
         let (title, message) = match mode {
             TitlebarMode::Source => (
@@ -112,7 +115,8 @@ impl ProjectEditorSleepingPlaceholderSignature {
                 "Docs shell state is retained. Activate this surface to restore it.",
             ),
             TitlebarMode::Extension(_) => ("View is sleeping", "Select this view to wake it."),
-            TitlebarMode::Agents => return None,
+            // A Ghostex page is drawn by GPUI, so it never sleeps and has no sleeping placeholder.
+            TitlebarMode::Agents | TitlebarMode::Terminal => return None,
         };
 
         Some(Self {
@@ -141,4 +145,6 @@ pub(crate) struct PendingSourceFileOpen {
     pub(crate) line: Option<u32>,
     pub(crate) origin: PendingSourceFileOpenOrigin,
     pub(crate) project_path: PathBuf,
+    pub(crate) remote_target: Option<SourceCodeServerRuntimeTarget>,
+    pub(crate) remote_working_directory: Option<String>,
 }

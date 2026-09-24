@@ -219,7 +219,8 @@ export class ChatPreviewBackend {
                 Date.now()
               ),
             ];
-        } else this.snapshot.prompt = undefined;
+        } else if (params.kind === 'trustAndRemember') this.snapshot.terminalNotice = undefined;
+        else this.snapshot.prompt = undefined;
         this.publish();
         break;
       case 'setSessionChatDraft':
@@ -364,6 +365,9 @@ export class ChatPreviewBackend {
       case 'noteWrite':
         this.note = params.value ?? params.text ?? '';
         return true;
+      case 'modelFavorites':
+      case 'modelFavoriteToggle':
+        return [];
       case 'flush':
       case 'deliveries':
       case 'optionWrite':

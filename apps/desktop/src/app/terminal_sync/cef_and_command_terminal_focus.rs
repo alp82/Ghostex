@@ -8,7 +8,6 @@ use std::time::Duration;
 use gpui::Bounds;
 use gpui::Pixels;
 
-use crate::app::element::*;
 use crate::app::helpers::*;
 use crate::app::model::*;
 use crate::*;
@@ -42,6 +41,8 @@ impl GhostexGpuiApp {
             let Some(surface) = self.command_terminal_ghostty_surfaces.get(&slot_id) else {
                 continue;
             };
+            // The feedback needs the app after both closures have let go of it.
+            let mut copied = false;
             surface.drain_runtime_clipboard_requests(
                 true,
                 || {
@@ -53,10 +54,13 @@ impl GhostexGpuiApp {
                 |text| {
                     terminal_runtime_clipboard_write_standard_text(text, |item| {
                         cx.write_to_clipboard(item);
-                        gpui_play_copy_sound();
+                        copied = true;
                     });
                 },
             );
+            if copied {
+                gpui_copy_feedback(cx);
+            }
             let action_events = surface.drain_runtime_action_events();
             if !action_events.is_empty() {
                 let runtime_session_id = surface.runtime_session_id();
@@ -66,7 +70,7 @@ impl GhostexGpuiApp {
                     else {
                         return None;
                     };
-                    Some((runtime_session_id, url.clone()))
+                    Some((runtime_session_id, slot_id.session_id, url.clone()))
                 }));
                 if action_events.iter().any(|event| {
                     matches!(
@@ -83,12 +87,17 @@ impl GhostexGpuiApp {
                 );
             }
         }
-        for (runtime_session_id, url) in terminal_link_requests {
+        for (runtime_session_id, session_id, url) in terminal_link_requests {
             let working_directory = self
                 .command_terminal_runtime_osc_states
                 .get(&runtime_session_id)
                 .and_then(|state| state.pwd.clone());
-            self.open_gpui_engine_terminal_action_url(&url, working_directory.as_deref(), cx);
+            self.open_gpui_engine_terminal_action_url(
+                &url,
+                working_directory.as_deref(),
+                GpuiEngineTerminalEventTarget::Command(session_id),
+                cx,
+            );
         }
         if !self.command_terminal_runtime_osc_states.is_empty() {
             let live_runtime_session_ids = self
@@ -212,17 +221,6 @@ impl GhostexGpuiApp {
         }
     }
 
-    pub(crate) fn record_project_editor_companion_layout_bounds(
-        &mut self,
-        mode: TitlebarMode,
-        child_bounds: &[Bounds<Pixels>],
-    ) {
-        if let Some(bounds) = pane_focus_bounds_from_child_bounds(child_bounds) {
-            self.project_editor_companion_layout_bounds =
-                Some(ProjectEditorFocusBounds { mode, bounds });
-        }
-    }
-
     /// The sidebar and chat service runs in QuickJS and needs no CEF page, so launch starts it on its own while CEF stays deferred (CDXC:CefRuntime 2026-09-19).
     pub(crate) fn ensure_native_service(&mut self, cx: &mut gpui::Context<Self>) -> bool {
         if self.sidebar.is_some() {
@@ -245,7 +243,10 @@ impl GhostexGpuiApp {
                 support_logs::append(
                     support_logs::GpuiSupportLog::CrashReports,
                     "gpui.nativeService.startFailed",
-                    serde_json::json!({"error": error}),
+                    serde_json::json!({
+                        "error": error.lines().next().unwrap_or_default(),
+                        "stack": error.lines().skip(1).take(12).collect::<Vec<_>>(),
+                    }),
                 );
                 false
             }
@@ -342,15 +343,16 @@ impl GhostexGpuiApp {
         self.update_project_workarea_runtime_cef_surface_visibility(cx);
         /*
         CDXC:SessionChat 2026-08-19:
-        Session Chat is a CEF child view gated on exactly the same inputs as
-        the Browser and project-workarea surfaces: active mode, mode
-        wakefulness, companion visibility, and the tab-drag flags. Every mode
-        switch, drag, sleep, and companion mutation already re-runs this pass,
-        so the chat gate belongs here rather than being re-added by hand at
-        each call site. Sites that set `active_mode` and then only synced
-        Browser surfaces (terminal link opens through
-        `open_browser_url_from_renderer_command`, for example) used to leave
-        the Agents chat child painted over the new workarea.
+        Session Chat is a CEF child view reconciled at the same boundary as the Browser and
+        project-workarea surfaces, so every mode switch, drag and sleep re-runs one pass rather than
+        each call site re-adding the chat gate by hand. Sites that set `active_mode` and then only
+        synced Browser surfaces (terminal link opens through
+        `open_browser_url_from_renderer_command`, for example) used to leave the Agents chat child
+        painted over the new workarea.
+
+        CDXC:SessionChat 2026-09-20 WHY:
+        Its own gate no longer reads the active mode at all: the Agents column is on screen in every
+        view, so a chat page is visible exactly while its pane is rendered.
         */
         self.reconcile_agents_pane_surfaces(cx);
     }

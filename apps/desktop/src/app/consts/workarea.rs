@@ -30,27 +30,57 @@ The GPUI command pane should honor the shared native default for Sleep Focused S
 */
 pub(crate) const SLEEP_FOCUSED_SESSION_DEFAULT_KEY: &str = "alt-shift-s";
 
-pub(crate) const PROJECT_EDITOR_COMPANION_WIDTH_RATIO: f32 = 0.32;
+/// CDXC:Workarea 2026-09-20 WHY:
+/// The share of the workarea the Agents column keeps when a view is open. The 2026-09-19 screens draw
+/// the chat column and the view panel at roughly 1 : 1.25, which is this ratio; the old 0.32 default
+/// sized a one-terminal companion strip, not a whole chat.
+pub(crate) const WORKAREA_SPLIT_DEFAULT_RATIO: f32 = 0.44;
 
-pub(crate) const PROJECT_EDITOR_COMPANION_MIN_WIDTH: f32 = PANE_RESIZE_MINIMUM_WIDTH;
+/// The Agents column is a workspace pane tree, so it keeps the same minimum every workspace pane has.
+pub(crate) const WORKAREA_AGENTS_COLUMN_MIN_WIDTH: f32 = PANE_RESIZE_MINIMUM_WIDTH;
 
 /// CDXC:Workarea 2026-09-16 DECISION:
 /// User: main panes in non-agent views, including Docs and Browser, have a minimum width of 455px.
-pub(crate) const PROJECT_EDITOR_MAIN_MIN_WIDTH: f32 = 455.0;
+pub(crate) const WORKAREA_VIEW_PANEL_MIN_WIDTH: f32 = 455.0;
 
-pub(crate) const PROJECT_EDITOR_COMPANION_SPLIT_RATIO: f32 = 0.5;
+/// The picker's two card columns at their widest, matching the mockup's `minmax(0, 250px)` grid.
+pub(crate) const VIEW_PICKER_CONTENT_WIDTH: f32 = 508.0;
 
-/// CDXC:Workarea 2026-09-19 DECISION:
-/// User: a new pair of side-by-side companion sidepanes starts at 440px each, and both stay resizable.
-pub(crate) const PROJECT_EDITOR_COMPANION_COLUMN_DEFAULT_WIDTH: f32 = 440.0;
+pub(crate) const VIEW_PICKER_CARD_GAP: f32 = 8.0;
 
-/// A side-by-side sidepane is a companion sidepane too, so it keeps the shared
-/// pane minimum rather than half of it, and the pair reserves both minimums plus
-/// the divider between them.
-pub(crate) const PROJECT_EDITOR_COMPANION_COLUMN_MIN_WIDTH: f32 =
-    PROJECT_EDITOR_COMPANION_MIN_WIDTH;
-
+/// CDXC:Workarea 2026-09-20 WHY:
+/// A view panel can hold many tabs, but every awake view is a live CEF child view with its own
+/// renderer process, so the cap is what stops six tabs from meaning six pages. Three is the active
+/// tab plus the two the user most recently came from, which covers "edit, check the board, look at
+/// the diff" without holding a fourth page open; the rest keep their tab, their lifecycle record and
+/// their place in the strip and wake on click through the ordinary sleeping placeholder. The cap
+/// counts every open view, extension views included, because an extension page costs the same.
 pub(crate) const PROJECT_EDITOR_AWAKE_MODE_CAP: usize = 3;
+
+/// CDXC:Workarea 2026-09-23 DECISION:
+/// User: the views tab strip is 1px shorter than the work area header. The view panel's content, its rail and the strip's half of the header band all start and end at this height, so the panel moves up with it.
+pub(crate) const WORKAREA_VIEW_TAB_STRIP_HEIGHT: f32 = WORKAREA_HEADER_HEIGHT - 1.0;
+
+pub(crate) const WORKAREA_VIEW_TAB_HEIGHT: f32 = 26.0;
+
+pub(crate) const WORKAREA_VIEW_TAB_RADIUS: f32 = 7.0;
+
+pub(crate) const WORKAREA_VIEW_TAB_HORIZONTAL_PADDING: f32 = 9.0;
+
+pub(crate) const WORKAREA_VIEW_TAB_GAP: f32 = 2.0;
+
+pub(crate) const WORKAREA_VIEW_TAB_ICON_SIZE: f32 = 13.0;
+
+pub(crate) const WORKAREA_VIEW_TAB_CLOSE_SIZE: f32 = 16.0;
+
+/// CDXC:Workarea 2026-09-21 DECISION:
+/// User: "i want tabs to always have 1 width, no min/max", 160px for browser tabs and (ruling 6B)
+/// the same for Code, Docs and every other view tab. The strip scrolls as one row once the tabs run
+/// out of room instead of squeezing them. A pinned tab is its icon alone. This supersedes the
+/// 78..168px range the tabs used to flex between.
+pub(crate) const WORKAREA_VIEW_TAB_WIDTH: f32 = 160.0;
+
+pub(crate) const WORKAREA_VIEW_TAB_PINNED_WIDTH: f32 = 32.0;
 
 pub(crate) const PROJECT_EDITOR_AUTO_SLEEP_POLICY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
@@ -206,6 +236,8 @@ pub(crate) const KANBAN_VIEW_TAB_HIDDEN_SETTINGS_KEY: &str = "kanbanViewTabHidde
 pub(crate) const AUTOMATE_VIEW_TAB_HIDDEN_SETTINGS_KEY: &str = "automateViewTabHidden";
 
 pub(crate) const DOCS_VIEW_TAB_HIDDEN_SETTINGS_KEY: &str = "docsViewTabHidden";
+
+pub(crate) const TERMINAL_VIEW_TAB_HIDDEN_SETTINGS_KEY: &str = "terminalViewTabHidden";
 
 pub(crate) const TIPS_TITLEBAR_BUTTON_HIDDEN_SETTINGS_KEY: &str =
     "tipsAndTricksTitlebarButtonHidden";

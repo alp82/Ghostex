@@ -35,7 +35,8 @@ pub(crate) enum SidebarBridgeEventKind {
     BrowserTabFocus,
     ProjectBoardConversationResponse,
     ResourcesSnapshotRequest,
-    NativeSidebarSnapshot,
+    NativeQuickAccessSnapshot,
+    SidebarRuntimeFacts,
 }
 
 impl SidebarBridgeEventKind {
@@ -85,7 +86,8 @@ impl SidebarBridgeEventKind {
                 Self::ProjectBoardConversationResponse
             }
             SidebarBridgeFunctionId::ResourcesSnapshotRequest => Self::ResourcesSnapshotRequest,
-            SidebarBridgeFunctionId::NativeSidebarSnapshot => Self::NativeSidebarSnapshot,
+            SidebarBridgeFunctionId::NativeQuickAccessSnapshot => Self::NativeQuickAccessSnapshot,
+            SidebarBridgeFunctionId::SidebarRuntimeFacts => Self::SidebarRuntimeFacts,
         })
     }
 }
@@ -234,7 +236,10 @@ pub enum SidebarBridgeEvent {
     BrowserTabFocus(String),
     ProjectBoardConversationResponse(String),
     ResourcesSnapshotRequest(String),
-    NativeSidebarSnapshot(String),
+    NativeQuickAccessSnapshot(String),
+    /// The runtime's one-way channel of the facts the Rust sidebar still takes from outside the
+    /// store: the HUD, a project's git numbers, the two armed timers, and a reveal request.
+    SidebarRuntimeFacts(String),
     /// A first-party page tried to navigate its own main frame somewhere else; the payload is the refused URL.
     RefusedPageNavigation(String),
 }
@@ -314,7 +319,10 @@ impl SidebarBridgeEventKind {
                 SidebarBridgeEvent::ProjectBoardConversationResponse(payload)
             }
             Self::ResourcesSnapshotRequest => SidebarBridgeEvent::ResourcesSnapshotRequest(payload),
-            Self::NativeSidebarSnapshot => SidebarBridgeEvent::NativeSidebarSnapshot(payload),
+            Self::NativeQuickAccessSnapshot => {
+                SidebarBridgeEvent::NativeQuickAccessSnapshot(payload)
+            }
+            Self::SidebarRuntimeFacts => SidebarBridgeEvent::SidebarRuntimeFacts(payload),
         }
     }
 }
@@ -368,17 +376,9 @@ pub struct SidebarGxserverBootstrap {
     pub visible_session_ids: Vec<String>,
 }
 
-#[derive(Clone)]
-pub(crate) struct SessionChatActivation {
-    pub(crate) url: String,
-    pub(crate) generation: String,
-    pub(crate) bootstrap: Option<SidebarGxserverBootstrap>,
-    pub(crate) initial_snapshot: Option<serde_json::Value>,
-    pub(crate) initial_presentation: Option<serde_json::Value>,
-}
-
 pub enum BrowserPageMetadataEvent {
     HistoryRequested,
+    FindRequested,
     AddressChanged(String),
     CloseRequested,
     FaviconUrlChanged(Option<String>),
@@ -711,43 +711,6 @@ pub(crate) fn send_sidebar_gxserver_bootstrap_process_message(
         0,
         gxserver_bootstrap.as_ref(),
     );
-    frame.send_process_message(ProcessId::RENDERER, Some(&mut message));
-}
-
-pub(crate) fn send_session_chat_activation_process_message(
-    frame: &mut Frame,
-    url: &str,
-    generation: &str,
-    bootstrap: Option<SidebarGxserverBootstrap>,
-    initial_snapshot: Option<serde_json::Value>,
-    initial_presentation: Option<serde_json::Value>,
-) {
-    if !is_gpui_first_party_cef_entry_url(url, "chat.html")
-        || !trusted_gxserver_frame_matches(frame, &sidebar_page_entry_identity(url))
-    {
-        return;
-    }
-    let Some(mut message) =
-        cef::process_message_create(Some(&CefString::from(SESSION_CHAT_ACTIVATE_MESSAGE_NAME)))
-    else {
-        return;
-    };
-    let Some(arguments) = message.argument_list() else {
-        return;
-    };
-    let activation = serde_json::json!({
-        "url": url, "generation": generation, "initialSnapshot": initial_snapshot,
-        "initialPresentation": initial_presentation,
-        "bootstrap": bootstrap.map(|bootstrap| serde_json::json!({
-            "baseUrl": bootstrap.base_url, "authToken": bootstrap.auth_token,
-            "protocolVersion": bootstrap.protocol_version, "clientId": bootstrap.client_id,
-            "initialActiveProjectId": bootstrap.initial_active_project_id,
-            "focusedSessionId": bootstrap.focused_session_id,
-            "visibleSessionIds": bootstrap.visible_session_ids,
-        })),
-    });
-    arguments.set_size(1);
-    arguments.set_string(0, Some(&CefString::from(activation.to_string().as_str())));
     frame.send_process_message(ProcessId::RENDERER, Some(&mut message));
 }
 

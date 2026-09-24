@@ -125,15 +125,11 @@ pub const SESSION_CHAT_COMPOSER_NOT_READY: &str =
     "The agent's input box is not on screen, so nothing was sent.";
 const SESSION_CHAT_CLAUDE_SETTINGS_NOT_DISMISSED: &str =
     "Claude Code settings did not close to reveal the input box, so nothing was sent.";
-/*
-Esc in the kitty CSI-u encoding (CSI 27 u). Ghostex agent sessions always run
-under zmx, whose VT layer answers the kitty keyboard-protocol query, so Claude
-Code runs with the protocol enabled and a lone 0x1b byte is never delivered as
-an Esc keypress (it reads as the ambiguous start of a sequence and is dropped).
-Verified live 2026-08-01 against Claude Code v2.1.220 on a zmx pty: "\x1b" did
-not interrupt a running turn; "\x1b[27u" interrupted immediately. Crossterm-
-based TUIs (codex) parse CSI-u Esc as well, so one encoding covers both.
-*/
+/// CDXC:SessionChat 2026-09-23 WHY:
+/// Native Windows Codex reads console input records through ConPTY, which turns a bare Escape into VK_ESCAPE but does not decode CSI-u Escape. Chat Stop's CSI-u write left a live turn streaming until physical Escape interrupted it. POSIX zmx (including WSL) retains CSI-u: bare Escape was dropped by kitty-enabled Claude Code in the verified 2026-08-01 flow.
+#[cfg(windows)]
+pub const SESSION_CHAT_INTERRUPT: &str = "\u{1b}";
+#[cfg(not(windows))]
 pub const SESSION_CHAT_INTERRUPT: &str = "\u{1b}[27u";
 /*
 Shift+Tab in the kitty CSI-u encoding (CSI 9 ; 2 u — Tab with the Shift
@@ -174,6 +170,10 @@ mod input_replace;
 pub use input_replace::clear_session_chat_composer;
 pub(crate) use input_replace::handle_replace_session_chat_draft_http;
 
+#[path = "session_chat_composer_repaint.rs"]
+mod composer_repaint;
+pub(crate) use composer_repaint::claude_composer_needs_redraw;
+
 // Ask-answer keystrokes (upstream chat spec §8.4/§8.5).
 const ASK_ENTER: &str = "\r";
 const ASK_NEXT_TAB: &str = "\u{1b}[C"; // Right arrow → next question / Submit tab
@@ -183,6 +183,7 @@ const ASK_NOTES: &str = "\t"; // Tab → open notes (Codex)
 const ASK_DELETE: &str = "\u{7f}"; // DEL — clear/skip a Codex row
 const ASK_TAB: &str = "\t"; // Tab → next question tab (omp's ask dialog)
 const ASK_SPACE: &str = " "; // Space → toggle a multi-select row (omp)
+const ASK_PREVIEW_NOTES: &str = "n"; // n → notes on the highlighted row (Claude preview layout)
 
 // ---------------------------------------------------------------------------
 // Clear burst (upstream chat spec §7.2) — measured, not derived
@@ -362,16 +363,36 @@ pub fn build_claude_ask_answer_keys(
             .unwrap_or_default();
         if question.multi_select {
             for index in indices {
-                // Each digit TOGGLES a checkbox.
+                // Each digit TOGGLES a checkbox; the highlight stays on row 1.
                 groups.push(AskAnswerKeyGroup::Raw((index + 1).to_string()));
             }
             if !other.is_empty() {
-                groups.push(AskAnswerKeyGroup::Raw(type_something));
+                /*
+                CDXC:SessionChat 2026-09-23 WHY: Claude Code 2.1.280 edits the multi-select "Type something" row in place while it is highlighted: its digit only ticks the box, so text typed after it was dropped, and the Enter that followed toggled the highlighted first option off (Cheese + Peppers + a note arrived as "Peppers"). Typing on the highlighted row ticks it; Right is a caret move there, so the row below it (Next, or Submit on the last question) takes the Enter that moves on.
+                */
+                groups.push(AskAnswerKeyGroup::Raw(
+                    ASK_NEXT_ROW.repeat(question.options.len()),
+                ));
                 groups.push(AskAnswerKeyGroup::Text(other.to_string()));
+                groups.push(AskAnswerKeyGroup::Raw(ASK_NEXT_ROW.to_string()));
                 groups.push(AskAnswerKeyGroup::Raw(ASK_ENTER.to_string()));
+            } else {
+                // Multi-select never auto-advances; step to next/Submit tab.
+                groups.push(AskAnswerKeyGroup::Raw(ASK_NEXT_TAB.to_string()));
             }
-            // Multi-select never auto-advances; step to next/Submit tab.
-            groups.push(AskAnswerKeyGroup::Raw(ASK_NEXT_TAB.to_string()));
+        } else if question.preview_layout {
+            // A preview question has no "Type something" row; a digit moves the
+            // highlight and Enter commits it (with its note, when one is typed).
+            if let Some(first) = indices.first() {
+                groups.push(AskAnswerKeyGroup::Raw((first + 1).to_string()));
+                if !other.is_empty() {
+                    groups.push(AskAnswerKeyGroup::Raw(ASK_PREVIEW_NOTES.to_string()));
+                    groups.push(AskAnswerKeyGroup::Text(other.to_string()));
+                }
+                groups.push(AskAnswerKeyGroup::Raw(ASK_ENTER.to_string()));
+            } else if multi_question {
+                groups.push(AskAnswerKeyGroup::Raw(ASK_NEXT_TAB.to_string()));
+            }
         } else if !other.is_empty() {
             // Single-select carries one value, so route ANY answer containing
             // free text through "Type something" as one joined string.
@@ -394,6 +415,19 @@ pub fn build_claude_ask_answer_keys(
         groups.push(AskAnswerKeyGroup::Raw(ASK_ENTER.to_string()));
     }
     groups
+}
+
+/// A preview question answered with typed text alone: Claude draws no free-text row for it, so there is nothing the text could be typed into.
+pub(crate) fn claude_preview_question_without_option<'a>(
+    questions: &'a [SessionChatQuestion],
+    selections: &[SessionChatQuestionSelection],
+) -> Option<&'a SessionChatQuestion> {
+    questions.iter().enumerate().find_map(|(index, question)| {
+        let selection = selections.get(index);
+        let has_option = selection.is_some_and(|selection| !selection.indices.is_empty());
+        (question.preview_layout && !has_option && !selection_other(selection).is_empty())
+            .then_some(question)
+    })
 }
 
 /*
@@ -852,6 +886,14 @@ pub enum SessionChatSendStep {
         home_dir: PathBuf,
         timeout_ms: u64,
     },
+    StopClaudeBackground {
+        background: crate::accounts::claude_background::BackgroundSession,
+        home_dir: PathBuf,
+    },
+    InterruptAgentForAccountSwitch {
+        home_dir: PathBuf,
+        timeout_ms: u64,
+    },
     /// Keep the restart sequence exclusive until the selected login is running and ready.
     WaitForAccountReady {
         agent: String,
@@ -862,6 +904,17 @@ pub enum SessionChatSendStep {
     },
     ClearComposer {
         agent: String,
+    },
+    /// CDXC:SessionFork 2026-09-24 WHY:
+    /// A startup rename can wait behind a prompt or manual rename in the input queue. Recheck persisted ownership before pasting and submitting. A failed send can leave its exact rename staged, so that retry completes only the owned command's Enter without clearing or repasting; different input remains untouched.
+    GuardForkRename {
+        agent: String,
+        title: String,
+        state_db_file: PathBuf,
+        server_id: String,
+        first_user_message: Option<String>,
+        rename_requested_at: Option<String>,
+        expected_composer: Option<String>,
     },
     /// Hold the sequence until the session's screen proves `text` reached the
     /// agent's composer (CDXC:Clipboard). Settles `settle_ms`,
@@ -1545,6 +1598,39 @@ async fn run_session_chat_send_worker(
                         break;
                     }
                 }
+                SessionChatSendStep::StopClaudeBackground {
+                    background,
+                    home_dir,
+                } => {
+                    if let Err(error) =
+                        crate::accounts::claude_background::stop(&background, &home_dir, &|| {
+                            job_generation != generation.load(Ordering::SeqCst)
+                        })
+                        .await
+                    {
+                        outcome = Err(error);
+                        break;
+                    }
+                }
+                SessionChatSendStep::InterruptAgentForAccountSwitch {
+                    home_dir,
+                    timeout_ms,
+                } => {
+                    if let Err(error) = crate::accounts::exit::interrupt_until_exited(
+                        &home_dir,
+                        &project_id,
+                        &session_id,
+                        &zmx_name,
+                        &source,
+                        timeout_ms,
+                        &|| job_generation != generation.load(Ordering::SeqCst),
+                    )
+                    .await
+                    {
+                        outcome = Err(error);
+                        break;
+                    }
+                }
                 SessionChatSendStep::WaitForAgentExit {
                     home_dir,
                     timeout_ms,
@@ -1591,6 +1677,51 @@ async fn run_session_chat_send_worker(
                         outcome = Err(SessionChatSendError::new(
                             SessionChatSendFailure::ComposerNotReady,
                             SESSION_CHAT_SHELL_PROMPT_NOT_REACHED.to_string(),
+                        ));
+                        break;
+                    }
+                }
+                SessionChatSendStep::GuardForkRename {
+                    agent,
+                    title,
+                    state_db_file,
+                    server_id,
+                    first_user_message,
+                    rename_requested_at,
+                    expected_composer,
+                } => {
+                    let matches_composer = capture_session_terminal_text_vt(&zmx_name)
+                        .await
+                        .and_then(|screen| {
+                            crate::session_chat_composer::session_chat_composer_input(
+                                &agent, &screen,
+                            )
+                        })
+                        .is_some_and(|input| match expected_composer.as_deref() {
+                            Some(expected) => !input.is_empty() && input.text == expected,
+                            None => input.is_empty(),
+                        });
+                    let owned = rusqlite::Connection::open_with_flags(
+                        state_db_file,
+                        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                    )
+                    .ok()
+                    .and_then(|db| {
+                        DomainRepository::new(&db, &server_id)
+                            .get_session(&project_id, &session_id)
+                            .ok()
+                            .flatten()
+                    })
+                    .is_some_and(|session| {
+                        crate::server::fork_initial_rename_is_current(&session, &title)
+                            && read_runtime_text(&session, "firstUserMessage") == first_user_message
+                            && read_runtime_text(&session, "pendingAgentTitleRequestRequestedAt")
+                                == rename_requested_at
+                    });
+                    if !matches_composer || !owned {
+                        outcome = Err(SessionChatSendError::not_attempted(
+                            "The fork rename no longer owns the expected agent composer."
+                                .to_string(),
                         ));
                         break;
                     }
@@ -1868,8 +1999,11 @@ async fn run_session_chat_send_worker(
                             matches!(*agent, "claude" | "openclaude" | "codex" | "grok")
                         })
                         .map(str::to_string);
-                    let wait = crate::session_chat_composer::wait_for_session_chat_composer(
+                    let wait = composer_repaint::wait_for_send_composer(
+                        &project_id,
+                        &session_id,
                         &zmx_name,
+                        &source,
                         agent.as_deref(),
                         crate::session_chat_composer::SessionChatComposerWaitPolicy {
                             settle_ms,
@@ -1884,6 +2018,13 @@ async fn run_session_chat_send_worker(
                         &|| job_generation != generation.load(Ordering::SeqCst),
                     )
                     .await;
+                    let wait = match wait {
+                        Ok(wait) => wait,
+                        Err(error) => {
+                            outcome = Err(error);
+                            break;
+                        }
+                    };
                     match wait {
                         crate::session_chat_composer::SessionChatComposerWait::Ready
                         | crate::session_chat_composer::SessionChatComposerWait::Unknown => {}
@@ -2512,6 +2653,7 @@ mod tests {
             allow_custom: None,
             tool_name: None,
             recommended: None,
+            preview_layout: false,
             options: options
                 .iter()
                 .map(|label| SessionChatQuestionOption {
@@ -3252,23 +3394,25 @@ pub(crate) async fn handle_answer_session_chat_prompt_http(
                 )
             }
         };
-        if let Err(error) = execute_session_chat_send(
-            &target.project_id,
-            &target.session_id,
-            &target.zmx_name,
-            "asyncQuestion",
-            vec![SessionChatSendStep::DriveCodexAsyncQuestion(answer)],
-        )
-        .await
-        {
-            return domain_error_response(
-                endpoint_path,
-                request_id,
-                DomainStateError {
-                    code: "agentBusy",
-                    message: error.message,
-                },
-            );
+        if let Some(answer) = answer {
+            if let Err(error) = execute_session_chat_send(
+                &target.project_id,
+                &target.session_id,
+                &target.zmx_name,
+                "asyncQuestion",
+                vec![SessionChatSendStep::DriveCodexAsyncQuestion(answer)],
+            )
+            .await
+            {
+                return domain_error_response(
+                    endpoint_path,
+                    request_id,
+                    DomainStateError {
+                        code: "agentBusy",
+                        message: error.message,
+                    },
+                );
+            }
         }
         return match crate::session_chat_async_questions::dismiss(
             state,
@@ -3360,6 +3504,25 @@ pub(crate) async fn handle_answer_session_chat_prompt_http(
             Err(error) => domain_error_response(endpoint_path, request_id, error),
         };
     }
+    if kind == "trustAndRemember" {
+        let result =
+            crate::session_chat_trust_memory::answer_trust_and_remember(state, &target).await;
+        let agent = session_chat_agent_for_session(&target.session);
+        schedule_session_chat_option_redetect(
+            state,
+            &target.project_id,
+            &target.session_id,
+            agent.as_deref(),
+        );
+        return match result {
+            Ok(result) => routed_json(
+                Some(endpoint_path),
+                StatusCode::OK,
+                rpc_success(request_id, result),
+            ),
+            Err(error) => domain_error_response(endpoint_path, request_id, error),
+        };
+    }
     let steps = match kind {
         "approval" => {
             // Allow → the option's raw send byte ("1"); Deny/empty → ESC.
@@ -3440,12 +3603,64 @@ pub(crate) async fn handle_answer_session_chat_prompt_http(
                 .and_then(|question| question.tool_name.as_deref())
                 .map(crate::session_chat::normalize_session_chat_tool_name);
             match agent.as_deref() {
-                Some("claude" | "openclaude") => crate::session_chat_send::build_ask_answer_steps(
-                    &crate::session_chat_send::build_claude_ask_answer_keys(
-                        &questions,
-                        &selections,
-                    ),
-                ),
+                Some("claude" | "openclaude") => {
+                    // See CDXC:AgentScreenDetection in session_chat_question_liveness.rs.
+                    let Some(screen_text) =
+                        crate::session_chat_send::capture_session_terminal_text(&target.zmx_name)
+                            .await
+                    else {
+                        return domain_error_response(
+                            endpoint_path,
+                            request_id,
+                            DomainStateError {
+                                code: "invalidState",
+                                message: "The session's terminal could not be read, so the answer was not sent."
+                                    .to_string(),
+                            },
+                        );
+                    };
+                    let selector_on_screen =
+                        crate::session_chat_question_liveness::claude_question_selector_on_screen(
+                            &questions,
+                            &screen_text,
+                        );
+                    let preview_question_without_option = selector_on_screen
+                        .then(|| claude_preview_question_without_option(&questions, &selections))
+                        .flatten();
+                    if let Some(question) = preview_question_without_option {
+                        return domain_error_response(
+                            endpoint_path,
+                            request_id,
+                            DomainStateError {
+                                code: "invalidParams",
+                                message: format!(
+                                    "Pick an option for \"{}\": Claude only takes typed text as a note on the option you pick for this question.",
+                                    question.header.as_deref().unwrap_or(&question.question)
+                                ),
+                            },
+                        );
+                    }
+                    if selector_on_screen {
+                        crate::session_chat_send::build_ask_answer_steps(
+                            &crate::session_chat_send::build_claude_ask_answer_keys(
+                                &questions,
+                                &selections,
+                            ),
+                        )
+                    } else if !crate::session_chat_send::has_ask_answer(&selections) {
+                        Vec::new()
+                    } else {
+                        crate::session_chat_send::build_session_chat_message_steps(
+                            agent.as_deref(),
+                            &crate::session_chat_question_liveness::format_ask_answer_message(
+                                &questions,
+                                &selections,
+                            ),
+                            &[],
+                            false,
+                        )
+                    }
+                }
                 Some("codex") => crate::session_chat_send::build_ask_answer_steps(
                     &crate::session_chat_send::build_codex_ask_answer_keys(&questions, &selections),
                 ),

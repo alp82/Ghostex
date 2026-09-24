@@ -24,6 +24,7 @@ import {
   parseGpuiRemotePresentationSessionId,
 } from './helpers/remote-presentation';
 import {
+  normalizeGpuiWorkspaceRemoteSessionAttentionAcknowledge,
   normalizeGpuiWorkspaceSessionAttentionAcknowledge,
   normalizeGpuiWorkspaceTerminalEscapePressed,
 } from './helpers/terminal-lifecycle';
@@ -129,12 +130,19 @@ export interface GpuiSidebarRuntimeAttentionMethods {
   ): void;
   suppressAttentionCompletionSoundAfterTerminalEscape(sessionKey: string): void;
   getAttentionCompletionSoundSuppressedUntil(sessionKey: string): number | undefined;
-  postNativeSessionCompletionSound(sound: CompletionSoundSetting): void;
+  postNativeSessionCompletionSound(sound: CompletionSoundSetting, sessionId: string): void;
   rememberAttentionCompletionSoundEventKey(eventKey: string): boolean;
 }
 
 export const gpuiSidebarRuntimeAttentionMethods = {
   handleGpuiWorkspaceSessionAttentionAcknowledge(this: GpuiSidebarRuntime, payload: unknown): void {
+    // A remote row the store opened: the acknowledgement `focusSession`'s remote branch made, with
+    // its reason, so the minimum visible window and the machine's acknowledge call are unchanged.
+    const remoteSessionId = normalizeGpuiWorkspaceRemoteSessionAttentionAcknowledge(payload);
+    if (remoteSessionId) {
+      this.acknowledgeSessionAttention(remoteSessionId, 'sidebar-focus');
+      return;
+    }
     const acknowledgement = normalizeGpuiWorkspaceSessionAttentionAcknowledge(payload);
     if (!acknowledgement) {
       return;
@@ -694,7 +702,7 @@ export const gpuiSidebarRuntimeAttentionMethods = {
         sound: settings.completionSound,
         type: 'playCompletionSound',
       });
-      this.postNativeSessionCompletionSound(settings.completionSound);
+      this.postNativeSessionCompletionSound(settings.completionSound, sessionKey);
     }
   },
 
@@ -721,10 +729,15 @@ export const gpuiSidebarRuntimeAttentionMethods = {
   GPUI has no webview sound assets (the SidebarApp player's sound-URL global
   is never populated), so audible playback is Rust-owned from the bundled
   sound files — the same native-playback ownership macOS uses via its
-  playSound host message. The SidebarApp message above still drives the card
-  flash.
+  playSound host message.
+
+  CDXC:Sessions 2026-09-21 WHY:
+  `sessionId` carries the sidebar card's completion FLASH, which used to reach Rust the long way
+  round: the SidebarApp `playCompletionSound` message, read by the deleted sidebar page, which
+  posted a `flash` payload on the old projection's snapshot bridge. They are one event, so they go
+  on one message, and M4d part 2 can delete that bridge.
   */
-  postNativeSessionCompletionSound(this: GpuiSidebarRuntime, sound: CompletionSoundSetting): void {
+  postNativeSessionCompletionSound(this: GpuiSidebarRuntime, sound: CompletionSoundSetting, sessionId: string): void {
     const postCompletionSound = window.ghostexGpui?.postSessionCompletionSound;
     if (typeof postCompletionSound !== 'function') {
       return;
@@ -734,6 +747,7 @@ export const gpuiSidebarRuntimeAttentionMethods = {
         version: GPUI_SIDEBAR_SESSION_COMPLETION_SOUND_MESSAGE_VERSION,
         type: GPUI_SIDEBAR_SESSION_COMPLETION_SOUND_MESSAGE_TYPE,
         sound,
+        sessionId,
       })
     );
   },

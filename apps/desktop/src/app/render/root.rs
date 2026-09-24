@@ -182,6 +182,8 @@ impl Render for GhostexGpuiApp {
         #[cfg(target_os = "macos")]
         self.sync_terminal_model_picker_keyboard_scope();
         self.main_window_bounds = window.bounds();
+        self.main_window_handle = Some(gpui::Window::window_handle(window));
+        self.sync_main_window_glass(window, cx);
         self.main_window_display_id = window.display(cx).map(|display| display.id());
         #[cfg(target_os = "windows")]
         if self.windows_first_run_setup_state != GpuiWindowsFirstRunSetupState::Ready {
@@ -207,6 +209,7 @@ impl Render for GhostexGpuiApp {
             self.sidebar_width,
             current_sidebar_max_width(window, self.active_mode),
         );
+        self.sample_panel_motion(window, cx);
         self.refresh_gpui_sidebar_browser_tabs_if_changed(cx);
         // The displayed set crosses the bridge to the sidebar runtime; while the selection is still moving it would do so once per tab step. The settle repaints, so the set is reported for the tab the user landed on.
         if !self.gx_store_selection_is_settling() {
@@ -219,19 +222,25 @@ impl Render for GhostexGpuiApp {
         self.sync_terminal_search_inputs(window, cx);
         self.sync_composited_terminal_keyboard_owner(window, cx);
         self.drain_pending_keyboard_handoff(window, cx);
-        self.sync_session_chat_pane_focus(window, cx, false);
+        self.sync_session_chat_pane_focus(window, cx);
         self.refresh_zmx_persistence_focused_terminal_if_changed(cx);
         let sidebar_chrome_visible = gpui_sidebar_chrome_visible(self.sidebar_collapsed);
+        // Collapsing or expanding, the sidebar and its divider slide at their full width inside a
+        // clip that tweens (panel_motion.rs).
+        let sidebar_frame = self.panel_motion.sidebar.frame();
         let titlebar_popup_dismissal_active =
             self.titlebar_popup_menu.is_some() || self.titlebar_extension_popup.is_some();
 
         let content = v_flex()
+            .on_action(cx.listener(|this, action: &crate::app::terminal_sync::gpui_engine_terminal_attachment::PickTerminalAttachmentKind, _, cx| {
+                this.request_gpui_engine_terminal_attachment_paths_for_kind(action.target.clone(), action.runtime_session_id, Some(action.directories_only), cx);
+            }))
             .on_action(cx.listener(|this, action: &crate::app::native_sidebar::actions::NativeSidebarAction, window, cx| {
                 this.handle_native_sidebar_action(action, window, cx);
             }))
             .relative()
             .size_full()
-            .bg(workspace_background_color())
+            .bg(window_shell_background())
             .when(
                 self.titlebar_popup_menu.as_ref().is_some_and(|state| {
                     matches!(state.kind, GpuiTitlebarPopupKind::AccountUsage(_))
@@ -320,7 +329,7 @@ impl Render for GhostexGpuiApp {
                     || self
                         .browser_split_drag
                         .is_some_and(|drag| drag.axis == WorkspaceSplitAxis::Horizontal)
-                    || self.project_editor_companion_drag.is_some()
+                    || self.workarea_split_drag.is_some()
                     || self
                         .workspace_split_drag
                         .is_some_and(|drag| drag.axis == WorkspaceSplitAxis::Horizontal),
@@ -365,6 +374,23 @@ impl Render for GhostexGpuiApp {
                     cx.stop_propagation();
                     return;
                 }
+                if this.open_view_from_view_picker_keystroke(&event.keystroke, window, cx) {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    return;
+                }
+                /*
+                CDXC:FocusRouting 2026-09-22 WHY:
+                A native chat pane has no child NSView, so a click on pane chrome or a blurred window leaves GPUI focus outside the chat while shell focus still names the chat pane.
+                Route the key to that chat's background typing so it lands in the composer, the way the composited terminal gets its committed text below. The chat's own fields already see keys through the pane's capture listener and are skipped.
+                */
+                if let ShellKeyboardOwner::ChatComposer(session_id) = this.shell_keyboard_owner()
+                    && let Some(chat) = this.native_chat_views.get(&session_id).cloned()
+                    && !chat.read(cx).chat_text_field_focused(window, cx)
+                {
+                    chat.update(cx, |chat, cx| chat.composer_key_down(event, window, cx));
+                    return;
+                }
                 if this.focused_gpui_engine_terminal_view().is_none() {
                     return;
                 }
@@ -379,6 +405,14 @@ impl Render for GhostexGpuiApp {
             .on_action(cx.listener(|this, _: &OpenBrowserHistory, window, cx| {
                 this.show_browser_history_popup(this.browser_tabs.focused_pane, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &ReloadFocusedBrowser, _window, cx| {
+                // Propagating lets the same chord reach its configured hotkey (primary+R renames a session) when the keyboard is not in a Browser pane.
+                let ShellFocusTarget::BrowserPane(pane_id) = this.shell_focus else {
+                    cx.propagate();
+                    return;
+                };
+                this.perform_browser_toolbar_action(pane_id, BrowserToolbarAction::Reload, cx);
+            }))
             .on_action(cx.listener(|this, _: &OpenCommandPane, window, cx| {
                 this.open_command_pane_from_keyboard(window, cx);
             }))
@@ -390,22 +424,9 @@ impl Render for GhostexGpuiApp {
                     ) {
                         return;
                     }
-                    if action.action_id == "openModelPicker" {
-                        if !this.request_focused_session_model_picker(cx) {
-                            cx.propagate();
-                        }
-                        return;
+                    if !this.run_configured_ghostex_hotkey(&action.action_id, window, cx) {
+                        cx.propagate();
                     }
-                    this.handle_gpui_app_modal_sidebar_command(
-                        serde_json::json!({
-                            "message": {
-                                "actionId": action.action_id,
-                                "type": "runGhostexHotkeyAction",
-                            },
-                        }),
-                        window,
-                        cx,
-                    );
                 }),
             )
             .on_action(
@@ -544,11 +565,9 @@ impl Render for GhostexGpuiApp {
                     this.toggle_gpui_sidebar_collapsed(cx);
                 }),
             )
-            .on_action(
-                cx.listener(|this, _: &ToggleProjectEditorCompanion, window, cx| {
-                    this.toggle_project_editor_companion_from_hotkey(window, cx);
-                }),
-            )
+            .on_action(cx.listener(|this, _: &ToggleViewPanel, window, cx| {
+                this.toggle_view_panel(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &SleepFocusedSession, _window, cx| {
                 if this.propagate_source_workarea_cef_hotkey_passthrough(cx) {
                     return;
@@ -678,6 +697,70 @@ impl Render for GhostexGpuiApp {
                 }),
             )
             .on_action(
+                cx.listener(|this, action: &OpenGpuiViewTab, window, cx| {
+                    if let Some(mode) = this.view_tab_mode_for_index(action.mode_index) {
+                        this.open_view_tab(mode, window, cx);
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &OpenNewBrowserTabFromViewMenu, window, cx| {
+                    this.open_new_browser_tab_from_view_menu(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &ToggleGpuiViewStripTabPinned, _window, cx| {
+                    let key = match action.browser_tab_id {
+                        Some(tab_id) => Some(ViewStripTabKey::Browser(BrowserTabId(tab_id))),
+                        None => this
+                            .view_tab_mode_for_index(action.mode_index)
+                            .map(ViewStripTabKey::View),
+                    };
+                    if let Some(key) = key {
+                        this.toggle_view_strip_tab_pinned(key, cx);
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &CloseGpuiViewTab, window, cx| {
+                    if let Some(mode) = this.view_tab_mode_for_index(action.mode_index) {
+                        this.close_view_tab(mode, window, cx);
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &PopOutGpuiViewTab, _window, cx| {
+                    if let Some(mode) = this.view_tab_mode_for_index(action.mode_index) {
+                        this.pop_out_view(mode, cx);
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &ToggleGpuiViewPanelMaximized, _window, cx| {
+                    this.toggle_view_panel_maximized(cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &ToggleGpuiViewProjectScope, _window, cx| {
+                    this.toggle_view_project_scope(action.mode_index, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &ToggleGpuiViewSpaceScope, _window, cx| {
+                    this.toggle_view_space_scope(action.mode_index, &action.space_key, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &ShowGpuiHiddenViewHere, window, cx| {
+                    this.show_hidden_view_here(action.mode_index, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &OpenGpuiViewScopeSettings, window, cx| {
+                    this.open_view_scope_settings(action.mode_index, window, cx);
+                }),
+            )
+            .on_action(
                 cx.listener(|this, action: &ReloadGpuiTitlebarView, window, cx| {
                     if let Some(mode) = this.titlebar_view_mode_for_index(action.mode_index) {
                         this.reload_titlebar_view(mode, window, cx);
@@ -710,8 +793,7 @@ impl Render for GhostexGpuiApp {
                     else {
                         return;
                     };
-                    cx.write_to_clipboard(ClipboardItem::new_string(branch));
-                    gpui_play_copy_sound();
+                    gpui_copy_to_clipboard(ClipboardItem::new_string(branch), cx);
                 }),
             )
             .on_action(
@@ -840,6 +922,9 @@ impl Render for GhostexGpuiApp {
                     this.merge_all_agents_tabs_for_pane(WorkspacePaneId(action.pane_id), cx);
                 }),
             )
+            .on_action(cx.listener(|this, action: &CloseAgentsPane, _window, cx| {
+                this.close_agents_pane(WorkspacePaneId(action.pane_id), cx);
+            }))
             .on_action(
                 cx.listener(|this, action: &ToggleFocusModeForPane, _window, cx| {
                     this.toggle_agents_focus_mode_for_pane(WorkspacePaneId(action.pane_id), cx);
@@ -983,6 +1068,13 @@ impl Render for GhostexGpuiApp {
                     );
                 }),
             )
+            .on_action(cx.listener(|this, action: &SleepBrowserTabInPane, _window, cx| {
+                this.sleep_browser_tab_from_action(
+                    BrowserPaneId(action.pane_id),
+                    BrowserTabId(action.tab_id),
+                    cx,
+                );
+            }))
             .on_action(cx.listener(|this, _: &RunBrowserFeedbackTool, window, cx| {
                 this.run_browser_feedback_tool_from_toolbar(
                     this.browser_tabs.focused_pane,
@@ -1100,8 +1192,7 @@ impl Render for GhostexGpuiApp {
                 this.handle_workspace_split_resize_drag_move(event, window, cx);
                 this.handle_command_split_resize_drag_move(event, window, cx);
                 this.handle_browser_split_resize_drag_move(event, window, cx);
-                this.handle_project_editor_companion_resize_drag_move(event, window, cx);
-                this.handle_project_editor_companion_split_resize_drag_move(event, window, cx);
+                this.handle_workarea_split_resize_drag_move(event, window, cx);
             }))
             .on_mouse_up(
                 MouseButton::Left,
@@ -1111,63 +1202,116 @@ impl Render for GhostexGpuiApp {
                     this.handle_workspace_split_resize_mouse_up(event, window, cx);
                     this.handle_command_split_resize_mouse_up(event, window, cx);
                     this.handle_browser_split_resize_mouse_up(event, window, cx);
-                    this.handle_project_editor_companion_resize_mouse_up(event, window, cx);
-                    this.handle_project_editor_companion_split_resize_mouse_up(event, window, cx);
+                    this.handle_workarea_split_resize_mouse_up(event, window, cx);
                     this.finish_workspace_tab_drag(cx);
                     this.finish_command_tab_drag(cx);
                     this.finish_browser_tab_drag(cx);
+                    this.cancel_view_tab_drag(cx);
                 }),
             )
-            .child(self.render_titlebar(window, cx))
             .child(
                 /*
-                Every top-row pane draws its own 1px frame and the titlebar
-                draws a 1px bottom border, so stacked they showed a 2px line
-                above the workspace. Pull the body row up by that 1px so a
-                pane's top edge paints over the titlebar hairline: neutral
-                panes leave one line, and a focused or attention pane shows
-                its outline color on the top edge too. flex_1 absorbs the
-                negative margin, so the row is 1px taller rather than leaving
-                a gap at the bottom. The sidebar column and its divider draw
-                the hairline themselves so it stays continuous across the
-                window.
+                CDXC:Titlebar 2026-09-20 WHY:
+                The body row used to start one pixel above its own origin so a pane's top edge
+                could paint over the titlebar's bottom hairline, and the sidebar column drew that
+                hairline itself to keep it continuous. With the titlebar row deleted there is no
+                hairline above the body, so both are gone: the row starts at the window's top edge
+                and nothing is drawn across it.
                 */
                 h_flex()
                     .flex_1()
                     .w_full()
                     .min_h_0()
-                    .mt(px(-1.0))
                     .items_start()
+                    .relative()
                     .overflow_hidden()
-                    .bg(sidebar_divider_background_color())
-                    .when(sidebar_chrome_visible, |this| {
+                    .bg(window_body_row_background())
+                    .when(sidebar_frame.animating, |this| {
+                        this.child(
+                            crate::app::panel_motion::clip_panel_horizontally(
+                                sidebar_frame,
+                                false,
+                                h_flex()
+                                    .h_full()
+                                    .items_stretch()
+                                    .child(
+                                        // The same id as at rest, so the sidebar's element state
+                                        // carries through the slide.
+                                        div()
+                                            .id("ghostex-gpui-docked-sidebar")
+                                            .w(px(self.sidebar_width))
+                                            .h_full()
+                                            .child(self.render_docked_native_sidebar(cx)),
+                                    )
+                                    .child(self.render_sidebar_resize_divider(cx))
+                                    .into_any_element(),
+                            ),
+                        )
+                    })
+                    .when(sidebar_chrome_visible && !sidebar_frame.animating, |this| {
                         this.child(
                             /*
                             CDXC:Sidebar 2026-06-26-10:04:
                             Sidebar collapse is real layout ownership in GPUI: the sidebar CEF child and divider are removed as body-row siblings instead of being covered, overlapped, or resized to zero. Keep `sidebar_width` untouched so expand restores the previous user width.
                             */
                             div()
+                                .id("ghostex-gpui-docked-sidebar")
                                 .w(px(self.sidebar_width))
                                 .h_full()
-                                .border_t_1()
-                                .border_color(titlebar_button_border_color())
-                                .child(self.render_native_sidebar(window, cx)),
+                                .on_mouse_move(cx.listener(
+                                    |this, event: &MouseMoveEvent, _window, _cx| {
+                                        this.handle_floating_reveal_sidebar_edge_move(
+                                            event.position.x.as_f32(),
+                                        );
+                                    },
+                                ))
+                                .on_hover(cx.listener(|this, hovered: &bool, _window, _cx| {
+                                    #[cfg(not(target_os = "macos"))]
+                                    {
+                                        this.floating_reveal.sidebar_hovered = *hovered;
+                                    }
+                                    if !*hovered && !this.sidebar_collapsed {
+                                        this.disarm_floating_reveal_edge();
+                                    }
+                                }))
+                                .child(self.render_docked_native_sidebar(cx)),
                         )
                     })
-                    .when(sidebar_chrome_visible, |this| {
+                    .when(sidebar_chrome_visible && !sidebar_frame.animating, |this| {
                         this.child(self.render_sidebar_resize_divider(cx))
                     })
                     .child(
+                        /*
+                        CDXC:Titlebar 2026-09-20 WHY:
+                        The header floats (the decision is on it, in
+                        render/workarea_header/shell.rs), so the workspace owns the whole column
+                        height and starts at the window's top edge. The header is the column's last
+                        child because paint order is what puts it over the content it floats above;
+                        every column that cannot let its content pass under it starts one header
+                        height down instead (`workarea_header_column_top_inset`).
+                        */
                         v_flex()
                             .id("ghostex-gpui-workspace-column")
+                            .relative()
                             .flex_1()
                             .h_full()
                             .min_w_0()
                             .min_h_0()
                             .overflow_hidden()
-                            .bg(workspace_background_color())
-                            .child(self.render_workspace_with_command_pane(window, cx)),
-                    ),
+                            .bg(workspace_column_background())
+                            .child(self.render_workspace_with_command_pane(window, cx))
+                            .child(self.render_workarea_header(window, cx)),
+                    )
+                    // Collapsed, the reveal's hot zone lies over the workarea's left edge (the
+                    // decision is on `floating_reveal_edge_want`); last child so it paints above.
+                    // macOS keeps it as a native view instead, above the CEF pages too.
+                    .map(|this| {
+                        #[cfg(not(target_os = "macos"))]
+                        if self.floating_reveal_edge_strip_visible() {
+                            return this.child(self.render_floating_reveal_edge_strip(cx));
+                        }
+                        this
+                    }),
             )
             .child(self.render_gpui_status_pet_presentation(cx))
             /*
@@ -1180,6 +1324,9 @@ impl Render for GhostexGpuiApp {
             above the workspace.
             */
             .children(gpui_component::Root::render_dialog_layer(window, cx))
+            // Last child, so a resize drag in progress sees each mouse move
+            // before the panes it is dragged across do.
+            .child(self.render_resize_drag_pointer_tracker(cx))
             .into_any_element();
 
         #[cfg(target_os = "linux")]

@@ -279,73 +279,11 @@ impl GhostexGpuiApp {
         self.set_workspace_drop_feedback(None, cx);
     }
 
-    pub(crate) fn begin_pending_workspace_tab_click(
-        &mut self,
-        pane_id: WorkspacePaneId,
-        session_id: TerminalSessionId,
-    ) {
-        self.pending_workspace_tab_click = Some(WorkspacePendingTabClick {
-            pane_id,
-            session_id,
-        });
-    }
-
-    pub(crate) fn cancel_pending_workspace_tab_click(&mut self) {
-        self.pending_workspace_tab_click = None;
-    }
-
-    pub(crate) fn cancel_pending_workspace_tab_click_for_tab(
-        &mut self,
-        pane_id: WorkspacePaneId,
-        session_id: TerminalSessionId,
-    ) {
-        let target = WorkspacePendingTabClick {
-            pane_id,
-            session_id,
-        };
-        self.pending_workspace_tab_click = workspace_tab_pending_click_after_mouse_up_out(
-            self.pending_workspace_tab_click,
-            target,
-        );
-    }
-
-    pub(crate) fn handle_workspace_tab_left_mouse_up(
-        &mut self,
-        pane_id: WorkspacePaneId,
-        session_id: TerminalSessionId,
-        click_count: usize,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let target = WorkspacePendingTabClick {
-            pane_id,
-            session_id,
-        };
-        let pending_click = self.pending_workspace_tab_click.take();
-        if workspace_tab_left_mouse_up_focuses(
-            click_count,
-            pending_click,
-            target,
-            self.workspace_tab_drag_active,
-        ) {
-            self.double_click_agents_workspace_tab(pane_id, session_id, cx);
-            return;
-        }
-        if workspace_tab_left_mouse_up_selects(
-            pending_click,
-            target,
-            self.workspace_tab_drag_active,
-        ) {
-            self.select_agents_tab(pane_id, session_id, cx);
-            cx.notify();
-        }
-    }
-
     pub(crate) fn begin_workspace_tab_drag(&mut self, cx: &mut gpui::Context<Self>) {
         /*
         CDXC:Workarea 2026-07-03:
         Workspace tab drag begin/finish only flips the runtime drag flag and lets the existing gated sync passes do the hiding: CEF child views re-evaluate through the shared allows-cef-child-views gate, and mounted Agents/command terminals hide-and-park on the next render-driven host sync. No native view is created, destroyed, or overlaid here; drop and cancel restore through the same parked-owner reattach machinery.
         */
-        self.pending_workspace_tab_click = None;
         if self.workspace_tab_drag_active {
             return;
         }
@@ -356,7 +294,6 @@ impl GhostexGpuiApp {
     }
 
     pub(crate) fn finish_workspace_tab_drag_state(&mut self, cx: &mut gpui::Context<Self>) -> bool {
-        self.pending_workspace_tab_click = None;
         let drag_was_active = self.workspace_tab_drag_active;
         let changed = drag_was_active || self.workspace_drop_feedback.is_some();
         if !changed {
@@ -377,54 +314,6 @@ impl GhostexGpuiApp {
         }
     }
 
-    pub(crate) fn update_workspace_tab_drag_feedback(
-        &mut self,
-        event: &gpui::DragMoveEvent<DraggedWorkspaceTab>,
-        pane_id: WorkspacePaneId,
-        tab_index: usize,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let insertion_index =
-            workspace_tab_insertion_index(event.bounds, event.event.position, tab_index);
-        let feedback = WorkspaceDropFeedback {
-            pane_id,
-            target: WorkspaceDropTarget::TabStrip(insertion_index),
-        };
-
-        if event.drag(cx).source_pane_id != pane_id || !event.bounds.contains(&event.event.position)
-        {
-            if self.workspace_drop_feedback == Some(feedback) {
-                self.clear_workspace_drop_feedback(cx);
-            }
-            return;
-        }
-
-        self.set_workspace_drop_feedback(Some(feedback), cx);
-    }
-
-    pub(crate) fn update_workspace_tab_end_drag_feedback(
-        &mut self,
-        event: &gpui::DragMoveEvent<DraggedWorkspaceTab>,
-        pane_id: WorkspacePaneId,
-        insertion_index: usize,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let feedback = WorkspaceDropFeedback {
-            pane_id,
-            target: WorkspaceDropTarget::TabStrip(insertion_index),
-        };
-
-        if event.drag(cx).source_pane_id != pane_id || !event.bounds.contains(&event.event.position)
-        {
-            if self.workspace_drop_feedback == Some(feedback) {
-                self.clear_workspace_drop_feedback(cx);
-            }
-            return;
-        }
-
-        self.set_workspace_drop_feedback(Some(feedback), cx);
-    }
-
     pub(crate) fn update_workspace_pane_drag_feedback(
         &mut self,
         event: &gpui::DragMoveEvent<DraggedWorkspaceTab>,
@@ -443,14 +332,8 @@ impl GhostexGpuiApp {
 
         let dragged = event.drag(cx);
         let zone = workspace_pane_body_drop_zone(event.bounds, event.event.position);
-        if self
-            .agents_workspace
-            .workspace_tab_edge_drop_is_single_tab_own_pane_noop(
-                dragged.source_pane_id,
-                pane_id,
-                zone,
-            )
-        {
+        // A pane dragged by its grip lands on another pane only (session_pane_placement.rs).
+        if dragged.source_pane_id == pane_id {
             if self.workspace_drop_feedback.is_some_and(|feedback| {
                 feedback.pane_id == pane_id
                     && matches!(feedback.target, WorkspaceDropTarget::PaneBody(_))
@@ -497,106 +380,6 @@ impl GhostexGpuiApp {
         );
     }
 
-    pub(crate) fn update_command_tab_over_workspace_tab_drag_feedback(
-        &mut self,
-        event: &gpui::DragMoveEvent<DraggedCommandTab>,
-        pane_id: WorkspacePaneId,
-        tab_index: usize,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let insertion_index =
-            workspace_tab_insertion_index(event.bounds, event.event.position, tab_index);
-        self.update_command_tab_over_workspace_tab_strip_feedback(
-            event,
-            pane_id,
-            insertion_index,
-            cx,
-        );
-    }
-
-    pub(crate) fn update_command_tab_over_workspace_tab_end_drag_feedback(
-        &mut self,
-        event: &gpui::DragMoveEvent<DraggedCommandTab>,
-        pane_id: WorkspacePaneId,
-        insertion_index: usize,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.update_command_tab_over_workspace_tab_strip_feedback(
-            event,
-            pane_id,
-            insertion_index,
-            cx,
-        );
-    }
-
-    pub(crate) fn update_command_tab_over_workspace_tab_strip_feedback(
-        &mut self,
-        event: &gpui::DragMoveEvent<DraggedCommandTab>,
-        pane_id: WorkspacePaneId,
-        insertion_index: usize,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.begin_command_tab_drag(cx);
-
-        let feedback = WorkspaceDropFeedback {
-            pane_id,
-            target: WorkspaceDropTarget::TabStrip(insertion_index),
-        };
-        let dragged = event.drag(cx);
-        let source_has_session = self
-            .command_pane
-            .find_leaf(dragged.source_group_id)
-            .is_some_and(|leaf| leaf.tab_group.has_session(dragged.session_id));
-
-        if !source_has_session || !event.bounds.contains(&event.event.position) {
-            if self.workspace_drop_feedback == Some(feedback) {
-                self.clear_workspace_drop_feedback(cx);
-            }
-            return;
-        }
-
-        self.set_workspace_drop_feedback(Some(feedback), cx);
-    }
-
-    pub(crate) fn handle_workspace_tab_strip_drop(
-        &mut self,
-        pane_id: WorkspacePaneId,
-        default_insertion_index: usize,
-        dragged: &DraggedWorkspaceTab,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        window.prevent_default();
-        cx.stop_propagation();
-
-        let insertion_index = match self.workspace_drop_feedback {
-            Some(WorkspaceDropFeedback {
-                pane_id: feedback_pane_id,
-                target: WorkspaceDropTarget::TabStrip(insertion_index),
-            }) if feedback_pane_id == pane_id => insertion_index,
-            _ => default_insertion_index,
-        };
-        self.finish_workspace_tab_drag_state(cx);
-
-        if dragged.source_pane_id == pane_id
-            && self.agents_workspace.reorder_tab_within_pane(
-                pane_id,
-                dragged.session_id,
-                insertion_index,
-            )
-        {
-            self.focus_shell_target(
-                ShellFocusTarget::AgentsPane(self.agents_workspace.focused_pane),
-                cx,
-            );
-            self.scroll_workspace_pane_active_tab(pane_id);
-            self.persist_shell_layout_state();
-            cx.notify();
-        } else {
-            cx.notify();
-        }
-    }
-
     pub(crate) fn handle_workspace_pane_body_drop(
         &mut self,
         target_pane_id: WorkspacePaneId,
@@ -615,20 +398,10 @@ impl GhostexGpuiApp {
             _ => None,
         };
         self.finish_workspace_tab_drag_state(cx);
-        let zone = if let Some(zone) = feedback_zone {
-            zone
-        } else {
-            if self
-                .agents_workspace
-                .workspace_tab_body_drop_is_single_tab_own_pane_noop(
-                    dragged.source_pane_id,
-                    target_pane_id,
-                )
-            {
-                cx.notify();
-                return;
-            }
-            WorkspaceDropZone::Center
+        // No zone is shown over the dragged pane itself, so a release there moves nothing.
+        let Some(zone) = feedback_zone else {
+            cx.notify();
+            return;
         };
 
         let changed = match zone {
@@ -649,6 +422,7 @@ impl GhostexGpuiApp {
         };
 
         if changed {
+            self.close_pane_left_by_dragged_session(dragged.source_pane_id, target_pane_id);
             /*
             A pane-body drop makes the dragged tab active in the destination,
             so complete the interaction through the same activation path as a
@@ -718,16 +492,6 @@ impl GhostexGpuiApp {
                     source_session_id,
                     target_pane_id,
                     zone,
-                )
-            }
-            CommandToAgentsDropPlacement::TabStrip(insertion_index) => {
-                transfer_command_placeholder_to_workspace_tab_strip(
-                    &mut self.agents_workspace,
-                    &mut self.command_pane,
-                    source_group_id,
-                    source_session_id,
-                    target_pane_id,
-                    insertion_index,
                 )
             }
         };
@@ -897,54 +661,6 @@ impl GhostexGpuiApp {
         self.update_active_mode_cef_child_visibility(cx);
         self.scroll_workspace_pane_active_tab(inserted_pane_id);
         self.scroll_workspace_pane_active_tab(self.agents_workspace.focused_pane);
-        self.schedule_project_editor_auto_sleep_for_inactive_modes(cx);
-        self.persist_shell_layout_state();
-        self.sync_gpui_keep_awake_automation_from_current_settings(cx);
-        cx.notify();
-    }
-
-    pub(crate) fn handle_command_tab_workspace_tab_strip_drop(
-        &mut self,
-        target_pane_id: WorkspacePaneId,
-        default_insertion_index: usize,
-        dragged: &DraggedCommandTab,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        /*
-        CDXC:Workarea 2026-06-22-16:04:
-        Dropping a command tab on an Agents tab strip uses the visible tab boundary/end marker as the exact insertion point, switches to Agents, and focuses the target Agents pane so the selected placeholder is visible. This path must not reorder existing Agents tabs for command drags and must not transfer command text, stdout/stderr, terminal content, real process state, libghostty state, Source/Kanban/Automate/Manage surfaces, overlays, hidden hit regions, or native/root hit-test routing.
-        */
-        window.prevent_default();
-        cx.stop_propagation();
-
-        let insertion_index = match self.workspace_drop_feedback {
-            Some(WorkspaceDropFeedback {
-                pane_id,
-                target: WorkspaceDropTarget::TabStrip(insertion_index),
-            }) if pane_id == target_pane_id => insertion_index,
-            _ => default_insertion_index,
-        };
-        self.workspace_drop_feedback = None;
-        self.finish_command_tab_drag_state(cx);
-
-        let Some((inserted_pane_id, _inserted_session_id)) = self
-            .transfer_live_command_tab_to_agents(
-                dragged.source_group_id,
-                dragged.session_id,
-                target_pane_id,
-                CommandToAgentsDropPlacement::TabStrip(insertion_index),
-                cx,
-            )
-        else {
-            cx.notify();
-            return;
-        };
-
-        self.change_active_mode_with_pane_state(TitlebarMode::Agents, cx);
-        self.focus_shell_target(ShellFocusTarget::AgentsPane(inserted_pane_id), cx);
-        self.update_active_mode_cef_child_visibility(cx);
-        self.scroll_workspace_pane_active_tab(inserted_pane_id);
         self.schedule_project_editor_auto_sleep_for_inactive_modes(cx);
         self.persist_shell_layout_state();
         self.sync_gpui_keep_awake_automation_from_current_settings(cx);
@@ -1169,7 +885,12 @@ impl GhostexGpuiApp {
         }
 
         let dragged = event.drag(cx);
-        let mut zone = command_pane_body_drop_zone(event.bounds, event.event.position);
+        let dock = self
+            .command_pane
+            .dock_for_group(group_id)
+            .unwrap_or(CommandPaneDock::Panel);
+        let mut zone =
+            command_pane_body_drop_zone_for_dock(dock, event.bounds, event.event.position);
         if dragged.source_group_id == group_id
             && !matches!(zone, WorkspaceDropZone::Center)
             && self
@@ -1206,7 +927,11 @@ impl GhostexGpuiApp {
             return;
         }
 
-        let zone = command_pane_body_drop_zone(event.bounds, event.event.position);
+        let dock = self
+            .command_pane
+            .dock_for_group(group_id)
+            .unwrap_or(CommandPaneDock::Panel);
+        let zone = command_pane_body_drop_zone_for_dock(dock, event.bounds, event.event.position);
         self.set_command_drop_feedback(
             Some(CommandPaneDropFeedback {
                 group_id,
@@ -1380,18 +1105,23 @@ impl GhostexGpuiApp {
         };
         self.finish_command_tab_drag_state(cx);
 
-        let changed = match zone {
-            WorkspaceDropZone::Left | WorkspaceDropZone::Right => {
-                self.command_pane.split_tab_to_group(
-                    dragged.source_group_id,
-                    target_group_id,
-                    dragged.session_id,
-                    zone,
-                )
-            }
-            WorkspaceDropZone::Center | WorkspaceDropZone::Top | WorkspaceDropZone::Bottom => self
-                .command_pane
-                .group_tab_into_group(dragged.source_group_id, target_group_id, dragged.session_id),
+        let dock = self
+            .command_pane
+            .dock_for_group(target_group_id)
+            .unwrap_or(CommandPaneDock::Panel);
+        let changed = if command_pane_drop_zone_splits(dock, zone) {
+            self.command_pane.split_tab_to_group(
+                dragged.source_group_id,
+                target_group_id,
+                dragged.session_id,
+                zone,
+            )
+        } else {
+            self.command_pane.group_tab_into_group(
+                dragged.source_group_id,
+                target_group_id,
+                dragged.session_id,
+            )
         };
 
         if changed {
@@ -2163,8 +1893,14 @@ impl GhostexGpuiApp {
         owns shell focus. Minimize reuses the titlebar chevron collapse path so
         sessions, height, and previous non-command focus stay intact.
         */
-        match command_pane_palette_open_decision(self.command_pane.is_expanded(), self.shell_focus)
-        {
+        // Typing in the Terminal view is command focus too, but not the Commands pane's: F12
+        // must open or focus the pane then, not minimize it.
+        let command_pane_focused = self.shell_focus == ShellFocusTarget::CommandPane
+            && self.command_pane.focused_group_in_panel();
+        match command_pane_palette_open_decision(
+            self.command_pane.is_expanded(),
+            command_pane_focused,
+        ) {
             CommandPanePaletteOpenDecision::Minimize => {
                 self.handle_command_pane_control_action(
                     CommandPaneControlAction::ToggleExpanded,
@@ -2333,7 +2069,10 @@ impl GhostexGpuiApp {
         CDXC:CommandPane 2026-06-25-13:58:
         Native accepts double-click on empty pane-titlebar chrome after real tabs and controls decline the hit. GPUI command tab-strip backgrounds use this shared handler so expanded command chrome creates a New Terminal without affecting child tab/control clicks. A single click on collapsed empty chrome expands and focuses the existing active command tab.
         */
-        if !self.command_pane.is_expanded() {
+        let in_panel = group_id.is_none_or(|group_id| {
+            self.command_pane.dock_for_group(group_id) != Some(CommandPaneDock::View)
+        });
+        if in_panel && !self.command_pane.is_expanded() {
             window.prevent_default();
             cx.stop_propagation();
             self.handle_command_pane_control_action(
@@ -2414,30 +2153,14 @@ impl GhostexGpuiApp {
             .insert(split_id, SplitResizeMetrics { content_span });
     }
 
-    pub(crate) fn record_project_editor_companion_layout_metrics(
-        &mut self,
-        child_bounds: &[Bounds<Pixels>],
-    ) {
+    pub(crate) fn record_workarea_split_layout_metrics(&mut self, child_bounds: &[Bounds<Pixels>]) {
         let Some(content_span) =
             split_resize_content_span(child_bounds, WorkspaceSplitAxis::Horizontal)
         else {
             return;
         };
 
-        self.project_editor_companion_layout_metrics = Some(SplitResizeMetrics { content_span });
-    }
-
-    pub(crate) fn record_project_editor_companion_split_layout_metrics(
-        &mut self,
-        axis: WorkspaceSplitAxis,
-        child_bounds: &[Bounds<Pixels>],
-    ) {
-        let Some(content_span) = split_resize_content_span(child_bounds, axis) else {
-            return;
-        };
-
-        self.project_editor_companion_split_layout_metrics =
-            Some(SplitResizeMetrics { content_span });
+        self.workarea_split_layout_metrics = Some(SplitResizeMetrics { content_span });
     }
 
     pub(crate) fn handle_workspace_split_handle_mouse_down(
@@ -2815,69 +2538,66 @@ impl GhostexGpuiApp {
         }
     }
 
-    pub(crate) fn handle_project_editor_companion_divider_mouse_down(
+    /// CDXC:Workarea 2026-09-20 WHY:
+    /// One divider now separates the Agents column from the open view, replacing the project-editor
+    /// companion's. The visible two-pixel rail is still the resize control: dragging moves the stored
+    /// split ratio and a double click puts it back at the default share, both inside the clamps that
+    /// keep each side above its minimum. This supersedes the 2026-06-22 companion-divider rule.
+    pub(crate) fn handle_workarea_split_divider_mouse_down(
         &mut self,
-        mode: TitlebarMode,
         event: &MouseDownEvent,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        /*
-        CDXC:CodeEditor 2026-06-22-06:53:
-        Source, Browser, Kanban, and Manage companion panes use the visible two-pixel divider as the real resize control. Dragging adjusts the stored companion width ratio, double-click resets toward the 0.32 default within practical width clamps, and shell-state persistence happens after reset or finished drag without hidden overlays or root hit-test routing.
-        */
         window.prevent_default();
         cx.stop_propagation();
 
-        self.project_editor_companion_drag = None;
+        self.workarea_split_drag = None;
 
-        if self.active_mode != mode || !self.project_editor_companion_is_visible() {
+        if !self.view_panel_open() {
             return;
         }
 
-        self.set_project_editor_companion_divider_hovering(mode, true, cx);
+        self.set_workarea_split_divider_hovering(true, cx);
 
-        let columns_active = self.project_editor_companion_columns_split_active();
         if event.click_count >= 2 {
             let content_span = self
-                .project_editor_companion_layout_metrics
+                .workarea_split_layout_metrics
                 .map(|metrics| metrics.content_span);
             if self
                 .project_editor_shell
-                .reset_left_companion_width_ratio(content_span, columns_active)
+                .reset_workarea_split_ratio(content_span)
             {
-                self.project_editor_shell
-                    .left_companion_width_ratio_before_columns = None;
                 self.persist_shell_layout_state();
                 cx.notify();
             }
             return;
         }
 
-        let Some(metrics) = self.project_editor_companion_layout_metrics else {
+        let Some(metrics) = self.workarea_split_layout_metrics else {
             return;
         };
 
-        self.project_editor_companion_drag = Some(ProjectEditorCompanionResizeDragState {
+        self.workarea_split_drag = Some(WorkareaSplitResizeDragState {
             start_x: event.position.x.as_f32(),
-            start_ratio: self.project_editor_shell.left_companion_width_ratio,
+            start_ratio: self.project_editor_shell.workarea_split_ratio,
             content_span: metrics.content_span.max(1.0),
         });
         cx.notify();
     }
 
-    pub(crate) fn handle_project_editor_companion_resize_drag_move(
+    pub(crate) fn handle_workarea_split_resize_drag_move(
         &mut self,
         event: &MouseMoveEvent,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let Some(drag) = self.project_editor_companion_drag else {
+        let Some(drag) = self.workarea_split_drag else {
             return;
         };
 
         if !event.dragging() {
-            self.finish_project_editor_companion_resize_drag(cx);
+            self.finish_workarea_split_resize_drag(cx);
             return;
         }
 
@@ -2886,248 +2606,60 @@ impl GhostexGpuiApp {
 
         let next_ratio =
             drag.start_ratio + (event.position.x.as_f32() - drag.start_x) / drag.content_span;
-        let columns_active = self.project_editor_companion_columns_split_active();
-        if self.project_editor_shell.set_left_companion_width_ratio(
-            next_ratio,
-            drag.content_span,
-            columns_active,
-        ) {
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn handle_project_editor_companion_resize_mouse_up(
-        &mut self,
-        _event: &MouseUpEvent,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if self.project_editor_companion_drag.is_some() {
-            window.prevent_default();
-            cx.stop_propagation();
-        }
-        self.finish_project_editor_companion_resize_drag(cx);
-    }
-
-    pub(crate) fn finish_project_editor_companion_resize_drag(
-        &mut self,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if self.project_editor_companion_drag.take().is_some() {
-            self.project_editor_shell
-                .left_companion_width_ratio_before_columns = None;
-            self.clear_project_editor_companion_divider_hover_state();
-            self.persist_shell_layout_state();
-            cx.notify();
-        }
-    }
-
-    /// `axis` is the arrangement the divider was rendered for, not the stored one:
-    /// a persisted state whose axis and slot occupancy disagree could otherwise
-    /// drive a horizontal ratio from a vertical handle's pointer axis.
-    pub(crate) fn handle_project_editor_companion_split_divider_mouse_down(
-        &mut self,
-        mode: TitlebarMode,
-        axis: WorkspaceSplitAxis,
-        event: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        window.prevent_default();
-        cx.stop_propagation();
-        self.project_editor_companion_split_drag = None;
-
-        if self.active_mode != mode
-            || !self.project_editor_companion_is_visible()
-            || self
-                .project_editor_companion_secondary_terminal_session_id
-                .is_none()
-        {
-            return;
-        }
-
-        self.set_project_editor_companion_split_divider_hovering(mode, true, cx);
-        if event.click_count >= 2 {
-            let content_span = self
-                .project_editor_companion_split_layout_metrics
-                .map(|metrics| metrics.content_span);
-            let reset = match axis {
-                WorkspaceSplitAxis::Horizontal => self
-                    .project_editor_shell
-                    .reset_left_companion_columns_ratio(content_span),
-                WorkspaceSplitAxis::Vertical => self
-                    .project_editor_shell
-                    .reset_left_companion_split_ratio(content_span),
-            };
-            if reset {
-                self.persist_shell_layout_state();
-                cx.notify();
-            }
-            return;
-        }
-
-        let Some(metrics) = self.project_editor_companion_split_layout_metrics else {
-            return;
-        };
-        self.project_editor_companion_split_drag =
-            Some(ProjectEditorCompanionSplitResizeDragState {
-                axis,
-                start_position: split_resize_event_position(axis, event.position),
-                start_ratio: match axis {
-                    WorkspaceSplitAxis::Horizontal => {
-                        self.project_editor_shell.left_companion_columns_ratio
-                    }
-                    WorkspaceSplitAxis::Vertical => {
-                        self.project_editor_shell.left_companion_split_ratio
-                    }
-                },
-                content_span: metrics.content_span.max(1.0),
-            });
-        cx.notify();
-    }
-
-    pub(crate) fn handle_project_editor_companion_split_resize_drag_move(
-        &mut self,
-        event: &MouseMoveEvent,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let Some(drag) = self.project_editor_companion_split_drag else {
-            return;
-        };
-        if !event.dragging() {
-            self.finish_project_editor_companion_split_resize_drag(cx);
-            return;
-        }
-
-        window.prevent_default();
-        cx.stop_propagation();
-        let next_ratio = drag.start_ratio
-            + (split_resize_event_position(drag.axis, event.position) - drag.start_position)
-                / drag.content_span;
-        let changed = match drag.axis {
-            WorkspaceSplitAxis::Horizontal => self
-                .project_editor_shell
-                .set_left_companion_columns_ratio(next_ratio, drag.content_span),
-            WorkspaceSplitAxis::Vertical => self
-                .project_editor_shell
-                .set_left_companion_split_ratio(next_ratio, drag.content_span),
-        };
-        if changed {
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn handle_project_editor_companion_split_resize_mouse_up(
-        &mut self,
-        _event: &MouseUpEvent,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if self.project_editor_companion_split_drag.is_some() {
-            window.prevent_default();
-            cx.stop_propagation();
-        }
-        self.finish_project_editor_companion_split_resize_drag(cx);
-    }
-
-    pub(crate) fn finish_project_editor_companion_split_resize_drag(
-        &mut self,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if self.project_editor_companion_split_drag.take().is_some() {
-            self.clear_project_editor_companion_split_divider_hover_state();
-            self.persist_shell_layout_state();
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn set_project_editor_companion_split_divider_hovering(
-        &mut self,
-        mode: TitlebarMode,
-        hovered: bool,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if hovered {
-            if self.project_editor_companion_split_divider_hovering == Some(mode) {
-                return;
-            }
-            self.project_editor_companion_split_divider_hover_epoch = self
-                .project_editor_companion_split_divider_hover_epoch
-                .wrapping_add(1);
-            self.project_editor_companion_split_divider_hovering = Some(mode);
-            self.project_editor_companion_split_divider_hover_visible = None;
-            let epoch = self.project_editor_companion_split_divider_hover_epoch;
-            cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(SIDEBAR_DIVIDER_HOVER_DELAY)
-                    .await;
-                let _ = this.update(cx, |this, cx| {
-                    if this.project_editor_companion_split_divider_hover_epoch == epoch
-                        && this.project_editor_companion_split_divider_hovering == Some(mode)
-                    {
-                        this.project_editor_companion_split_divider_hover_visible = Some(mode);
-                        cx.notify();
-                    }
-                });
-            })
-            .detach();
-            return;
-        }
-
-        if self.project_editor_companion_split_divider_hovering == Some(mode)
-            || self.project_editor_companion_split_divider_hover_visible == Some(mode)
-        {
-            self.clear_project_editor_companion_split_divider_hover_state();
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn clear_project_editor_companion_split_divider_hover_state(&mut self) -> bool {
         if self
-            .project_editor_companion_split_divider_hovering
-            .is_none()
-            && self
-                .project_editor_companion_split_divider_hover_visible
-                .is_none()
+            .project_editor_shell
+            .set_workarea_split_ratio(next_ratio, drag.content_span)
         {
-            return false;
+            cx.notify();
         }
-        self.project_editor_companion_split_divider_hover_epoch = self
-            .project_editor_companion_split_divider_hover_epoch
-            .wrapping_add(1);
-        self.project_editor_companion_split_divider_hovering = None;
-        self.project_editor_companion_split_divider_hover_visible = None;
-        true
     }
 
-    pub(crate) fn set_project_editor_companion_divider_hovering(
+    pub(crate) fn handle_workarea_split_resize_mouse_up(
         &mut self,
-        mode: TitlebarMode,
+        _event: &MouseUpEvent,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.workarea_split_drag.is_some() {
+            window.prevent_default();
+            cx.stop_propagation();
+        }
+        self.finish_workarea_split_resize_drag(cx);
+    }
+
+    pub(crate) fn finish_workarea_split_resize_drag(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.workarea_split_drag.take().is_some() {
+            self.clear_workarea_split_divider_hover_state();
+            self.persist_shell_layout_state();
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_workarea_split_divider_hovering(
+        &mut self,
         hovered: bool,
         cx: &mut gpui::Context<Self>,
     ) {
         if hovered {
-            if self.project_editor_companion_divider_hovering == Some(mode) {
+            if self.workarea_split_divider_hovering {
                 return;
             }
 
-            self.project_editor_companion_divider_hover_epoch = self
-                .project_editor_companion_divider_hover_epoch
-                .wrapping_add(1);
-            self.project_editor_companion_divider_hovering = Some(mode);
-            self.project_editor_companion_divider_hover_visible = None;
-            let epoch = self.project_editor_companion_divider_hover_epoch;
+            self.workarea_split_divider_hover_epoch =
+                self.workarea_split_divider_hover_epoch.wrapping_add(1);
+            self.workarea_split_divider_hovering = true;
+            self.workarea_split_divider_hover_visible = false;
+            let epoch = self.workarea_split_divider_hover_epoch;
             cx.spawn(async move |this, cx| {
                 cx.background_executor()
                     .timer(SIDEBAR_DIVIDER_HOVER_DELAY)
                     .await;
 
                 let _ = this.update(cx, |this, cx| {
-                    if this.project_editor_companion_divider_hover_epoch == epoch
-                        && this.project_editor_companion_divider_hovering == Some(mode)
+                    if this.workarea_split_divider_hover_epoch == epoch
+                        && this.workarea_split_divider_hovering
                     {
-                        this.project_editor_companion_divider_hover_visible = Some(mode);
+                        this.workarea_split_divider_hover_visible = true;
                         cx.notify();
                     }
                 });
@@ -3137,28 +2669,21 @@ impl GhostexGpuiApp {
             return;
         }
 
-        if self.project_editor_companion_divider_hovering == Some(mode)
-            || self.project_editor_companion_divider_hover_visible == Some(mode)
-        {
-            self.clear_project_editor_companion_divider_hover_state();
+        if self.workarea_split_divider_hovering || self.workarea_split_divider_hover_visible {
+            self.clear_workarea_split_divider_hover_state();
             cx.notify();
         }
     }
 
-    pub(crate) fn clear_project_editor_companion_divider_hover_state(&mut self) -> bool {
-        if self.project_editor_companion_divider_hovering.is_none()
-            && self
-                .project_editor_companion_divider_hover_visible
-                .is_none()
-        {
+    pub(crate) fn clear_workarea_split_divider_hover_state(&mut self) -> bool {
+        if !self.workarea_split_divider_hovering && !self.workarea_split_divider_hover_visible {
             return false;
         }
 
-        self.project_editor_companion_divider_hover_epoch = self
-            .project_editor_companion_divider_hover_epoch
-            .wrapping_add(1);
-        self.project_editor_companion_divider_hovering = None;
-        self.project_editor_companion_divider_hover_visible = None;
+        self.workarea_split_divider_hover_epoch =
+            self.workarea_split_divider_hover_epoch.wrapping_add(1);
+        self.workarea_split_divider_hovering = false;
+        self.workarea_split_divider_hover_visible = false;
         true
     }
 

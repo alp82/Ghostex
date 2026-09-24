@@ -6,9 +6,7 @@ import {
   modelPickerChooseModel,
   modelPickerLayout,
   modelPickerNextEffortIndex,
-  modelPickerPrimaryScope,
   modelPickerSupportsSessionScope,
-  modelPicksSessionOnly,
   MODEL_PICKER_DEFAULT_SCOPE_ONLY_REASON,
   type ModelPickerRequest,
   type ModelPickerSelection,
@@ -51,7 +49,7 @@ export class NativeModelPicker {
   }
 
   private get defaultScope(): SessionChatModelSelectionScope {
-    return modelPickerPrimaryScope(this.request.provider, modelPicksSessionOnly());
+    return 'default';
   }
 
   projection() {
@@ -95,7 +93,8 @@ export class NativeModelPicker {
         artwork: modelPickerEffortArtworkKey(entry.value),
         x: (i < layout.effortSplit ? i - layout.effortSplit : i - layout.effortSplit + 1) * 142,
       })),
-      effortLabel: request.efforts.find((entry) => entry.value === this.selection.effort)?.label ?? 'No effort setting',
+      // A model without effort levels (Cursor's Auto) shows only its name.
+      effortLabel: request.efforts.find((entry) => entry.value === this.selection.effort)?.label ?? null,
     };
   }
 
@@ -168,11 +167,18 @@ export class NativeModelPicker {
     if (control) this.navigate(control);
   }
 
+  /**
+   * CDXC:SessionChat 2026-09-23 DECISION:
+   * User: Escape closes the quick model picker instantly instead of waiting, then closing. Only a
+   * save plays the 190ms close animation; every cancel (Escape, a click outside, the hotkey again)
+   * closes on the next tick. SEE-ALSO: session-chat-model-picker.tsx and gx-chat-core's
+   * menus/picker/native.rs keep the same rule.
+   */
   finish(save: boolean, scope: SessionChatModelSelectionScope = this.defaultScope) {
     if (this.closing) return;
     this.closing = true;
     this.saving = save;
-    this.closeTimer = setTimeout(() => this.finished(save ? this.selection : null, scope), 190);
+    this.closeTimer = setTimeout(() => this.finished(save ? this.selection : null, scope), save ? 190 : 0);
   }
 
   dispose() {

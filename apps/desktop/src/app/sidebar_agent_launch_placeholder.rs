@@ -4,10 +4,10 @@ use crate::*;
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
-/// How long a staged placeholder waits for the created session before it is taken down.
+/// How long a terminal-only placeholder waits before it is taken down.
 const AGENT_LAUNCH_PLACEHOLDER_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// A tab opened by a project-header agent launch before gxserver has created the session.
+/// A tab opened by an agent launcher before gxserver has created the session.
 pub(crate) struct AgentLaunchPlaceholder {
     project_id: String,
     shell_session_id: TerminalSessionId,
@@ -15,34 +15,56 @@ pub(crate) struct AgentLaunchPlaceholder {
 }
 
 impl GhostexGpuiApp {
+    /// CDXC:AgentLauncher 2026-09-22 WHY:
+    /// The sidebar publishes its session list before the create operation's focus message. Reconciling that list first deleted the unmapped composer and allocated a different tab for the new server ID, losing text typed during launch. Keep the local tab until the focus message binds its identity.
+    pub(crate) fn has_unbound_agent_chat_launch(&self) -> bool {
+        self.agent_launch_placeholders.iter().any(|placeholder| {
+            self.agents_workspace_project_id.as_deref() == Some(placeholder.project_id.as_str())
+                && self
+                    .native_chat_views
+                    .contains_key(&placeholder.shell_session_id)
+                && self
+                    .agents_workspace
+                    .pane_id_for_session(placeholder.shell_session_id)
+                    .is_some()
+        })
+    }
+
     /// CDXC:AgentLauncher 2026-09-19 DECISION:
     /// User: creating an agent session from the sidebar must show it instantly; all the processing runs in the background, and a send that comes too early already waits for the agent's input box.
-    /// The click used to reach the pane only after the hook status check, the create call, the focus bridge and the attach metadata read. Now the header click itself opens a mounting tab carrying the agent's name and mark, in Chat when that agent prefers it, and the created session adopts that tab when its focus message arrives (`adopt_agent_launch_placeholder`), so the ordinary attach completion fills it in place. A placeholder nothing adopts in time is taken down again. Remote projects and Windows keep their own launch paths.
+    /// The click used to reach the pane only after the hook status check, the create call, the focus bridge and the attach metadata read. Now the header click itself opens a mounting tab carrying the agent's name and mark, in Chat when that agent prefers it, and the created session adopts that tab when its focus message arrives (`adopt_agent_launch_placeholder`), so the ordinary attach completion fills it in place. Terminal-only placeholders expire; an editable chat stays available through slow creation. Remote projects and Windows keep their own launch paths.
     pub(crate) fn stage_agent_launch_placeholder(
         &mut self,
         command: &Value,
         cx: &mut gpui::Context<Self>,
     ) {
-        let launch = matches!(
-            (command["type"].as_str(), command["action"].as_str()),
-            (Some("projectAction"), Some("agent")) | (Some("agentAccounts"), Some("launch"))
-        );
-        let (Some(group_id), Some(agent_id)) =
-            (command["groupId"].as_str(), command["agentId"].as_str())
-        else {
+        let picker_launch = command["type"] == "runSidebarAgent";
+        let launch = picker_launch
+            || matches!(
+                (command["type"].as_str(), command["action"].as_str()),
+                (Some("projectAction"), Some("agent")) | (Some("agentAccounts"), Some("launch"))
+            );
+        let Some(agent_id) = command["agentId"].as_str() else {
             return;
         };
         if !launch || cfg!(target_os = "windows") {
             return;
         }
+        self.agent_launch_placeholders.retain(|placeholder| {
+            self.agents_workspace
+                .pane_id_for_session(placeholder.shell_session_id)
+                .is_some()
+        });
         let Some(snapshot) = self.native_sidebar.snapshot.clone() else {
             return;
         };
-        let Some(group) = snapshot
-            .groups
-            .iter()
-            .find(|group| group.group_id == group_id)
-        else {
+        let Some(group) = snapshot.groups.iter().find(|group| {
+            match command["groupId"].as_str() {
+                Some(group_id) => group.group_id == group_id,
+                // The New Thread picker targets the runtime's active group.
+                None => picker_launch && group.is_active,
+            }
+        }) else {
             return;
         };
         if group.remote_machine_context.is_some() {
@@ -101,14 +123,15 @@ impl GhostexGpuiApp {
                 .is_some()
         {
             self.agents_chat_mode_sessions.insert(shell_session_id);
+            self.stage_native_chat_launch(shell_session_id, &project_id, agent_id, name, icon, cx);
         }
         let Some(pane_id) = self.agents_workspace.pane_id_for_session(shell_session_id) else {
             return;
         };
-        // The launch keeps a non-Agents view (CDXC:AgentLauncher 2026-09-14), so only an Agents pane takes focus.
-        if self.active_mode == TitlebarMode::Agents {
-            self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
-        }
+        // CDXC:Workarea 2026-09-20 WHY:
+        // The launch keeps the view panel open (CDXC:AgentLauncher 2026-09-14) and the new session's
+        // pane is on screen beside it either way, so the pane takes focus without a view switch.
+        self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
         self.scroll_workspace_pane_active_tab(pane_id);
         self.reconcile_agents_pane_surfaces(cx);
         self.update_active_mode_cef_child_visibility(cx);
@@ -143,6 +166,7 @@ impl GhostexGpuiApp {
     pub(crate) fn adopt_agent_launch_placeholder(
         &mut self,
         message: &GpuiSidebarWorkspaceTerminalFocusMessage,
+        cx: &mut gpui::Context<Self>,
     ) {
         if self.agent_launch_placeholders.is_empty()
             || !message.keep_view
@@ -162,7 +186,10 @@ impl GhostexGpuiApp {
             .iter()
             .position(|placeholder| {
                 placeholder.project_id == message.project_id
-                    && placeholder.staged_at.elapsed() < AGENT_LAUNCH_PLACEHOLDER_TIMEOUT
+                    && (placeholder.staged_at.elapsed() < AGENT_LAUNCH_PLACEHOLDER_TIMEOUT
+                        || self
+                            .native_chat_views
+                            .contains_key(&placeholder.shell_session_id))
                     && self
                         .agents_workspace
                         .pane_id_for_session(placeholder.shell_session_id)
@@ -178,6 +205,14 @@ impl GhostexGpuiApp {
             .insert(key.clone(), placeholder.shell_session_id);
         self.local_app_shot_session_mappings
             .insert(key.session_id.clone(), placeholder.shell_session_id);
+        // Bind the composer created by the click as soon as the server identity arrives.
+        if self
+            .agents_chat_mode_sessions
+            .contains(&placeholder.shell_session_id)
+        {
+            self.reconcile_agents_pane_surfaces(cx);
+            cx.notify();
+        }
         support_logs::append_temporary(
             support_logs::GpuiSupportLog::TerminalFocus,
             "TEMP.gpui.sessionSwitchLatency.agentLaunchPlaceholderAdopted",
@@ -202,6 +237,9 @@ impl GhostexGpuiApp {
         else {
             return;
         };
+        if self.native_chat_views.contains_key(&shell_session_id) {
+            return;
+        }
         self.agent_launch_placeholders.remove(index);
         if self
             .local_workspace_session_mappings

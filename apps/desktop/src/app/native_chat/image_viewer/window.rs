@@ -2,7 +2,7 @@
 //!
 //! CDXC:SessionChat 2026-09-18 SEE-ALSO:
 //! React's session-chat-image-viewer.tsx overlay: a picture opens centred at its original aspect
-//! ratio, clicking it steps through zoom levels and back to the fitted size, Escape or a click on
+//! ratio, clicking it steps through zoom levels and back to the fitted size, Escape, a right-click, or a click on
 //! the surround closes it, and Copy image / Copy path / Save image sit beside the close button.
 //! A native child window owns its own frame and input, which is how every other chat overlay here
 //! is built (save_markdown, model_picker).
@@ -35,6 +35,9 @@ pub(in crate::app::native_chat) struct ImageViewerState {
 pub(super) struct ImageViewerWindow {
     pub(super) chat: Entity<NativeChatView>,
     pub(super) focus: FocusHandle,
+    /// The picture measured last and its own pixel size, so a resize or a zoom step does not read
+    /// the same header again. One entry: the viewer paints one picture at a time.
+    pub(super) measured: Option<(u64, Option<gpui::Size<gpui::Pixels>>)>,
     _subscription: Subscription,
 }
 
@@ -149,8 +152,12 @@ impl NativeChatView {
                     )
                 })
                 .and_then(|(bounds, display_id)| {
+                    let display_id =
+                        crate::app::window::popup_frame::display_at(bounds.center(), cx)
+                            .or(display_id);
                     cx.open_window(
                         WindowOptions {
+                            kind: crate::app::window::popup_frame::child_window_kind(),
                             window_bounds: Some(WindowBounds::Windowed(bounds)),
                             display_id,
                             app_id: crate::gpui_platform_window_app_id(),
@@ -167,6 +174,9 @@ impl NativeChatView {
                         {
                             let chat = chat.clone();
                             move |window, cx| {
+                                crate::app::window::popup_frame::strip_gpui_popup_window_frame(
+                                    window,
+                                );
                                 crate::app::window::attach_gpui_app_modal_window_to_main_window(
                                     window, parent,
                                 );
@@ -187,6 +197,7 @@ impl NativeChatView {
                                     ImageViewerWindow {
                                         chat,
                                         focus,
+                                        measured: None,
                                         _subscription: subscription,
                                     }
                                 });

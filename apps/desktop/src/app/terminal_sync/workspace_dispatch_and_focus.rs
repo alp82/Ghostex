@@ -278,6 +278,38 @@ impl GhostexGpuiApp {
         )
     }
 
+    /// The chat model picker chose another agent's model. It takes the Handoff / Export route, carrying the target so the sidebar runtime opens the dialog with that agent selected.
+    /// SEE-ALSO: apps/desktop/sidebar/gxserver-runtime/export-transcript.ts (`exportSessionTranscript`), apps/desktop/sidebar/gxserver-runtime/helpers/terminal-lifecycle.ts (the payload's field allowlist).
+    pub(crate) fn dispatch_gpui_workspace_terminal_handoff_to_model(
+        &mut self,
+        shell_session_id: TerminalSessionId,
+        provider: &str,
+        model: &str,
+        effort: &str,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(key) = self
+            .local_workspace_session_mappings
+            .iter()
+            .find_map(|(key, mapped)| (*mapped == shell_session_id).then(|| key.clone()))
+        else {
+            return false;
+        };
+        let Some(sidebar) = self.sidebar.clone() else {
+            return false;
+        };
+        let message = serde_json::json!({
+            "action": "handoffToModel",
+            "projectId": key.project_id,
+            "sessionId": key.session_id,
+            "target": { "provider": provider, "model": model, "effort": effort },
+            "type": GPUI_SIDEBAR_WORKSPACE_TERMINAL_RUNTIME_ACTION_MESSAGE_TYPE,
+            "version": GPUI_SIDEBAR_WORKSPACE_TERMINAL_RUNTIME_ACTION_MESSAGE_VERSION,
+        });
+        let script = gpui_workspace_terminal_runtime_action_script(&message);
+        sidebar.update(cx, |surface, _| surface.execute_app_owned_script(&script))
+    }
+
     fn dispatch_gpui_workspace_session_key_runtime_action_with_agent(
         &mut self,
         action: &str,
@@ -306,7 +338,7 @@ impl GhostexGpuiApp {
     }
 
     pub(crate) fn focused_agents_workspace_shell_session_id(&self) -> Option<TerminalSessionId> {
-        if self.active_mode != TitlebarMode::Agents {
+        if !self.agents_workspace_visible() {
             return None;
         }
         let ShellFocusTarget::AgentsPane(pane_id) = self.shell_focus else {
@@ -317,22 +349,10 @@ impl GhostexGpuiApp {
             .map(|leaf| leaf.tab_group.active_tab)
     }
 
-    /// The Agents workspace session behind the focused terminal, whether it is
-    /// focused in the Agents view or in a project-editor companion pane (top
-    /// or bottom split). Companion panes display Agents workspace sessions, so
-    /// both resolve into the same shell-session id space; session-scoped
-    /// agent actions (Rename, Delayed Send, Close After Done, Prompts, the
-    /// overlay cluster) treat the two focus surfaces identically.
+    /// The Agents workspace session behind the focused terminal. Session-scoped agent actions
+    /// (Rename, Delayed Send, Close After Done, Prompts, the overlay cluster) all resolve through it.
     pub(crate) fn focused_agents_or_companion_shell_session_id(&self) -> Option<TerminalSessionId> {
-        if let Some(session_id) = self.focused_agents_workspace_shell_session_id() {
-            return Some(session_id);
-        }
-        match self.focused_terminal_text_mount_target() {
-            Some(FocusedTerminalTextMountTarget::ProjectEditorCompanion(slot_id)) => {
-                Some(slot_id.session_id)
-            }
-            _ => None,
-        }
+        self.focused_agents_workspace_shell_session_id()
     }
 
     /// The sidebar projection is the title authority for Agents tabs. It owns

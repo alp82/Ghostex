@@ -472,6 +472,8 @@ impl GhostexGpuiApp {
         );
     }
 
+    /// Performs a native project-path action: the page's bridge message and the store's own remote
+    /// opens (gx_store/sidebar_remote_focus.rs) both end here.
     pub(crate) fn receive_sidebar_native_project_path_action_payload(
         &mut self,
         payload: &str,
@@ -514,8 +516,7 @@ impl GhostexGpuiApp {
                 .await;
             let _ = this.update(cx, |this, cx| match result {
                 Ok(GpuiSidebarNativeProjectPathActionResult::Copied(path)) => {
-                    cx.write_to_clipboard(ClipboardItem::new_string(path));
-                    gpui_play_copy_sound();
+                    gpui_copy_to_clipboard(ClipboardItem::new_string(path), cx);
                 }
                 Ok(GpuiSidebarNativeProjectPathActionResult::Opened) => {}
                 Err(message) => {
@@ -718,12 +719,6 @@ impl GhostexGpuiApp {
         self.land_quick_automations_active_project_on_automate_mode(window, cx);
         self.land_pending_source_file_open_on_source_mode(window, cx);
         self.ensure_project_workarea_runtime_cef_surfaces_for_current_context(cx);
-        #[cfg(target_os = "windows")]
-        {
-            let focus_companion =
-                self.shell_focus == ShellFocusTarget::ProjectEditorCompanion(self.active_mode);
-            self.sync_windows_project_editor_companion_to_presentation_focus(focus_companion, cx);
-        }
         self.broadcast_extension_context_changes(cx);
         cx.notify();
     }
@@ -894,8 +889,6 @@ impl GhostexGpuiApp {
         if self.agents_workspace_project_id == new_project_id {
             return false;
         }
-        #[cfg(target_os = "macos")]
-        self.close_floating_companion(cx);
         self.source_code_server_runtime
             .pending_remote_prompt_editor_request = None;
         self.capture_outgoing_project_view_state();
@@ -1061,9 +1054,9 @@ impl GhostexGpuiApp {
         self.agents_terminal_runtime_osc_states = restored_terminal_runtime.runtime_osc_states;
         self.agents_gpui_engine_close_confirms =
             restored_terminal_runtime.gpui_engine_close_confirms;
-        // The incoming project's chat pages come back with the workspace model
-        // whose session ids they are keyed by, so `ensure_agents_chat_surface`
-        // finds them and the reconcile pass below only has to make them visible.
+        // The incoming project's chat views come back with the workspace model
+        // whose session ids they are keyed by, so `ensure_native_chat` finds
+        // them and the reconcile pass below only has to make them visible.
         let restored_chat_runtime = self
             .agents_workspace_project_id
             .as_ref()
@@ -1072,7 +1065,7 @@ impl GhostexGpuiApp {
                     .remove(project_id)
             })
             .unwrap_or_default();
-        self.restore_parked_agents_chat_surfaces(restored_chat_runtime, cx);
+        self.restore_parked_agents_chat_surfaces(restored_chat_runtime);
 
         /*
         Shell, pane, and runtime ids are intentionally project-local. Tear down
@@ -1103,8 +1096,6 @@ impl GhostexGpuiApp {
         self.terminal_search_inputs.clear();
         self.terminal_search_input_subscriptions.clear();
         self.terminal_search_focus_pending = None;
-        self.project_editor_companion_terminal_session_id = None;
-        self.project_editor_companion_secondary_terminal_session_id = None;
         #[cfg(target_os = "macos")]
         {
             self.agents_terminal_ghostty_surfaces.clear();
@@ -1126,7 +1117,6 @@ impl GhostexGpuiApp {
         self.workspace_split_hover_visible = None;
         self.workspace_drop_feedback = None;
         self.workspace_tab_drag_active = false;
-        self.pending_workspace_tab_click = None;
 
         if matches!(self.shell_focus, ShellFocusTarget::AgentsPane(_)) {
             self.focus_shell_target(
@@ -1145,7 +1135,6 @@ impl GhostexGpuiApp {
         self.restore_gpui_agents_delayed_sends(delayed_send_restore_intents, cx);
         self.apply_project_view_state_for_active_project(cx);
         self.reconcile_agents_chat_surfaces(cx);
-        self.evict_expired_hidden_agents_chat_surfaces(cx);
         self.ensure_project_keep_alive_expiry_scheduled(cx);
         self.persist_shell_layout_state();
         self.sync_gpui_keep_awake_automation_from_current_settings(cx);
@@ -1223,7 +1212,10 @@ impl GhostexGpuiApp {
             )
         });
         self.command_pane_project_id = new_project_id;
-        self.apply_command_view_pane_state();
+        // The incoming pane keeps the mode saved in its own model (CDXC:Workarea 2026-09-21 in
+        // model/view_pane_layouts.rs); only the outgoing pane's countdown and hover chrome go.
+        self.command_pane_auto_minimize.idle_since = None;
+        self.clear_command_resize_hover_state();
 
         /*
         CDXC:CommandPane 2026-07-10:
@@ -1249,7 +1241,7 @@ impl GhostexGpuiApp {
         */
         self.command_remote_action_sessions =
             command_remote_action_sessions_from_command_model(&self.command_pane);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         self.command_remote_attach_askpass_scripts.clear();
         self.command_gxserver_attach_pending.clear();
         self.command_terminal_launch_payload_source
@@ -1269,6 +1261,7 @@ impl GhostexGpuiApp {
         if self.shell_focus == ShellFocusTarget::CommandPane && !self.command_pane.has_sessions() {
             self.restore_previous_non_command_focus_or_default(cx);
         }
+        self.seed_terminal_view_for_open(cx);
         self.scroll_focused_command_active_tab();
         self.sync_gpui_keep_awake_automation_from_current_settings(cx);
         self.persist_shell_layout_state();
@@ -1401,6 +1394,15 @@ impl GhostexGpuiApp {
                 if let Some(pane_id) = find_browser_leaf_id_for_tab(&self.browser_tabs.root, tab_id)
                 {
                     self.show_browser_history_popup(pane_id, window, cx);
+                }
+            }
+            cef::BrowserPageMetadataEvent::FindRequested => {
+                if let Some(pane_id) = find_browser_leaf_id_for_tab(&self.browser_tabs.root, tab_id)
+                    && self.browser_tabs.active_tab_id_for_pane(pane_id) == Some(tab_id)
+                    && self.browser_tabs.focus_pane(pane_id)
+                {
+                    self.focus_shell_target(ShellFocusTarget::BrowserPane(pane_id), cx);
+                    self.start_find_in_focused_browser(window, cx);
                 }
             }
             cef::BrowserPageMetadataEvent::AddressChanged(url) => {
@@ -1696,7 +1698,7 @@ impl GhostexGpuiApp {
     pub(crate) fn show_browser_profile_menu(
         &mut self,
         pane_id: BrowserPaneId,
-        position: gpui::Point<Pixels>,
+        trigger_bounds: gpui::Bounds<Pixels>,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
@@ -1704,7 +1706,11 @@ impl GhostexGpuiApp {
         CDXC:Browser 2026-06-23-11:14:
         Browser Profiles are a normal GPUI Browser toolbar feature. The menu reflects real shell profile state through an owned GPUI popup window with checked generated profile rows and New Profile; do not use GPUI overlays, hidden hit regions, hit-test routing, or user-entered profile names.
         */
-        if !self.prepare_browser_toolbar_right_action(pane_id, cx) {
+        // CDXC:Browser 2026-09-22 WHY:
+        // Opening the menu must not run prepare_browser_toolbar_right_action: its keyboard handoff makes the CEF page first responder on the next render, and that responder transition is the boundary that closes every titlebar popup, so the menu appeared and vanished. The Select/New Profile handlers activate the pane when a row is chosen.
+        if !self.titlebar_mode_available(TitlebarMode::Browser)
+            || self.browser_tabs.find_leaf(pane_id).is_none()
+        {
             return;
         }
 
@@ -1730,7 +1736,7 @@ impl GhostexGpuiApp {
                 "New Profile...",
                 Box::new(CreateBrowserProfile { pane_id: pane_id.0 }),
             )
-            .show(position, window, cx);
+            .toggle_below(trigger_bounds, window, cx);
     }
 
     pub(crate) fn select_browser_profile_from_menu(
@@ -1899,7 +1905,8 @@ impl GhostexGpuiApp {
             cef::BrowserPopupPlacement::Selected,
         );
         if let Some(created_tab_id) = created_tab_id {
-            self.request_sidebar_browser_tab_reveal(created_tab_id);
+            self.assign_new_browser_tab_project_machine(created_tab_id);
+            self.reveal_new_browser_tab(created_tab_id);
         }
         self.browser_url = default_url;
         let pane_id = self.browser_tabs.focused_pane;
@@ -1972,7 +1979,8 @@ impl GhostexGpuiApp {
             self.browser_profiles.active_profile_id(),
             default_url.clone(),
         ) {
-            self.request_sidebar_browser_tab_reveal(created_tab_id);
+            self.assign_new_browser_tab_project_machine(created_tab_id);
+            self.reveal_new_browser_tab(created_tab_id);
             self.browser_url = default_url;
             self.change_active_mode_with_pane_state(TitlebarMode::Browser, cx);
             self.mark_project_editor_mode_awake(TitlebarMode::Browser, cx);
@@ -2051,11 +2059,15 @@ impl GhostexGpuiApp {
             return false;
         }
         self.reconcile_browser_address_inputs();
-        // CDXC:Browser 2026-09-08 DECISION:
-        // User: closing the last browser session while Browser is active switches back to Agents.
-        // The tab model retains an address-only placeholder, so count tabs before closing.
-        if closing_last_browser_tab && self.active_mode == TitlebarMode::Browser {
-            self.set_active_mode(TitlebarMode::Agents, window, cx);
+        // CDXC:Browser 2026-09-21 DECISION:
+        // User: closing the last browser tab closes the Browser view, the way closing any view's tab
+        // does, so the panel moves on to the neighbouring open view and, when Browser was the last
+        // one, goes back to the view picker (the 2026-09-22 side panel rule). Supersedes the
+        // 2026-09-08 rule that it always switched back to Agents, which closed the whole panel even
+        // with Docs or Code still open beside it. The tab model retains
+        // an address-only placeholder, so count tabs before closing; New Browser Tab reopens from it.
+        if closing_last_browser_tab {
+            self.close_view_tab(TitlebarMode::Browser, window, cx);
             return true;
         }
         self.mark_project_editor_mode_awake(TitlebarMode::Browser, cx);
@@ -2115,7 +2127,9 @@ impl GhostexGpuiApp {
         {
             tab.remote_machine_id = remote_machine_id;
         }
-        self.request_sidebar_browser_tab_reveal(popup_tab_id);
+        // A website view can open the project's first Browser tab without activating Browser.
+        self.record_open_view_tab(TitlebarMode::Browser);
+        self.reveal_new_browser_tab(popup_tab_id);
         if matches!(placement, cef::BrowserPopupPlacement::Background) {
             /*
             CDXC:Browser 2026-08-18:
@@ -2167,10 +2181,6 @@ impl GhostexGpuiApp {
             return false;
         }
 
-        if mode != TitlebarMode::Agents {
-            self.terminal_agent_bar_companion_focus_return = None;
-        }
-
         let previous_mode = self.active_mode;
         /*
         CDXC:Telemetry 2026-08-26:
@@ -2188,6 +2198,11 @@ impl GhostexGpuiApp {
         let previous_shell_focus = self.shell_focus;
         let previous_first_responder_target = self.first_responder_target;
         self.change_active_mode_with_pane_state(mode, cx);
+        // The Terminal view's default focus is its focused command group, so the group has to
+        // exist, and be the focused one, before the default focus below is computed.
+        if mode == TitlebarMode::Terminal {
+            self.seed_terminal_view_for_open(cx);
+        }
         /*
         CDXC:CodeEditor 2026-07-05:
         Opening Source, Browser, Kanban, Automate, or Docs is an activation
@@ -2200,17 +2215,12 @@ impl GhostexGpuiApp {
         }
         self.agents_terminal_runtime_sessions
             .reconcile_with_workspace(&self.agents_workspace);
-        self.sync_project_editor_companion_terminal_selection();
         if mode == TitlebarMode::Browser {
             self.seed_current_project_browser_tab_if_empty();
         }
-        let restore_companion_focus = mode == TitlebarMode::Browser
-            && self.project_editor_shell.left_companion_visible
-            && self
-                .project_editor_companion_terminal_slot_for_mode(mode)
-                .is_some();
-        if !restore_companion_focus {
-            self.focus_default_surface_for_active_mode(cx);
+        self.focus_default_surface_for_active_mode(cx);
+        if mode == TitlebarMode::Terminal {
+            self.request_focused_command_terminal_text_focus_handoff();
         }
         let requested_agents_terminal_focus =
             if let Some(FocusedTerminalTextMountTarget::Agents(slot_id)) =
@@ -2244,20 +2254,8 @@ impl GhostexGpuiApp {
             self.update_active_mode_cef_child_visibility(cx);
         }
         // Session Chat is also a native CEF child view. Reconcile it at the
-        // same mode-switch boundary so entering a project workarea with the
-        // companion hidden removes the old Agents-pane chat view immediately.
+        // same mode-switch boundary as every other surface.
         self.reconcile_agents_pane_surfaces(cx);
-        if restore_companion_focus {
-            /*
-            CDXC:Browser 2026-07-14:
-            Switching workareas may materialize a fresh project Browser tab,
-            but it must leave keyboard focus with the most recently active
-            terminal/chat rendered in the companion pane. Browser chrome and
-            CEF creation stay normal sibling layout; only an explicit Browser
-            pane click transfers focus into the page.
-            */
-            self.focus_project_editor_companion(mode, window, cx);
-        }
         self.scroll_all_active_tab_strips();
         self.persist_shell_layout_state();
         self.schedule_project_editor_auto_sleep_for_inactive_modes(cx);
@@ -2271,6 +2269,8 @@ impl GhostexGpuiApp {
         if self.browser_tabs.tabs.len() != 1 || active_tab.state != BrowserTabState::AddressOnly {
             return false;
         }
+        let tab_id = active_tab.id;
+        self.assign_new_browser_tab_project_machine(tab_id);
 
         /*
         CDXC:Browser 2026-07-14:

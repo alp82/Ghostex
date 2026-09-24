@@ -174,18 +174,32 @@ export const MAIN_SETTINGS_SECTION_SETTING_KEYS: Record<MainSettingsSectionId, r
    */
   appearance: [
     'sidebarTheme',
+    'darkThemePreset',
+    'themeSidebarContrast',
+    'themeWorkAreaContrast',
+    'customSidebarTitlebarBackgroundDarknessPercent',
+    'customSidebarTitlebarBackgroundTintColor',
+    'lightThemePreset',
+    'customSidebarTitlebarLightBackgroundLightnessPercent',
+    'customSidebarTitlebarLightBackgroundTintColor',
     'sessionChatTheme',
     'terminalColorScheme',
     'terminalGhosttyLightTheme',
     'terminalGhosttyTheme',
-    'customSidebarTitlebarBackgroundDarknessPercent',
-    'customSidebarTitlebarBackgroundTintColor',
+    'windowGlass',
+    'windowGlassSource',
+    'windowGlassImagePlacement',
+    'windowGlassImageDark',
+    'windowGlassImageLight',
+    'windowGlassSidebarOpacityDark',
+    'windowGlassWorkAreaTintDark',
+    'windowGlassSidebarOpacityLight',
+    'windowGlassWorkAreaTintLight',
     'showActivePaneOutline',
     'workspaceActivePaneBorderColor',
     'appIconSourceId',
   ],
   chat: [
-    'sessionChatUseGpui',
     'preferredAgentInterface',
     'sessionChatFontFamily',
     'sessionChatZoomPercent',
@@ -194,6 +208,7 @@ export const MAIN_SETTINGS_SECTION_SETTING_KEYS: Record<MainSettingsSectionId, r
     'sessionChatVerboseMode',
     'sessionChatSimpleMode',
     'sessionChatFileEditPreviews',
+    'sessionChatKeepComposerExpanded',
   ],
   sidebar: [
     'sidebarSettingsPreset',
@@ -216,6 +231,7 @@ export const MAIN_SETTINGS_SECTION_SETTING_KEYS: Record<MainSettingsSectionId, r
     'showProjectEditorDiffFileCount',
     'hideMenuBarSessionStatusIndicators',
     'sidebarCollapseAnimationDurationMs',
+    'panelAnimationSpeed',
     'sidebarTooltipDelayMs',
     'sidebarDefaultWidthPx',
     'commandsPanelDefaultHeightPx',
@@ -268,7 +284,6 @@ export const MAIN_SETTINGS_SECTION_SETTING_KEYS: Record<MainSettingsSectionId, r
     'terminalCursorStyle',
     'terminalCursorStyleBlink',
     'clickToWakeSleepingSessions',
-    'showAgentsPaneTabBarWhenUnsplit',
     'showQuickModelPickerInTerminal',
     'showSessionIdInTerminalPanes',
     'showNotificationOnTerminalBell',
@@ -335,13 +350,27 @@ export const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS = {
   ...MAIN_SETTINGS_SECTION_SETTING_KEYS,
   theming: [
     'sidebarTheme',
+    'darkThemePreset',
+    'themeSidebarContrast',
+    'themeWorkAreaContrast',
+    'customSidebarTitlebarBackgroundDarknessPercent',
+    'customSidebarTitlebarBackgroundTintColor',
+    'lightThemePreset',
+    'customSidebarTitlebarLightBackgroundLightnessPercent',
+    'customSidebarTitlebarLightBackgroundTintColor',
     'sessionChatTheme',
     'terminalColorScheme',
     'terminalGhosttyLightTheme',
     'terminalGhosttyTheme',
-    'customSidebarTitlebarBackgroundDarknessPercent',
-    'customSidebarTitlebarBackgroundTintColor',
-    'accentColor',
+    'windowGlass',
+    'windowGlassSource',
+    'windowGlassImagePlacement',
+    'windowGlassImageDark',
+    'windowGlassImageLight',
+    'windowGlassSidebarOpacityDark',
+    'windowGlassWorkAreaTintDark',
+    'windowGlassSidebarOpacityLight',
+    'windowGlassWorkAreaTintLight',
     'showActivePaneOutline',
     'workspaceActivePaneBorderColor',
   ],
@@ -531,9 +560,9 @@ export const DIAGNOSTIC_LOGGING_GROUPS: readonly ['macOS', 'GPUI', 'gxserver'] =
  * browsing rows. Search still reveals them, and Show Advanced keeps them
  * directly below the preset selector for inspecting a preset's effects.
  *
- * CDXC:Theming 2026-09-14 DECISION:
- * User: make background contrast, background tint and accent color Advanced settings and prefix their labels with "Dark theme" so it is clear they do not affect light mode.
- * This supersedes keeping contrast and tint visible without Show Advanced; search still reveals all three.
+ * CDXC:Theming 2026-09-22 DECISION:
+ * User: the background contrast and tint rows only appear when the matching Light theme or Dark theme dropdown is set to Custom.
+ * That dependency replaces the 2026-09-14 Show Advanced gate on the dark rows (the "Dark theme" label prefix stays, now paired with "Light theme" rows). The accent color row was removed on 2026-09-21 (the accent now derives from the tint; see getAccentColorForBackgroundTint).
  *
  * CDXC:Settings 2026-06-16-09:20:
  * Empty-sidebar double-click creation remains a low-frequency interaction preference and should hide behind Show Advanced. The menu-bar indicator is preset-owned and stays beside the sidebar preset controls.
@@ -580,9 +609,6 @@ export const ADVANCED_MAIN_SETTING_KEYS = new Set<string>([
   'projectSessionListCollapsedCount',
   'createSessionOnSidebarDoubleClick',
   'renameSessionOnDoubleClick',
-  'customSidebarTitlebarBackgroundDarknessPercent',
-  'customSidebarTitlebarBackgroundTintColor',
-  'accentColor',
   'showActivePaneOutline',
   'workspaceActivePaneBorderColor',
   'workspaceBackgroundColor',

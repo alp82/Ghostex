@@ -1,6 +1,6 @@
 use super::{
     actions::NativeSidebarAction,
-    menu_state::{SidebarMenuPanel, SidebarMenuState},
+    menu_state::{SidebarMenuPanel, SidebarMenuPlacement, SidebarMenuState},
 };
 use crate::{GhostexGpuiApp, app::helpers::*};
 use gpui::prelude::FluentBuilder;
@@ -11,10 +11,86 @@ use gpui::{
 use gpui_component::{Root, h_flex, v_flex};
 use serde_json::Value;
 
+/// The gap between a trigger button and the menu that drops down from it.
+const SIDEBAR_MENU_TRIGGER_GAP: f32 = 5.0;
+/// How long after the More menu dismisses itself a press on its button still counts as that press.
+const MORE_MENU_SAME_PRESS: std::time::Duration = std::time::Duration::from_millis(250);
+
 impl GhostexGpuiApp {
     pub(crate) fn show_native_sidebar_menu(
         items: &Value,
         position: Point<Pixels>,
+        scale: f32,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        Self::open_native_sidebar_menu(
+            items,
+            position,
+            SidebarMenuPlacement::Pointer,
+            scale,
+            window,
+            cx,
+        );
+    }
+
+    /// CDXC:Sidebar 2026-09-21 DECISION:
+    /// User: clicking the sidebar More button again closes that menu. Reading whether the menu is still open cannot toggle: the overlay and the sidebar root both dismiss on the outside mouse down (the button sits above the panel), then the button's click would open a fresh one. The dismissal records the time, and a press on this button within 250ms is the closing half of that press. This supersedes closing only when the menu was still open.
+    pub(crate) fn toggle_native_sidebar_more_menu(
+        &mut self,
+        items: &Value,
+        trigger: Bounds<Pixels>,
+        scale: f32,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self
+            .native_sidebar
+            .menu
+            .as_ref()
+            .is_some_and(SidebarMenuState::dropped_from_trigger)
+        {
+            self.native_sidebar.more_menu_dismissed_at = None;
+            self.close_native_sidebar_menu(window, cx);
+            return;
+        }
+        if self
+            .native_sidebar
+            .more_menu_dismissed_at
+            .take()
+            .is_some_and(|at| at.elapsed() < MORE_MENU_SAME_PRESS)
+        {
+            return;
+        }
+        Self::show_native_sidebar_menu_below(items, trigger, scale, window, cx);
+    }
+
+    /// CDXC:Sidebar 2026-09-21 DECISION:
+    /// User: the sidebar menu drops down from its trigger button rather than opening where the pointer was: its right edge lines up with the button's right edge, and it sits below the button with a 5px gap.
+    pub(crate) fn show_native_sidebar_menu_below(
+        items: &Value,
+        trigger: Bounds<Pixels>,
+        scale: f32,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        Self::open_native_sidebar_menu(
+            items,
+            Point::new(
+                trigger.right(),
+                trigger.bottom() + px(SIDEBAR_MENU_TRIGGER_GAP * scale),
+            ),
+            SidebarMenuPlacement::BelowTrigger,
+            scale,
+            window,
+            cx,
+        );
+    }
+
+    fn open_native_sidebar_menu(
+        items: &Value,
+        position: Point<Pixels>,
+        placement: SidebarMenuPlacement,
         scale: f32,
         window: &mut Window,
         cx: &mut gpui::App,
@@ -29,7 +105,9 @@ impl GhostexGpuiApp {
                 .downcast::<GhostexGpuiApp>()
                 .ok()
         });
-        #[cfg(target_os = "macos")]
+        // A menu opened from the floating panel belongs to the same app entity; the panel's own
+        // window root is what the lookup above cannot see. Every platform floats now, so this is
+        // no longer a macOS-only branch.
         let app = app.or_else(|| {
             window
                 .root::<Root>()
@@ -38,7 +116,7 @@ impl GhostexGpuiApp {
                     root.read(cx)
                         .view()
                         .clone()
-                        .downcast::<super::reveal::FloatingSidebarWindow>()
+                        .downcast::<crate::app::floating_reveal::window::FloatingRevealWindow>()
                         .ok()
                 })
                 .and_then(|view| view.read(cx).app.upgrade())
@@ -71,7 +149,10 @@ impl GhostexGpuiApp {
                     app.native_sidebar.menu = Some(SidebarMenuState {
                         window: source,
                         account_panel,
-                        panels: vec![SidebarMenuPanel::new(items, position)],
+                        panels: vec![SidebarMenuPanel {
+                            placement,
+                            ..SidebarMenuPanel::new(items, position)
+                        }],
                         focus,
                         previous_focus,
                         scale,
@@ -179,7 +260,7 @@ impl GhostexGpuiApp {
                     .chain(children.clone())
                     .collect(),
                 );
-                menu.panels.truncate(panel_index + 1);
+                truncate_panels(menu, panel_index + 1);
             } else if owns_open_child {
                 if toggle {
                     close_child_panel(menu, panel_index, item_index);
@@ -187,7 +268,7 @@ impl GhostexGpuiApp {
             } else {
                 panel.selected = Some(item_index);
                 panel.child_item = Some(item_index);
-                menu.panels.truncate(panel_index + 1);
+                truncate_panels(menu, panel_index + 1);
                 menu.panels.push(SidebarMenuPanel::new(
                     children.clone(),
                     Point::new(
@@ -202,20 +283,13 @@ impl GhostexGpuiApp {
                     // The accounts flyout is already up; this click only takes it back down.
                     if toggle {
                         close_child_panel(menu, panel_index, item_index);
-                        if menu
-                            .account_panel
-                            .as_ref()
-                            .is_some_and(|(_, index)| *index == panel_index + 1)
-                        {
-                            menu.account_panel = None;
-                        }
                         cx.notify();
                     }
                     return;
                 }
                 panel.selected = Some(item_index);
                 panel.child_item = Some(item_index);
-                menu.panels.truncate(panel_index + 1);
+                truncate_panels(menu, panel_index + 1);
                 menu.account_panel = command["sessionId"]
                     .as_str()
                     .map(|id| (id.to_owned(), panel_index + 1));
@@ -292,7 +366,28 @@ impl GhostexGpuiApp {
             .h(bottom - top)
             .track_focus(&menu.focus)
             .on_mouse_down_out(
-                cx.listener(|app, _, window, cx| app.close_native_sidebar_menu(window, cx)),
+                cx.listener(|app, event: &gpui::MouseDownEvent, window, cx| {
+                    let position = window.mouse_position();
+                    if app
+                        .native_sidebar
+                        .more_button_bounds
+                        .get()
+                        .is_some_and(|bounds| {
+                            bounds.contains(&position) || bounds.contains(&event.position)
+                        })
+                    {
+                        return;
+                    }
+                    if app
+                        .native_sidebar
+                        .menu
+                        .as_ref()
+                        .is_some_and(SidebarMenuState::dropped_from_trigger)
+                    {
+                        app.native_sidebar.more_menu_dismissed_at = Some(web_time::Instant::now());
+                    }
+                    app.close_native_sidebar_menu(window, cx);
+                }),
             )
             .on_key_down(cx.listener(|app, event: &gpui::KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
@@ -319,7 +414,8 @@ impl GhostexGpuiApp {
                     }
                     "left" => {
                         if menu.panels.len() > 1 {
-                            menu.panels.pop();
+                            let len = menu.panels.len() - 1;
+                            truncate_panels(menu, len);
                             // The parent row keeps the keyboard cursor but no longer owns a panel,
                             // so Right reopens the submenu instead of finding it already open.
                             if let Some(panel) = menu.panels.last_mut() {
@@ -517,7 +613,7 @@ impl GhostexGpuiApp {
                                 .child(
                                     h_flex()
                                         .gap(px(4.0 * scale))
-                                        .child(div().min_w_0().child(label))
+                                        .child(div().min_w_0().whitespace_nowrap().child(label))
                                         .when_some(item["suffix"].as_str(), |row, suffix| {
                                             row.child(
                                                 div()
@@ -625,7 +721,21 @@ fn close_child_panel(menu: &mut SidebarMenuState, panel_index: usize, item_index
             panel.selected = None;
         }
     }
-    menu.panels.truncate(panel_index + 1);
+    truncate_panels(menu, panel_index + 1);
+}
+
+/// Every panel stack cut goes through here: an answer still on its way to a panel that is gone
+/// (closed, popped with Left, or replaced by another row's submenu at the same index) would
+/// otherwise land in whatever panel sits at that index now.
+fn truncate_panels(menu: &mut SidebarMenuState, len: usize) {
+    menu.panels.truncate(len);
+    if menu
+        .account_panel
+        .as_ref()
+        .is_some_and(|(_, index)| *index >= len)
+    {
+        menu.account_panel = None;
+    }
 }
 
 /// Records the rendered rows' height (plus `chrome`: vertical padding and border) so the panel's next frame fits them exactly.

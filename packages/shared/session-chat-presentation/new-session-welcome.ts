@@ -18,9 +18,10 @@ import { getDefaultSidebarAgentById, isSidebarAgentIcon, type SidebarAgentIcon }
 /**
  * A new agent reports `starting` until its first transcript file exists, and
  * `empty` once the file is there but still has no turns. The welcome owns both.
+ * A known draft is also empty while its first read runs.
  */
-export function sessionChatShowsNewSessionWelcome(viewKind: string | null | undefined): boolean {
-  return viewKind === 'starting' || viewKind === 'empty';
+export function sessionChatShowsNewSessionWelcome(viewKind: string | null | undefined, isDraft = false): boolean {
+  return viewKind === 'starting' || viewKind === 'empty' || (viewKind === 'loading' && isDraft);
 }
 
 /** The agent's display name, e.g. `claude-code` → `Claude Code`. */
@@ -53,7 +54,27 @@ export function sessionChatWelcomeAgentIcon(
 }
 
 export function sessionChatNewSessionWelcomeTitle(agentName: string | null | undefined): string {
-  return agentName ? `What should we build with ${agentName}?` : 'What should we work on?';
+  const title = agentName ? `What should we build with ${agentName}?` : 'What should we work on?';
+  return wrapNewSessionWelcomeTitle(title);
+}
+
+/**
+ * CDXC:SessionChat 2026-09-20 DECISION:
+ * User: when chat is very narrow, the welcome title wraps, is center aligned, and the second line has 2 or 3 words, never 1.
+ * A 6+ word headline keeps 3 words on the last line ("What should we" / "build with Codex?"); shorter ones keep 2 ("What should we" / "work on?").
+ * SEE-ALSO: apps/desktop/src/app/native_chat/new_session_welcome.rs, packages/core-ui/chat/session-chat-new-session-welcome.tsx.
+ */
+export function wrapNewSessionWelcomeTitle(title: string): string {
+  if (title.includes('\n')) {
+    return title;
+  }
+  const words = title.split(/\s+/).filter(Boolean);
+  if (words.length < 4) {
+    return title;
+  }
+  const lastCount = words.length >= 6 ? 3 : 2;
+  const split = words.length - lastCount;
+  return `${words.slice(0, split).join(' ')}\n${words.slice(split).join(' ')}`;
 }
 
 /**

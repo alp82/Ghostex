@@ -177,7 +177,7 @@ impl GhostexGpuiApp {
             .into_any_element()
     }
 
-    #[allow(dead_code)] // no caller: the browser tab strip is drawn by the CEF browser chrome; this native gpui strip (and everything it calls) is the superseded implementation
+    #[allow(dead_code)] // no caller: browser tabs are drawn in the view panel's tab strip (render/view_tab_strip_browser_tabs.rs); this per-pane strip, and everything only it calls, is the superseded implementation
     pub(crate) fn render_browser_tab_strip(
         &self,
         leaf: &BrowserLeaf,
@@ -387,7 +387,6 @@ impl GhostexGpuiApp {
             .child(self.render_browser_tab_icon(
                 profile_id,
                 chrome_status,
-                runtime_favicon_url,
                 runtime_favicon_image.as_ref(),
                 runtime_favicon_fetch.as_ref(),
             ))
@@ -496,14 +495,12 @@ impl GhostexGpuiApp {
         &self,
         profile_id: BrowserProfileId,
         chrome_status: BrowserTabChromeStatus,
-        runtime_favicon_url: Option<&str>,
         runtime_favicon_image: Option<&BrowserFaviconImage>,
         runtime_favicon_fetch: Option<&BrowserFaviconFetchSource>,
     ) -> AnyElement {
         browser_tab_icon_element(
             profile_id,
             chrome_status,
-            runtime_favicon_url,
             runtime_favicon_image,
             runtime_favicon_fetch,
         )

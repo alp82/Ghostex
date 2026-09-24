@@ -122,6 +122,12 @@ pub(crate) fn create_attach_session_metadata_with_observed_state(
         build_zmx_attach_command(attach_command_input)
     };
     let mut attach = Map::new();
+    // CDXC:SessionChat 2026-09-21 WHY: `session` below is the stored record, whose icon lives in `launchSettings.icon` or, for an older custom-agent session, only in the project's custom agent list. The desktop decides Chat View support from the icon before any presentation row reaches it, so it gets the same resolved icon the sidebar projection publishes instead of re-deriving it from an agent id.
+    if let Some(agent_icon) =
+        crate::presentation::util::session_agent_icon(Some(&project), &session_for_attach)
+    {
+        attach.insert("agentIcon".to_string(), Value::String(agent_icon));
+    }
     attach.insert("attachCommand".to_string(), Value::String(attach_command));
     if let Some(cwd) = cwd {
         attach.insert("cwd".to_string(), Value::String(cwd));
@@ -569,7 +575,9 @@ pub fn read_zmx_session_process_identities(
     )
     .map_err(ZmxEndpointError::DependencyUnavailable)?;
     if result.exit_code != 0 {
-        return Ok(HashMap::new());
+        return Err(ZmxEndpointError::DependencyUnavailable(
+            "Could not read the session process snapshot.".to_string(),
+        ));
     }
     let (ps_output, zmx_list_output) = parse_zmx_process_snapshot_sections(&result.stdout);
     let mut identities =

@@ -244,10 +244,12 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
             eprintln!("reveal");
             cx.quit();
         }
+        ExportTranscriptModalCommand::PathCopied => eprintln!("path copied (copy feedback)"),
     });
     let config = ExportTranscriptModalConfig {
         agents,
         default_agent_id: Some("codex".to_string()),
+        target_agent_id: None,
         palette: demo.palette,
         prefs_path: None,
         initial_mode,

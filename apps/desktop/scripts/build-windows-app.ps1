@@ -12,16 +12,43 @@
 #                                         browser_subprocess_path (sibling)
 #     libcef.dll, chrome_elf.dll, ...  <- CEF Release/ payload
 #     icudtl.dat, *.pak, locales/      <- CEF Resources/ payload
-#     dist/sidebar/                    <- sidebar bundle; the /dist/sidebar/
-#                                         path segment is load-bearing for the
-#                                         CEF helper first-party URL check and
-#                                         the sidebar_url() Windows arm.
+#     dist/sidebar/                    <- the CEF page bundles; the
+#                                         /dist/sidebar/ path segment is
+#                                         load-bearing for the CEF helper's
+#                                         first-party URL check.
 
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $GpuiDir = Resolve-Path (Join-Path $ScriptDir "..")
 $RepoRoot = Resolve-Path (Join-Path $GpuiDir "../..")
+
+<#
+CDXC:Build 2026-09-18 WHY:
+create-deterministic-tar.sh is a Git for Windows script: it takes Windows paths
+and branches on a MINGW/MSYS/CYGWIN `uname`. Resolving it through `bash` on PATH
+picked WSL's Linux bash on any machine with WSL installed, because Git for
+Windows keeps bash.exe in Git\bin, which it deliberately leaves off PATH. WSL
+bash cannot open `C:\...` arguments, so packaging died with no diagnostic.
+Resolve bash beside git.exe, the same way build-windows-code-server.ps1 does.
+Walk up from every git.exe on PATH rather than assuming one fixed depth: a
+start launched from a Git Bash shell resolves git.exe to Git\mingw64\bin, two
+levels below the install root, while a PowerShell start resolves it to Git\cmd,
+one level below.
+#>
+function Get-GitBash {
+    foreach ($GitPath in (Get-Command git.exe -All -ErrorAction Stop | Select-Object -ExpandProperty Source)) {
+        $Candidate = Split-Path $GitPath -Parent
+        for ($Level = 0; $Level -lt 3 -and $Candidate; $Level += 1) {
+            $Candidate = Split-Path $Candidate -Parent
+            if (!$Candidate) { break }
+            $Bash = Join-Path $Candidate "bin/bash.exe"
+            if (Test-Path $Bash) { return $Bash }
+        }
+    }
+    throw "Git for Windows bash.exe was not found beside git.exe."
+}
+$GitBash = Get-GitBash
 $AppName = "Ghostex"
 $AppDir = Join-Path $GpuiDir "build/windows/$AppName"
 $OnDemandComponents = $env:GHOSTEX_ON_DEMAND_ASSETS -eq "1"
@@ -221,7 +248,7 @@ if ($OnDemandComponents) {
     }
     if ($SwiftshaderIcd) { Copy-Item -LiteralPath $SwiftshaderIcd $CefComponentStage }
     Copy-Item -Recurse -LiteralPath $Locales -Destination (Join-Path $CefComponentStage "locales")
-    & bash (Join-Path $RepoRoot "tooling/release-gpui/create-deterministic-tar.sh") $CefComponentStage $CefComponentAsset --windows-component
+    & $GitBash (Join-Path $RepoRoot "tooling/release-gpui/create-deterministic-tar.sh") $CefComponentStage $CefComponentAsset --windows-component
     if ($LASTEXITCODE -ne 0) { throw "Could not create the deterministic Windows CEF component asset" }
     Remove-Item -Recurse -Force $CefComponentStage
     & node (Join-Path $RepoRoot "tooling/release-gpui/publish-component.mjs") `
@@ -319,7 +346,7 @@ if ($WslCodeServerArchive -and (Test-Path $WslCodeServerArchive)) {
     New-Item -ItemType Directory -Force -Path $ComponentStage | Out-Null
     Copy-Item $WslCodeServerArchive (Join-Path $ComponentStage $InnerArchiveName)
     Copy-Item "$WslCodeServerArchive.sha256" (Join-Path $ComponentStage "$InnerArchiveName.sha256")
-    & bash (Join-Path $RepoRoot "tooling/release-gpui/create-deterministic-tar.sh") $ComponentStage $ComponentAsset --windows-component
+    & $GitBash (Join-Path $RepoRoot "tooling/release-gpui/create-deterministic-tar.sh") $ComponentStage $ComponentAsset --windows-component
     if ($LASTEXITCODE -ne 0) { throw "Could not create the deterministic Windows code-server component asset" }
     Remove-Item -Recurse -Force $ComponentStage
     $ComponentAssetSha = (Get-FileHash -Algorithm SHA256 $ComponentAsset).Hash.ToLowerInvariant()

@@ -298,6 +298,47 @@ export function normalizeGpuiProjectPath(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim().replace(/\/+$/u, '') : undefined;
 }
 
+/**
+ * The text the Add Worktree dialog shows when the daemon's worktree or branch
+ * listing fails: the folder git ran in plus git's own first line, so a folder
+ * that is not a repository names itself instead of hiding behind a generic
+ * "could not load" sentence.
+ */
+export function gpuiWorktreeListFailureMessage(
+  folder: string | undefined,
+  results: ReadonlyArray<Pick<GxserverTypedOperationResult, 'action' | 'error' | 'exitCode' | 'stderr'>>
+): string {
+  const failed = results.find((result) => result.exitCode !== 0);
+  const detail =
+    failed?.error?.message?.trim() ||
+    (failed?.stderr ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ||
+    '';
+  const where = normalizeGpuiProjectPath(folder) ?? 'the project folder';
+  const bounded = detail.length > 240 ? `${detail.slice(0, 239)}\u2026` : detail;
+  return bounded ? `Git could not read ${where}: ${bounded}` : `Git could not read ${where}.`;
+}
+
+/**
+ * The dialog error for a failed listing request: a message the typed-operation
+ * helper above already phrased passes through, an RPC or transport failure is
+ * prefixed with the folder it was about, and anything else keeps the old
+ * generic sentence.
+ */
+export function gpuiWorktreeListErrorText(error: unknown, folder: string | undefined): string {
+  const message = error instanceof Error ? error.message.trim() : '';
+  if (!message) {
+    return 'Could not load gxserver worktrees.';
+  }
+  if (message.startsWith('Git could not read ')) {
+    return message;
+  }
+  const where = normalizeGpuiProjectPath(folder) ?? 'the project folder';
+  return `Could not load worktrees for ${where}: ${message}`;
+}
+
 export function normalizeGpuiWorktreeBaseBranches(
   branches: GxserverTypedOperationResult['branches']
 ): Array<{ current: boolean; name: string; remote: boolean }> {
@@ -402,15 +443,24 @@ export function createGpuiExistingWorktreeOptions(
 }
 
 export function gpuiProjectNameFromPath(path: string): string {
-  return path.split('/').filter(Boolean).at(-1) ?? 'Project';
+  return gpuiProjectPathSeparators(path).split('/').filter(Boolean).at(-1) ?? 'Project';
 }
 
+/**
+ * CDXC:Worktrees 2026-09-23 WHY:
+ * Worktree targets are siblings of a registered project on its owning computer. Rebuilding every parent with a leading slash turns C:/dev/project into /C:/dev, which Windows rejects before Git runs; preserve drive and UNC roots as well as POSIX paths.
+ */
 export function gpuiDirname(path: string): string {
-  const parts = path.replace(/\/+$/u, '').split('/').filter(Boolean);
-  if (parts.length <= 1) {
-    return '/';
-  }
-  return `/${parts.slice(0, -1).join('/')}`;
+  const normalized = gpuiProjectPathSeparators(path);
+  const root = normalized.match(/^(?:[a-z]:\/|\/\/[^/]+\/[^/]+\/?|\/)/iu)?.[0] ?? '';
+  const trimmed = normalized.replace(/\/+$/u, '');
+  const separator = trimmed.lastIndexOf('/');
+  if (separator < root.length) return root || '.';
+  return trimmed.slice(0, separator);
+}
+
+function gpuiProjectPathSeparators(path: string): string {
+  return /^(?:[a-z]:[\\/]|\\\\|\/\/)/iu.test(path) ? path.replace(/\\/gu, '/') : path;
 }
 
 export function gpuiWorktreeSlugFromPrompt(prompt: string): string {

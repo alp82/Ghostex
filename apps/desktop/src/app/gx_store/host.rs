@@ -9,9 +9,13 @@ use ghostex_gx_core::{ConnectionPhase, ConnectionUpdate, Core, Event, MachineId}
 
 use super::diagnostics::GxStoreDiagnostics;
 use super::layout_persist::LayoutPersist;
-use super::local_focus::LocalFocus;
+use super::local_focus::{DrawnFocus, LocalFocus};
 use super::shadow_diff::{ObservedFocus, ShadowDiff};
+use super::sidebar_list::SidebarList;
+use super::sidebar_self_check::SidebarSelfCheck;
+use super::sidebar_ui::SidebarUiHost;
 use crate::GhostexGpuiApp;
+use crate::app::helpers::GpuiGxserverPresentationFocusEcho;
 use crate::app::model::GpuiGxserverPresentationFocusState;
 
 /// The daemon does not route by this id; it only tells this socket apart from the old runtime's
@@ -54,6 +58,23 @@ pub(super) struct PumpOutcome {
     /// The drain found the client's channel closed: its thread is gone and must be replaced.
     pub(super) thread_ended: bool,
     pub(super) tab_lists_changed: bool,
+    /// The daemon's copy of the workspace session groups document landed. The guard decides what
+    /// that means, one level up, where there is a `cx` to write storage and book a push with.
+    pub(super) workspace_groups_changed: bool,
+    /// The daemon's copy of the project collections document landed.
+    pub(super) project_collections_changed: bool,
+    /// The daemon's copy of the Spaces document landed.
+    pub(super) spaces_changed: bool,
+    /// A full snapshot replaced this computer's machine.
+    ///
+    /// CDXC:Sessions 2026-09-21 WHY:
+    /// Every client-owned document has to be judged against the daemon's copy on a reload, whatever
+    /// the three flags above say. A host that SEEDS the store with a document (all three of these
+    /// do: the stored key is read and put into the side state) makes those flags mean "the daemon's
+    /// copy differs from what this host last wrote there", so on an ordinary launch, where they
+    /// agree, the guard is never asked at all. That cost two live rounds to find, because it is
+    /// invisible except as a counter that stays at zero.
+    pub(super) local_reloaded: bool,
 }
 
 /// CDXC:StateSync 2026-09-19 DECISION:
@@ -74,9 +95,68 @@ pub(crate) struct GxStoreHost {
     pub(super) counters: GxStoreCounters,
     connecting_since: Option<Instant>,
     pub(super) shadow: ShadowDiff,
+    pub(crate) sidebar_ui: SidebarUiHost,
+    pub(crate) sidebar_list: SidebarList,
+    pub(super) sidebar_self_check: SidebarSelfCheck,
     pub(super) diagnostics: GxStoreDiagnostics,
     pub(crate) local_focus: LocalFocus,
     pub(crate) layout_persist: LayoutPersist,
+    /// One client per connected remote machine, and the machine tabs the sidebar draws.
+    pub(crate) remote: super::remote_clients::RemoteClients,
+    pub(super) menu_host: super::sidebar_menus::MenuHostCache,
+    pub(super) sidebar_actions: super::sidebar_actions::SidebarActionCounters,
+    pub(super) sidebar_lifecycle: super::sidebar_lifecycle::SidebarLifecycleCounters,
+    pub(super) sidebar_flags: super::sidebar_flags::SidebarFlagsCounters,
+    pub(super) sidebar_modals: super::sidebar_modals::SidebarModalCounters,
+    pub(super) sidebar_open: super::sidebar_open::SidebarOpenCounters,
+    /// The two account pages' state and counters.
+    pub(super) sidebar_accounts: super::sidebar_accounts::SidebarAccountsHost,
+    pub(super) sidebar_snooze: super::sidebar_snooze::SidebarSnoozeCounters,
+    pub(super) sidebar_bulk: super::sidebar_bulk::SidebarBulkCounters,
+    pub(super) sidebar_drag: super::sidebar_drag::SidebarDragCounters,
+    /// Close Project's successor, which the sidebar page used to fill in.
+    pub(super) close_project: super::sidebar_close_project::CloseProjectCounters,
+    /// A local row's click, routed straight to the runtime instead of through the page.
+    pub(super) local_focus_route: super::sidebar_focus_route::LocalFocusRouteCounters,
+    /// Drags dropped before the document they edit had been read.
+    pub(super) drop_queue: super::sidebar_drop_queue::SidebarDropQueue,
+    /// A remote row's session actions: their counters and their log budgets.
+    pub(super) sidebar_remote: super::sidebar_remote::SidebarRemoteHost,
+    pub(super) sidebar_remote_focus: super::sidebar_remote_focus::SidebarRemoteFocusHost,
+    /// The project slot hotkeys' jump: its counters and its log budget.
+    pub(super) slot_jump: super::sidebar_slot_jump::SlotJumpHost,
+    /// The session slot hotkeys (cmd+1..9): their counters and their log budget.
+    pub(super) session_slot: super::sidebar_session_slot::SessionSlotHost,
+    /// The client-owned workspace session groups document, its stored key and its pending-push
+    /// guard.
+    pub(crate) workspace_groups: super::workspace_groups::WorkspaceGroupsHost,
+    /// K5, the project collections document, on the generic client-document host.
+    pub(crate) collections:
+        super::client_document::ClientDocumentHost<ghostex_gx_core::CollectionsDocument>,
+    /// K6, the Spaces document. Same host, no stored key.
+    pub(crate) spaces: super::client_document::ClientDocumentHost<ghostex_gx_core::SpacesDocument>,
+    pub(super) project_moves: super::project_docs::ProjectMoveCounters,
+    /// K5 and K6 on a REMOTE machine: the per-machine `nextCollectionNumber` floor and what this
+    /// run sent down the machine tunnels.
+    pub(super) remote_project_docs: super::remote_project_docs::RemoteProjectDocsHost,
+    /// A Project Group's Rename, colour and Ungroup, which write the same K5 document.
+    pub(super) collection_menu: super::collection_menu::CollectionMenuCounters,
+    /// The New/Edit Space dialog's results, which write the K6 document.
+    pub(super) space_editor: super::space_editor::SpaceEditorCounters,
+    /// The focus a Space switch restores.
+    pub(super) space_switch: super::space_switch::SpaceSwitchCounters,
+    /// The project the Add Project dialog last reported, and where it goes.
+    pub(super) added_project: super::added_project::AddedProjectHost,
+    /// The last-seen copy of every remote machine: which ones owe a write, and what is unwritten.
+    pub(crate) last_seen: super::remote_last_seen::RemoteLastSeenWriter,
+    /// What the fall-through of the sidebar dispatch did with each command.
+    pub(super) runtime_route: super::sidebar_runtime_route::SidebarRuntimeRouteCounters,
+    /// The runtime's one-way facts channel, beside the publish it is compared with.
+    pub(crate) runtime_facts: super::runtime_facts::SidebarRuntimeFacts,
+    /// The collection a project move just created, which the renderer opens its Rename on. Held
+    /// here rather than carried from the old projection's publish, because the create is the
+    /// store's now and the publish would not know about it.
+    pub(super) pending_collection_rename: Option<(String, u64)>,
 }
 
 impl GxStoreHost {
@@ -116,6 +196,8 @@ impl GxStoreHost {
         self.counters.events += events.len() as u64;
         self.counters.largest_burst = self.counters.largest_burst.max(events.len());
         let output = self.core.handle_batch(events, now_ms());
+        // The sidebar list derives from these; it applies them when it next updates.
+        self.sidebar_list.note_changes(&output.changes);
         if let Some(loaded) = self.core.presentation().loaded(&MachineId::Local) {
             self.held_revision.store(loaded.revision, Ordering::Release);
         }
@@ -137,6 +219,14 @@ impl GxStoreHost {
         let outcome = PumpOutcome {
             thread_ended,
             tab_lists_changed: output.changes.tab_lists_changed(),
+            workspace_groups_changed: output.changes.side_state.workspace_groups,
+            project_collections_changed: output.changes.side_state.project_collections,
+            spaces_changed: output.changes.side_state.spaces,
+            local_reloaded: output
+                .changes
+                .machines_reloaded
+                .iter()
+                .any(MachineId::is_local),
         };
         self.run_effects(output.effects);
         // New frames may be exactly what a pending tab list difference was waiting for.
@@ -200,7 +290,7 @@ impl GxStoreHost {
             ConnectionUpdate::Lost { .. } => self.counters.connections_lost += 1,
             _ => {}
         }
-        self.diagnostics.connection(update);
+        self.diagnostics.connection(&MachineId::Local, update);
     }
 
     /// Mirrors the old runtime's focus into the core and compares its tab list with the store's.
@@ -209,12 +299,12 @@ impl GxStoreHost {
     fn observe_old_runtime_focus_state(
         &mut self,
         old_state: &GpuiGxserverPresentationFocusState,
-        observed_stamp: u64,
+        echo: &GpuiGxserverPresentationFocusEcho,
     ) -> bool {
         let waiting_since = self.shadow.pending_since();
         let observed = self
             .shadow
-            .observe(&mut self.core, old_state, observed_stamp, now_ms());
+            .observe(&mut self.core, old_state, echo, now_ms());
         self.note_observed_focus(observed);
         self.diagnostics.shadow_summary(&self.shadow, &self.core);
         // A new difference, or another one than was waiting, starts its own clock.
@@ -226,12 +316,14 @@ impl GxStoreHost {
     fn note_observed_focus(&mut self, observed: ObservedFocus) {
         match observed {
             ObservedFocus::Stale => {}
-            ObservedFocus::Local => self.local_focus.foreign_focus = false,
-            ObservedFocus::Foreign => self.local_focus.foreign_focus = true,
+            ObservedFocus::Local => self.local_focus.drawn_focus = DrawnFocus::Store,
+            // The publish is the answer to whatever the store could not place, so from here the
+            // old runtime's own projection owns the highlight again.
+            ObservedFocus::Foreign => self.local_focus.drawn_focus = DrawnFocus::Foreign,
         }
     }
 
-    fn settle_shadow_diff(&mut self) {
+    pub(super) fn settle_shadow_diff(&mut self) {
         if let Some(mismatch) = self.shadow.settle(&mut self.core, SHADOW_SETTLE, now_ms()) {
             self.diagnostics.shadow_mismatch(&mismatch, &self.core);
         }
@@ -262,6 +354,14 @@ impl GhostexGpuiApp {
         self.gx_store
             .restore_focus_once(&self.sidebar_gxserver_presentation_focus_state);
         self.start_gx_store_layout_persist_task(cx);
+        // The sidebar's own once-a-second tick, which the armed-timer labels and the menu-host
+        // re-read ride (sidebar_clock.rs). Started once, and not tied to having a transport.
+        self.gx_store_start_sidebar_clock(cx);
+        // The sidebar's own state is read once, and again later if that read failed.
+        self.gx_store_restore_sidebar_ui(cx);
+        // A machine may already have connected before the store came up, and the machine tabs are
+        // built here whether or not one has.
+        self.gx_store_sync_remote_clients(true, cx);
         if self.gx_store.transport == next {
             return;
         }
@@ -364,9 +464,51 @@ impl GhostexGpuiApp {
     /// Returns `true` when the client's thread is gone.
     fn gx_store_pump(&mut self, cx: &mut gpui::Context<Self>) -> bool {
         let outcome = self.gx_store.pump();
+        // NOT `workspace_groups_changed` alone. This host seeds the core's side state with the
+        // stored document itself, so on an ordinary launch the reducer compares the daemon's copy
+        // against what this host just put there, agrees, and reports no change: the guard was then
+        // never asked anything for a whole run. A reload asks it regardless
+        // (gx-core `doc_sync::document_reconcile_wanted`). K5 and K6 need the same treatment on
+        // their own flags below; `local_reloaded` is here for all three.
+        if ghostex_gx_core::document_reconcile_wanted(
+            outcome.workspace_groups_changed,
+            outcome.local_reloaded,
+        ) {
+            self.gx_store.workspace_groups.counters.reconcile_seen += 1;
+            // The daemon's copy is already in the store by now; the guard says whether it may stay.
+            self.gx_store_reconcile_workspace_groups(cx);
+        }
+        // The collections key is read here rather than by whatever asks for it first, so the read
+        // is already in hand when the daemon's first snapshot arrives and the first echo of a run
+        // is judged rather than deferred (gx_store/project_docs.rs).
+        self.gx_store_book_project_docs_read(cx);
+        // The same funnel for K5 and K6: the daemon's copy is already in the store by now, and the
+        // guard says whether it may stay. One place, off the change summary, rather than an
+        // interception on the frame path.
+        let collections_wanted = ghostex_gx_core::document_reconcile_wanted(
+            outcome.project_collections_changed,
+            outcome.local_reloaded,
+        );
+        let spaces_wanted = ghostex_gx_core::document_reconcile_wanted(
+            outcome.spaces_changed,
+            outcome.local_reloaded,
+        );
+        if collections_wanted || spaces_wanted {
+            self.gx_store_reconcile_project_docs(collections_wanted, spaces_wanted, cx);
+        }
+        // A session the daemon stopped listing is a member no group may keep, which the old runtime
+        // asked on every `createSidebarGroups`. Asked here on the same cadence, and free for the
+        // users who have no user-made groups at all: the document's project map is empty.
+        self.gx_store_prune_workspace_groups(cx);
         if self.gx_store_after_pump(outcome.tab_lists_changed, cx) {
             cx.notify();
         }
+        // A project the Add Project dialog reported is held until the daemon lists it; this is the
+        // burst that can be the one carrying it (gx_store/added_project.rs).
+        self.gx_store_place_added_project(cx);
+        // The list reads the store, so it is brought up to date once per burst rather than per
+        // event, and does nothing at all when the burst changed nothing it draws.
+        self.gx_store_update_sidebar_list(cx);
         outcome.thread_ended
     }
 
@@ -375,12 +517,15 @@ impl GhostexGpuiApp {
     pub(super) fn gx_store_observe_old_runtime_focus_state(
         &mut self,
         old_state: &GpuiGxserverPresentationFocusState,
-        observed_stamp: u64,
+        echo: &GpuiGxserverPresentationFocusEcho,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.gx_store
+            .sidebar_remote_focus
+            .observe_runtime_publish(echo);
         if !self
             .gx_store
-            .observe_old_runtime_focus_state(old_state, observed_stamp)
+            .observe_old_runtime_focus_state(old_state, echo)
         {
             return;
         }
@@ -395,6 +540,7 @@ impl GhostexGpuiApp {
                 if this.gx_store.refresh_row_focus_cache() {
                     cx.notify();
                 }
+                this.gx_store_sidebar_focus_moved(cx);
             });
         })
         .detach();

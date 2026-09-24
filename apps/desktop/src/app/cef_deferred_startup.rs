@@ -22,7 +22,7 @@ pub(crate) struct GpuiAppModalOpenDeferredForCef {
 impl GhostexGpuiApp {
     /// CDXC:CefRuntime 2026-09-19 DECISION:
     /// User: make startup as fast as possible by deferring CEF until it is actually needed, and warm it once launch has settled so Settings and quick access still open instantly.
-    /// Launch starts only the QuickJS sidebar and chat service. CEF starts on the first browser-creation signal (a woken web pane, a modal, React chat when GPUI chat is off) or after the warm-up delay, so Chromium's framework load and helper processes no longer compete with session restore.
+    /// Launch starts only the QuickJS sidebar and chat service. CEF starts on the first browser-creation signal (a woken web pane, a modal) or after the warm-up delay, so Chromium's framework load and helper processes no longer compete with session restore.
     pub(crate) fn begin_deferred_cef_startup(&mut self, cx: &mut gpui::Context<Self>) {
         self.ensure_native_service(cx);
         if let Some(mut demand) = cef::take_runtime_demand_receiver() {
@@ -77,14 +77,6 @@ impl GhostexGpuiApp {
         let Some(deferred) = self.app_modal_open_deferred_for_cef.take() else {
             return;
         };
-        let quick_access_sidebar_state_message = matches!(
-            deferred.modal,
-            GpuiAppModalKind::CommandPalette
-                | GpuiAppModalKind::PreviousSessions
-                | GpuiAppModalKind::RecentProjects
-                | GpuiAppModalKind::StashedPrompts
-        )
-        .then(|| deferred.sidebar_state_message.clone());
         self.open_gpui_app_modal_window_inner(
             deferred.modal,
             deferred.open_message,
@@ -93,10 +85,5 @@ impl GhostexGpuiApp {
             deferred.reset_ready_retry,
             cx,
         );
-        if let Some(sidebar_state_message) = quick_access_sidebar_state_message
-            && self.app_modal_window.is_some()
-        {
-            self.refresh_gpui_quick_access_sessions_state_in_background(sidebar_state_message, cx);
-        }
     }
 }

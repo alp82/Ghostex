@@ -15,6 +15,30 @@ pub(super) fn register(cx: &mut gpui::App) {
         return;
     }
     cx.set_global(ComposerKeysRegistered);
+    // CDXC:SessionChat 2026-09-23 SEE-ALSO:
+    // React's session-chat-lexical-input.tsx uses the primary modifier with Home/End for document movement and Shift selection. The native input only supplies macOS document-arrow defaults.
+    cx.bind_keys([
+        gpui::KeyBinding::new(
+            "secondary-home",
+            gpui_component::input::MoveToStart,
+            Some("NativeChat > Input"),
+        ),
+        gpui::KeyBinding::new(
+            "secondary-end",
+            gpui_component::input::MoveToEnd,
+            Some("NativeChat > Input"),
+        ),
+        gpui::KeyBinding::new(
+            "secondary-shift-home",
+            gpui_component::input::SelectToStart,
+            Some("NativeChat > Input"),
+        ),
+        gpui::KeyBinding::new(
+            "secondary-shift-end",
+            gpui_component::input::SelectToEnd,
+            Some("NativeChat > Input"),
+        ),
+    ]);
     cx.bind_keys(
         [
             ("enter", "enter"),
@@ -59,7 +83,12 @@ pub(super) trait ComposerInputActions: gpui::InteractiveElement + Sized {
 impl<T: gpui::InteractiveElement> ComposerInputActions for T {}
 
 impl NativeChatView {
-    fn composer_bound_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn composer_bound_key(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let is_held = self.composer_held_key.as_deref() == Some(key);
         self.composer_held_key = Some(key.to_owned());
         self.composer_key_down(
@@ -161,6 +190,19 @@ impl NativeChatView {
                 return;
             }
         }
+        // Answer editors own typing, selection and newline keys after their explicit submit shortcut above.
+        // Match React's editable-target guard before considering background typing into the composer.
+        if this
+            .answer_input
+            .iter()
+            .chain(this.async_answer_input.iter())
+            .map(|(_, input)| input)
+            .chain(this.note_input.iter())
+            .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+        {
+            cx.propagate();
+            return;
+        }
         if this.snapshot["questionCard"]["visible"] == true
             && this.snapshot["prompt"]["kind"] == "question"
         {
@@ -190,6 +232,10 @@ impl NativeChatView {
             return;
         };
         if !input.read(cx).focus_handle(cx).is_focused(window) {
+            // Another chat field (find bar, note, answer) owns its own typing.
+            if this.chat_text_field_focused(window, cx) {
+                return;
+            }
             /*
             CDXC:SessionChat 2026-09-18 DECISION:
             User (2026-09-06 and 2026-09-07, React composer): arrows and text-editing chords act on
@@ -272,9 +318,13 @@ impl NativeChatView {
             let choice = notice["choices"]
                 .as_array()
                 .and_then(|choices| choices.get(if primary { 0 } else { 1 }));
+            // Trust and Remember is click-only, like the host's
+            // `terminalNoticeActionShortcutEligible` says.
             let has_action = primary
                 && notice["actions"].as_array().is_some_and(|actions| {
-                    actions.iter().any(|action| action["answer"].is_object())
+                    actions.iter().any(|action| {
+                        action["answer"].is_object() && action["kind"] != "trustAndRemember"
+                    })
                 });
             let standalone_dialog = notice["dialog"]["rows"]
                 .as_array()

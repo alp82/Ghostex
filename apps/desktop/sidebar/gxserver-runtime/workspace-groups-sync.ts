@@ -8,7 +8,6 @@ import {
   createGpuiWorkspaceSessionSubgroupId,
   findGpuiWorkspaceSessionSubgroupForSession,
   getGpuiWorkspaceSessionSubgroups,
-  isEmptyGpuiWorkspaceSessionGroupsState,
   moveGpuiWorkspaceSessionToSubgroup,
   parseGpuiWorkspaceSessionGroupsState,
   parseGpuiWorkspaceSessionSubgroupId,
@@ -17,19 +16,14 @@ import {
   syncGpuiWorkspaceProjectOrder,
   syncGpuiWorkspaceSessionOrderInSubgroup,
   syncGpuiWorkspaceSessionSubgroupOrder,
-  writeStoredGpuiWorkspaceSessionGroupsState,
 } from '../workspace-session-groups';
 import {
-  GPUI_PROJECT_COLLECTIONS_SERVER_SYNC_DELAY_MS,
-  GPUI_PROJECT_COLLECTIONS_SERVER_SYNC_RETRY_DELAY_MS,
   GPUI_CUSTOM_SESSION_TAGS_SERVER_SYNC_DELAY_MS,
   GPUI_CUSTOM_SESSION_TAGS_SERVER_SYNC_RETRY_DELAY_MS,
-  GPUI_SIDEBAR_SPACES_SERVER_SYNC_DELAY_MS,
-  GPUI_SIDEBAR_SPACES_SERVER_SYNC_RETRY_DELAY_MS,
-  GPUI_WORKSPACE_GROUPS_SERVER_SYNC_DELAY_MS,
-  GPUI_WORKSPACE_GROUPS_SERVER_SYNC_RETRY_DELAY_MS,
 } from './constants';
+import type { GpuiWorkspaceSessionGroupsState } from '../workspace-session-groups';
 import type { GpuiSidebarRuntime } from './core';
+import type { NativeSidebarBridge } from '@/packages/shared/native-sidebar';
 import { createGpuiPresentationProjectProjectionMetadata } from './helpers/presentation-projection';
 import {
   createGpuiRemotePresentationGroupId,
@@ -69,12 +63,7 @@ at the bottom of this file is what keeps the two in step.
 */
 export interface GpuiSidebarRuntimeWorkspaceGroupMethods {
   persistWorkspaceGroups(): void;
-  scheduleWorkspaceGroupsServerSync(): void;
-  pushWorkspaceGroupsToGxserver(): Promise<void>;
-  adoptWorkspaceGroupsFromGxserver(serverState: unknown): void;
-  queueSidebarProjectCollectionsServerSync(state: GxserverSidebarProjectCollectionsState): void;
-  pushSidebarProjectCollectionsToGxserver(): Promise<void>;
-  forwardSidebarProjectCollectionsFromGxserver(state: GxserverSidebarProjectCollectionsState): void;
+  applyWorkspaceGroupsFromHost(state: unknown): void;
   forwardRemoteSidebarProjectCollectionsFromGxserver(
     remoteMachineId: string,
     state: GxserverSidebarProjectCollectionsState
@@ -83,9 +72,6 @@ export interface GpuiSidebarRuntimeWorkspaceGroupMethods {
     remoteMachineId: string,
     state: GxserverSidebarProjectCollectionsState
   ): Promise<void>;
-  queueSidebarSpacesServerSync(state: GxserverSidebarSpacesState): void;
-  pushSidebarSpacesToGxserver(): Promise<void>;
-  forwardSidebarSpacesFromGxserver(state: GxserverSidebarSpacesState): void;
   forwardRemoteSidebarSpacesFromGxserver(remoteMachineId: string, state: GxserverSidebarSpacesState): void;
   updateRemoteSidebarSpaces(remoteMachineId: string, state: GxserverSidebarSpacesState): Promise<void>;
   queueCustomSessionTagsServerSync(state: GxserverCustomSessionTagsState): void;
@@ -106,151 +92,104 @@ export interface GpuiSidebarRuntimeWorkspaceGroupMethods {
   workspaceSubgroupSidebarIdForSession(projectId: string, sessionId: string | undefined): string | undefined;
 }
 
+/** The document with its object keys in a fixed order, so two equal documents compare equal. */
+function canonicalWorkspaceGroupsJson(state: GpuiWorkspaceSessionGroupsState): string {
+  return JSON.stringify(state, (_key, value) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        )
+      : value
+  );
+}
+
+/**
+ * CDXC:Sessions 2026-09-21 WHY:
+ * The app's two scripts for this document (`workspace_groups_hand_back_script` and
+ * `workspace_groups_request_script`, packages/gx-core/src/workspace_groups/sync.rs) call these two
+ * bridge members, and the sidebar PAGE used to install them on its way past. The page is being
+ * deleted and the runtime is the half that still edits the document, so it installs them itself
+ * and drains a document that arrived before it ran.
+ */
+export function installGpuiWorkspaceGroupsHandBack(runtime: GpuiSidebarRuntime): void {
+  const bridge = (window.ghostexGpui = window.ghostexGpui ?? {}) as typeof window.ghostexGpui & NativeSidebarBridge;
+  bridge.applyWorkspaceGroups = (state) => {
+    runtime.applyWorkspaceGroupsFromHost(state);
+  };
+  bridge.requestWorkspaceGroups = () => {
+    runtime.persistWorkspaceGroups();
+  };
+  if (bridge.pendingWorkspaceGroups !== undefined) {
+    const parked = bridge.pendingWorkspaceGroups;
+    delete bridge.pendingWorkspaceGroups;
+    runtime.applyWorkspaceGroupsFromHost(parked);
+  }
+}
+
 export const gpuiSidebarRuntimeWorkspaceGroupMethods = {
   /*
   CDXC:Workarea 2026-07-02-03:49:
   GPUI sidebar named groups are a client-owned project overlay until gxserver exposes durable grouped workspace state.
   Route only local project/session ids through create, rename, close, move, and reorder operations; remote groups stay out of this path and localStorage mirrors macOS grouped workspace semantics.
   */
+  /*
+  CDXC:Sessions 2026-09-21 WHY:
+  This runtime is no longer a writer of `ghostex-gpui-workspace-session-groups` and no longer
+  pushes it to gxserver. It still EDITS the document for the paths the Rust store does not own
+  yet (create, rename, close, the project order, and placing a session it has just created or
+  forked into a group), and every one of those edits arrives here and is handed to the app, which
+  is the single writer and the single synchroniser (apps/desktop/src/app/gx_store/workspace_groups.rs).
+  Two writers of one key was the shape; the one that hurt is that the app's edits reach this page
+  only when the daemon echoes them back, so anything written from here in between was written from
+  a document that was already behind. `applyWorkspaceGroupsFromHost` is the other half: the app
+  hands the held document back after every change, so the next edit is computed from it.
+  Supersedes the 2026-07-12 decision's "localStorage stays the instant-edit source" only in WHERE
+  the write happens: it is still the instant-edit source, still a debounced write-through with an
+  indefinite retry, and still guarded against a stale echo, all of it now in Rust.
+  SEE-ALSO: packages/gx-core/src/workspace_groups/sync.rs.
+  */
   persistWorkspaceGroups(this: GpuiSidebarRuntime): void {
-    writeStoredGpuiWorkspaceSessionGroupsState(this.workspaceGroups);
-    this.scheduleWorkspaceGroupsServerSync();
-  },
-
-  /*
-  CDXC:Sessions 2026-07-12-00:00:
-  gxserver now keeps a durable copy of this overlay so iOS/Android render the
-  same named groups and ordering. localStorage stays the instant-edit source;
-  the server copy is a debounced write-through so group editing never waits on
-  an RPC. While a push is pending or failed, hydration must not clobber the
-  newer local state.
-  */
-  scheduleWorkspaceGroupsServerSync(this: GpuiSidebarRuntime): void {
-    this.workspaceGroupsServerSyncPending = true;
-    if (this.workspaceGroupsServerSyncTimeoutId !== undefined) {
-      window.clearTimeout(this.workspaceGroupsServerSyncTimeoutId);
-    }
-    this.workspaceGroupsServerSyncTimeoutId = window.setTimeout(() => {
-      this.workspaceGroupsServerSyncTimeoutId = undefined;
-      void this.pushWorkspaceGroupsToGxserver();
-    }, GPUI_WORKSPACE_GROUPS_SERVER_SYNC_DELAY_MS);
-  },
-
-  async pushWorkspaceGroupsToGxserver(this: GpuiSidebarRuntime): Promise<void> {
-    const client = this.client;
-    if (!client) {
-      return;
-    }
-    const pushed = this.workspaceGroups;
-    try {
-      await client.updateWorkspaceSessionGroups(pushed);
-      if (this.workspaceGroups === pushed) {
-        this.workspaceGroupsServerSyncPending = false;
-      }
-    } catch {
-      if (
-        this.client === client &&
-        this.workspaceGroupsServerSyncTimeoutId === undefined &&
-        this.workspaceGroupsServerSyncPending
-      ) {
-        this.workspaceGroupsServerSyncTimeoutId = window.setTimeout(() => {
-          this.workspaceGroupsServerSyncTimeoutId = undefined;
-          void this.pushWorkspaceGroupsToGxserver();
-        }, GPUI_WORKSPACE_GROUPS_SERVER_SYNC_RETRY_DELAY_MS);
-      }
-    }
-  },
-
-  adoptWorkspaceGroupsFromGxserver(this: GpuiSidebarRuntime, serverState: unknown): void {
-    if (serverState === undefined || this.workspaceGroupsServerSyncPending) {
-      return;
-    }
-    const parsed = parseGpuiWorkspaceSessionGroupsState(serverState);
-    if (isEmptyGpuiWorkspaceSessionGroupsState(parsed)) {
-      if (!isEmptyGpuiWorkspaceSessionGroupsState(this.workspaceGroups)) {
-        this.scheduleWorkspaceGroupsServerSync();
-      }
-      return;
-    }
-    if (JSON.stringify(parsed) === JSON.stringify(this.workspaceGroups)) {
-      return;
-    }
-    this.workspaceGroups = parsed;
-    writeStoredGpuiWorkspaceSessionGroupsState(parsed);
-  },
-
-  /*
-  CDXC:Projects 2026-07-18-00:00:
-  Colored "Group N" project collections mirror the workspace-groups sync shape,
-  but SidebarApp owns the localStorage overlay and the editing UI, so this
-  runtime only relays: sidebar `updateSidebarProjectCollections` commands are
-  debounced into gxserver write-throughs, and server state (startup snapshot,
-  live sidebarProjectCollectionsChanged events, update acks) is forwarded back
-  to SidebarApp for reconciliation. While a push is pending or failed, server
-  forwards are suppressed so older server state cannot clobber newer local
-  edits.
-  */
-  queueSidebarProjectCollectionsServerSync(
-    this: GpuiSidebarRuntime,
-    state: GxserverSidebarProjectCollectionsState
-  ): void {
-    this.latestSidebarProjectCollectionsUpdate = state;
-    this.sidebarProjectCollectionsServerSyncPending = true;
-    if (this.sidebarProjectCollectionsServerSyncTimeoutId !== undefined) {
-      window.clearTimeout(this.sidebarProjectCollectionsServerSyncTimeoutId);
-    }
-    this.sidebarProjectCollectionsServerSyncTimeoutId = window.setTimeout(() => {
-      this.sidebarProjectCollectionsServerSyncTimeoutId = undefined;
-      void this.pushSidebarProjectCollectionsToGxserver();
-    }, GPUI_PROJECT_COLLECTIONS_SERVER_SYNC_DELAY_MS);
-  },
-
-  async pushSidebarProjectCollectionsToGxserver(this: GpuiSidebarRuntime): Promise<void> {
-    const client = this.client;
-    const pushed = this.latestSidebarProjectCollectionsUpdate;
-    if (!client || !pushed) {
-      return;
-    }
-    try {
-      const normalized = await client.updateSidebarProjectCollections(pushed);
-      if (this.latestSidebarProjectCollectionsUpdate === pushed) {
-        this.sidebarProjectCollectionsServerSyncPending = false;
-        if (isSidebarProjectCollectionsState(normalized)) {
-          this.forwardSidebarProjectCollectionsFromGxserver(normalized);
-        }
-      }
-    } catch {
-      if (
-        this.client === client &&
-        this.sidebarProjectCollectionsServerSyncTimeoutId === undefined &&
-        this.sidebarProjectCollectionsServerSyncPending
-      ) {
-        this.sidebarProjectCollectionsServerSyncTimeoutId = window.setTimeout(() => {
-          this.sidebarProjectCollectionsServerSyncTimeoutId = undefined;
-          void this.pushSidebarProjectCollectionsToGxserver();
-        }, GPUI_PROJECT_COLLECTIONS_SERVER_SYNC_RETRY_DELAY_MS);
-      }
-    }
-  },
-
-  forwardSidebarProjectCollectionsFromGxserver(
-    this: GpuiSidebarRuntime,
-    state: GxserverSidebarProjectCollectionsState
-  ): void {
-    if (this.sidebarProjectCollectionsServerSyncPending) {
-      return;
-    }
-    const stateJson = JSON.stringify(state);
-    if (stateJson === this.lastForwardedSidebarProjectCollectionsJson) {
-      return;
-    }
-    this.lastForwardedSidebarProjectCollectionsJson = stateJson;
-    this.messageSource.postMessage({
-      sidebarProjectCollections: state,
-      type: 'sidebarProjectCollectionsChanged',
+    window.webkit?.messageHandlers?.ghostexNativeHost?.postMessage({
+      state: this.workspaceGroups,
+      type: 'persistWorkspaceGroups',
     });
   },
 
+  /**
+   * The document the app holds, which is the daemon's copy once the guard has judged it and the
+   * newest local edit while a push is outstanding. This page no longer reads the daemon's copy
+   * itself: it has no way to know whether a push is in flight, so adopting an echo here would be
+   * the oscillation the guard exists to prevent, one process over.
+   */
+  applyWorkspaceGroupsFromHost(this: GpuiSidebarRuntime, state: unknown): void {
+    const parsed = parseGpuiWorkspaceSessionGroupsState(state);
+    // A CONTENT comparison, not `JSON.stringify` on the two objects: the app emits `projects` from
+    // a sorted map and this page builds it in insertion order, so two equal documents can stringify
+    // differently and the test would answer "it moved" for a document that did not.
+    if (canonicalWorkspaceGroupsJson(parsed) === canonicalWorkspaceGroupsJson(this.workspaceGroups)) {
+      return;
+    }
+    this.workspaceGroups = parsed;
+    if (this.presentation) {
+      this.publishPresentation('patch');
+    } else {
+      this.publishRemotePresentationPatch();
+    }
+  },
+
+  /*
+  CDXC:Projects 2026-09-21 WHY:
+  The LOCAL half of this relay is gone, for both documents. `queueSidebarProjectCollectionsServerSync`,
+  its debounced `pushSidebarProjectCollectionsToGxserver`, the forward suppression in
+  `forwardSidebarProjectCollectionsFromGxserver` and the identical Spaces trio were what the
+  2026-07-18-00:00 and 2026-08-27 notes described, and they stopped being reachable when Rust became
+  the only desktop writer of this computer's copies (apps/desktop/src/app/gx_store/project_docs.rs,
+  M4d part 2 blocker 3): nothing posts an `updateSidebarProjectCollections` or
+  `updateSidebarSpaces` without a `remoteMachineId`, and the page that adopted the forward is
+  deleted. Only the REMOTE methods are left, and they are direct tunnel calls with no queue and no
+  pending flag. The deleted bodies are frozen for the gates in
+  tooling/gx-core/project-docs-server-sync-typescript.ts.
+  */
   forwardRemoteSidebarProjectCollectionsFromGxserver(
     this: GpuiSidebarRuntime,
     remoteMachineId: string,
@@ -287,72 +226,6 @@ export const gpuiSidebarRuntimeWorkspaceGroupMethods = {
       });
     }
     this.forwardRemoteSidebarProjectCollectionsFromGxserver(remoteMachineId, response.sidebarProjectCollections);
-  },
-
-  /*
-  CDXC:Spaces 2026-08-27:
-  Spaces relay exactly like project collections: SidebarApp owns the editing UI
-  and sends the whole normalized Space document, this runtime debounces it into
-  a gxserver write-through, and server state (startup snapshot, live
-  sidebarSpacesChanged events, update acks) is forwarded back for
-  reconciliation. While a push is pending or failed, server forwards are
-  suppressed so older server state cannot clobber newer local edits. Each
-  gxserver owns its own Space set, so remote machines take the remote path and
-  never merge into the local document.
-  */
-  queueSidebarSpacesServerSync(this: GpuiSidebarRuntime, state: GxserverSidebarSpacesState): void {
-    this.latestSidebarSpacesUpdate = state;
-    this.sidebarSpacesServerSyncPending = true;
-    if (this.sidebarSpacesServerSyncTimeoutId !== undefined) {
-      window.clearTimeout(this.sidebarSpacesServerSyncTimeoutId);
-    }
-    this.sidebarSpacesServerSyncTimeoutId = window.setTimeout(() => {
-      this.sidebarSpacesServerSyncTimeoutId = undefined;
-      void this.pushSidebarSpacesToGxserver();
-    }, GPUI_SIDEBAR_SPACES_SERVER_SYNC_DELAY_MS);
-  },
-
-  async pushSidebarSpacesToGxserver(this: GpuiSidebarRuntime): Promise<void> {
-    const client = this.client;
-    const pushed = this.latestSidebarSpacesUpdate;
-    if (!client || !pushed) {
-      return;
-    }
-    try {
-      const normalized = await client.updateSidebarSpaces(pushed);
-      if (this.latestSidebarSpacesUpdate === pushed) {
-        this.sidebarSpacesServerSyncPending = false;
-        if (isSidebarSpacesState(normalized)) {
-          this.forwardSidebarSpacesFromGxserver(normalized);
-        }
-      }
-    } catch {
-      if (
-        this.client === client &&
-        this.sidebarSpacesServerSyncTimeoutId === undefined &&
-        this.sidebarSpacesServerSyncPending
-      ) {
-        this.sidebarSpacesServerSyncTimeoutId = window.setTimeout(() => {
-          this.sidebarSpacesServerSyncTimeoutId = undefined;
-          void this.pushSidebarSpacesToGxserver();
-        }, GPUI_SIDEBAR_SPACES_SERVER_SYNC_RETRY_DELAY_MS);
-      }
-    }
-  },
-
-  forwardSidebarSpacesFromGxserver(this: GpuiSidebarRuntime, state: GxserverSidebarSpacesState): void {
-    if (this.sidebarSpacesServerSyncPending) {
-      return;
-    }
-    const stateJson = JSON.stringify(state);
-    if (stateJson === this.lastForwardedSidebarSpacesJson) {
-      return;
-    }
-    this.lastForwardedSidebarSpacesJson = stateJson;
-    this.messageSource.postMessage({
-      sidebarSpaces: state,
-      type: 'sidebarSpacesChanged',
-    });
   },
 
   forwardRemoteSidebarSpacesFromGxserver(

@@ -181,29 +181,6 @@ pub(crate) struct GpuiRemoteAttachSessionKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct GpuiProjectEditorCompanionRemoteAttachAttempt {
-    pub(crate) connection_generation: u64,
-    pub(crate) remote_key: GpuiRemoteAttachSessionKey,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum GpuiProjectEditorCompanionRemoteAttachState {
-    Preparing(GpuiProjectEditorCompanionRemoteAttachAttempt),
-    Unavailable {
-        attempt: GpuiProjectEditorCompanionRemoteAttachAttempt,
-        message: String,
-    },
-}
-
-impl GpuiProjectEditorCompanionRemoteAttachState {
-    pub(crate) fn attempt(&self) -> &GpuiProjectEditorCompanionRemoteAttachAttempt {
-        match self {
-            Self::Preparing(attempt) | Self::Unavailable { attempt, .. } => attempt,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GpuiRemoteAttachSessionReference {
     pub(crate) remote_machine_id: String,
     pub(crate) project_id: String,
@@ -228,7 +205,7 @@ impl From<&GpuiRemoteAttachSessionReference> for GpuiRemoteAttachSessionKey {
 
 pub(crate) struct GpuiRemoteAttachTerminalPlan {
     pub(crate) agent_icon: Option<&'static str>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     pub(crate) askpass: Option<GpuiRemoteAskpassScript>,
     pub(crate) clipboard_command: String,
     pub(crate) terminal_command: String,
@@ -468,18 +445,24 @@ pub(crate) struct GpuiOnDemandArchiveFailure {
 }
 
 pub(crate) struct GpuiRemoteAskpassScript {
+    #[cfg(unix)]
     pub(crate) cancel: Arc<AtomicBool>,
+    #[cfg(unix)]
     pub(crate) directory: PathBuf,
+    #[cfg(unix)]
     pub(crate) password_server: Option<thread::JoinHandle<()>>,
     pub(crate) script: PathBuf,
+    #[cfg(windows)]
+    pub(crate) remote_machine_id: String,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub(crate) struct GpuiRemoteSpawnedTunnel {
     pub(crate) child: Child,
     pub(crate) _askpass: Option<GpuiRemoteAskpassScript>,
 }
 
+#[cfg(unix)]
 impl Drop for GpuiRemoteAskpassScript {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Release);

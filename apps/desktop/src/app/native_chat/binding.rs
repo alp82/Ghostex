@@ -2,16 +2,22 @@ use super::state::{NativeChatConfig, NativeChatEvent, NativeChatView};
 use crate::*;
 
 impl GhostexGpuiApp {
-    /// CDXC:SessionChat 2026-09-17 DECISION:
-    /// User: desktop chat defaults to React; a GPUI/React toggle opts into GPUI, superseding the earlier GPUI-only decision. Both renderers retain the shared chat controller.
-    /// The renderer is selected at startup so changing the flag cannot destroy an active unsent draft.
+    /// CDXC:SessionChat 2026-09-21 DECISION:
+    /// User: "remove the ability to switch between GPUI chat view and the React chat view in the settings, and take out the React chat view completely from the GPUI app". Desktop chat is GPUI only, superseding the 2026-09-17 GPUI/React toggle; React chat remains for web and mobile.
     pub(crate) fn ensure_native_chat(
         &mut self,
         session_id: TerminalSessionId,
         cx: &mut gpui::Context<Self>,
     ) -> Option<Entity<NativeChatView>> {
-        if let Some(view) = self.native_chat_views.get(&session_id) {
-            return Some(view.clone());
+        let existing = self.native_chat_views.get(&session_id).cloned();
+        if let Some(view) = &existing {
+            if !view.read(cx).config.session_id.is_empty()
+                || self
+                    .workspace_terminal_key_for_shell_session(session_id)
+                    .is_none()
+            {
+                return Some(view.clone());
+            }
         }
         let key = self.workspace_terminal_key_for_shell_session(session_id)?;
         let sidebar_session_id = match &key {
@@ -24,20 +30,24 @@ impl GhostexGpuiApp {
                 &key.session_id,
             ),
         };
-        let (project_id, server_session_id, remote) = match &key {
-            GpuiWorkspaceTerminalSessionKey::Local(key) => {
-                (key.project_id.clone(), key.session_id.clone(), None)
-            }
+        // The machine id is the same one `build_session_chat_runtime_request` puts on the broker's
+        // `identity`, because the Rust brain's per-session storage keys are built from it.
+        let (machine_id, project_id, server_session_id, remote) = match &key {
+            GpuiWorkspaceTerminalSessionKey::Local(key) => (
+                crate::app::gx_chat::LOCAL_MACHINE_ID.to_string(),
+                key.project_id.clone(),
+                key.session_id.clone(),
+                None,
+            ),
             GpuiWorkspaceTerminalSessionKey::Remote(key) => (
+                key.remote_machine_id.clone(),
                 key.project_id.clone(),
                 key.session_id.clone(),
                 Some(self.gpui_remote_gxserver_request_target(&key.remote_machine_id)?),
             ),
         };
-        let mut state = SessionChatPageState::new();
-        state.account_key = Some(key.clone());
-        let generation = state.generation;
         let config = NativeChatConfig {
+            machine_id,
             project_id,
             session_id: server_session_id,
             sidebar_session_id,
@@ -50,6 +60,26 @@ impl GhostexGpuiApp {
             initial_snapshot: self.cached_session_chat_runtime_snapshot(Some(&key)),
             initial_presentation: self.initial_session_chat_presentation(Some(&key)),
         };
+        if let Some(view) = existing {
+            self.agents_chat_page_states
+                .get_mut(&session_id)?
+                .account_key = Some(key);
+            view.update(cx, |view, cx| view.bind_launched_session(config, cx));
+            return Some(view);
+        }
+        Some(self.insert_native_chat(config, Some(key), cx))
+    }
+
+    pub(crate) fn insert_native_chat(
+        &mut self,
+        config: NativeChatConfig,
+        key: Option<GpuiWorkspaceTerminalSessionKey>,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<NativeChatView> {
+        let session_id = config.shell_session_id;
+        let mut state = SessionChatPageState::new();
+        state.account_key = key;
+        let generation = state.generation;
         let armed_actions = self.session_chat_armed_actions(session_id);
         let view = cx.new(|cx| {
             let mut view = NativeChatView::new(config, cx);
@@ -117,7 +147,7 @@ impl GhostexGpuiApp {
         view.update(cx, |view, _| view.subscriptions.push(subscription));
         self.agents_chat_page_states.insert(session_id, state);
         self.native_chat_views.insert(session_id, view.clone());
-        Some(view)
+        view
     }
 
     pub(crate) fn native_chat_for_generation(

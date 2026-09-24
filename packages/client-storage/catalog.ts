@@ -192,6 +192,13 @@ export const storageCatalog = Object.freeze({
     'ghostex.chat.context-details.codex.v1',
     objectCodec
   ),
+  cursorContext: define(
+    'cursorContext',
+    'Cursor context display',
+    chat + 'session-chat-context-details.ts',
+    'ghostex.chat.context-details.cursor.v1',
+    objectCodec
+  ),
   notices: define(
     'notices',
     'Dismissed chat notices',
@@ -208,6 +215,13 @@ export const storageCatalog = Object.freeze({
     objectCodec,
     cache
   ),
+  modelFavorites: define(
+    'modelFavorites',
+    'Starred models in the chat model picker',
+    'packages/shared/session-chat-controller/model-favorites.ts',
+    'ghostex.model-favorites',
+    stringListCodec
+  ),
   modelOutbox: define(
     'modelOutbox',
     'Pending model selections',
@@ -215,14 +229,6 @@ export const storageCatalog = Object.freeze({
     'ghostex.model-selection-outbox.',
     objectCodec,
     protectedDisk
-  ),
-  modelScopeDefault: define(
-    'modelScopeDefault',
-    'Model pills that also set the default',
-    chat + 'session-chat-model-picker-launcher.tsx',
-    'ghostex.model-selection-also-default.',
-    boolean,
-    cache
   ),
   retiredQuestions: define(
     'retiredQuestions',
@@ -374,7 +380,7 @@ export const storageCatalog = Object.freeze({
   remotePresentations: define(
     'remotePresentations',
     'Remote presentation cache',
-    desktop + 'sidebar/gxserver-runtime/helpers/remote-last-seen.ts',
+    desktop + 'src/app/gx_store/remote_last_seen.rs',
     'ghostex-gpui-remote-last-seen-presentations',
     objectCodec,
     { ...cache, maxEntryBytes: 8 * MiB, maxBytes: 24 * MiB, maxEntries: 32 }

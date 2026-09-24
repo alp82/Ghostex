@@ -18,6 +18,7 @@
 @import './styles/new-thread-palette.css';
 @import './styles/modals-light.css';
 @import './styles/settings-light.css';
+@import './styles/settings-theme.css';
 /**
  * CDXC:ContextMenus 2026-05-11-01:39
  * Sidebar and app context menus should behave like native menus: menu items
@@ -4339,7 +4340,7 @@ body.app-modal-host-body {
 
 /*
  * CDXC:Settings 2026-09-18 DECISION:
- * User: the "Available in" scope choices are toggle cards, three to a row, instead of a checkbox list.
+ * User: the view scope choices are toggle cards, three to a row, instead of a checkbox list.
  *
  * Written as real CSS rather than Tailwind utilities because the app-modal Settings page loads the
  * pre-generated `shadcn.generated.css`, so a utility that appears nowhere else in the tree (an arbitrary
@@ -5056,7 +5057,7 @@ body.app-modal-host-body {
   /*
    * CDXC:Settings 2026-06-16-18:22:
    * Advanced setting arrows must stay visible without row hover so users can
-   * scan advanced rows immediately. Color them from the Accent Color setting
+   * scan advanced rows immediately. Color them from the tint-derived accent
    * (--ghostex-accent) so those markers track the same highlight as accent
    * text. Give the marker a little left-side air so it does not visually run
    * into the setting label.

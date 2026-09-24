@@ -47,6 +47,18 @@ impl NativeChatView {
     }
 
     pub(crate) fn submit(&mut self, mode: &str, window: &mut Window, cx: &mut Context<Self>) {
+        crate::support_logs::append_for_scenario(
+            crate::support_logs::GpuiSupportLog::SessionChat,
+            "gpui.sessionChat.viewState",
+            "sessionChat.nativeSubmit",
+            json!({
+                "composerReady": self.composer_ready,
+                "hasDraft": !self.draft.trim().is_empty(),
+                "pendingSend": self.pending_send,
+                "status": self.snapshot["status"],
+                "hasRuntime": self.runtime.is_some(),
+            }),
+        );
         if !self.composer_ready || self.draft.trim().is_empty() || self.pending_send {
             return;
         }
@@ -223,10 +235,7 @@ impl NativeChatView {
         // `packages/shared/session-chat-presentation/composer-animation.json`; `composer_animation.rs`
         // holds the interpolation.
         let metrics = &*super::composer_animation::METRICS;
-        let reduce_motion = cx.reduce_motion();
-        self.composer_animation
-            .set_collapsed(collapsed, reduce_motion);
-        let frame = self.composer_animation.advance(reduce_motion);
+        let frame = self.composer_frame(cx);
         if frame.running && !maximized {
             window.request_animation_frame();
         }
@@ -305,7 +314,7 @@ impl NativeChatView {
             );
         }
         if !maximized {
-            if let Some(strip) = self.render_working_strip(p) {
+            if let Some(strip) = self.render_working_strip(p, cx) {
                 footer = footer.child(strip);
             }
         }
@@ -443,6 +452,8 @@ impl NativeChatView {
             .child(
                 div()
                     .id("composer-editor")
+                    .role(gpui::Role::Group)
+                    .aria_label("Message composer")
                     .min_w_0()
                     .w_full()
                     // React's floating input thumb stops 2px short of the viewport's right edge
@@ -480,7 +491,6 @@ impl NativeChatView {
                     )
                     .child(
                         Input::new(&input)
-                            .disabled(!self.composer_ready)
                             .placeholder_color(p.muted.opacity(0.6))
                             .appearance(false)
                             .bordered(false)

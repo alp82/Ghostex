@@ -621,7 +621,38 @@ fn is_model_version_suffix(rest: &str) -> bool {
     }
 }
 
+/// CDXC:AgentProviders 2026-09-22 WHY:
+/// Claude Code 2.1.280 moved the `opus` alias onto Opus 5.5, leaving the older
+/// Opus 5 reachable only as `claude-opus-5`, which is the catalog id for it.
+/// Both print as "Opus <version>", so the version digits are the only thing
+/// that tells the two rows apart.
+fn claude_model_value(family_value: &str, version: &str) -> &'static str {
+    match (family_value, version) {
+        ("opus", "5") => "claude-opus-5",
+        _ => match family_value {
+            "fable" => "fable",
+            "opus" => "opus",
+            "sonnet" => "sonnet",
+            "haiku" => "haiku",
+            _ => "",
+        },
+    }
+}
+
 fn match_claude_model(segment: &str) -> Option<SessionChatDetectedChoice> {
+    let says_long_context = segment.ends_with(" (1M)") || segment.ends_with(" (1M context)");
+    // Opus 5.5 is one catalog row whose value is `opus[1m]` and whose label is
+    // the bare "Opus 5.5", so a footer without the 1M marker (a session started
+    // with `--model opus`) must not be read as that row.
+    if let Some(value) = crate::agent_model_catalog::model_value_for_label("claude", segment)
+        .filter(|value| says_long_context || !value.ends_with("[1m]"))
+    {
+        return Some(SessionChatDetectedChoice {
+            value,
+            label: segment.to_string(),
+            source: SessionChatOptionEvidence::Terminal,
+        });
+    }
     let variant_model = segment
         .strip_suffix(" (1M)")
         .or_else(|| segment.strip_suffix(" (1M context)"));
@@ -633,14 +664,18 @@ fn match_claude_model(segment: &str) -> Option<SessionChatDetectedChoice> {
                 .strip_prefix(*family)
                 .is_some_and(is_model_version_suffix)
         })
-        .map(|(_, value)| SessionChatDetectedChoice {
-            value: if variant_model.is_some() {
-                format!("{value}[1m]")
-            } else {
-                (*value).to_string()
-            },
-            label: segment.to_string(),
-            source: SessionChatOptionEvidence::Terminal,
+        .map(|(family, value)| {
+            let version = model.strip_prefix(*family).unwrap_or("").trim();
+            let value = claude_model_value(value, version);
+            SessionChatDetectedChoice {
+                value: if variant_model.is_some() {
+                    format!("{value}[1m]")
+                } else {
+                    value.to_string()
+                },
+                label: segment.to_string(),
+                source: SessionChatOptionEvidence::Terminal,
+            }
         })
 }
 
@@ -710,13 +745,35 @@ fn is_codex_model_id(token: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
 }
 
+/// The model id a footer token names: the id itself (`gpt-6-sol`), or the
+/// display name Codex 0.156 prints instead (`GPT-6-Sol`), which is the id in
+/// upper case.
+///
+/// CDXC:AgentScreenDetection 2026-09-23 WHY:
+/// Codex 0.156 moved its footer from ids to display names, which made every
+/// Codex session's model unreadable. A display name only counts when its
+/// lower case is a Codex model in the live catalog, so a session titled
+/// "GPT-5.5" is still never read as a model, and a model pushed to the
+/// catalog is recognised without a release.
+fn codex_model_value(token: &str) -> Option<String> {
+    if is_codex_model_id(token) {
+        return Some(token.to_string());
+    }
+    let id = token.to_ascii_lowercase();
+    (token.starts_with("GPT-")
+        && is_codex_model_id(&id)
+        && crate::agent_model_catalog::catalog_model("codex", &id).is_some())
+    .then_some(id)
+}
+
 fn match_codex_segment(segment: &str) -> Option<SessionChatDetectedSelection> {
     let mut tokens = segment.split(' ');
-    let model = tokens.next().filter(|token| is_codex_model_id(token))?;
+    let label = tokens.next()?;
+    let model = codex_model_value(label)?;
     let mut selection = SessionChatDetectedSelection {
         model: Some(SessionChatDetectedChoice {
-            value: model.to_string(),
-            label: model.to_string(),
+            value: model,
+            label: label.to_string(),
             source: SessionChatOptionEvidence::Terminal,
         }),
         ..SessionChatDetectedSelection::default()
@@ -786,47 +843,6 @@ fn codex_plan_mode_choice() -> SessionChatDetectedChoice {
 // and unknown labels remain honest readbacks.
 // ---------------------------------------------------------------------------
 
-/// `(picker row text, pill value)` — mirrors the Cursor models in the
-/// published agent model catalog (`agent-model-catalog.json`).
-const CURSOR_MODEL_LABELS: &[(&str, &str)] = &[
-    ("Auto", "auto"),
-    ("Cursor Grok 4.6", "cursor-grok-4.6"),
-    ("Composer 2.5", "composer-2.5"),
-    ("Claude Opus 5", "claude-opus-5"),
-    ("Claude Opus 4.8", "claude-opus-4-8"),
-    ("GPT-5.6 Sol", "gpt-5.6-sol"),
-    ("GPT-5.5", "gpt-5.5"),
-    ("Claude Fable 5.1", "claude-fable-5-1"),
-    ("Claude Fable 5", "claude-fable-5"),
-    ("Cursor Grok 4.5", "cursor-grok-4.5"),
-    ("Gemini 3.8 Flash", "gemini-3.8-flash"),
-    ("Gemini 3.7 Flash", "gemini-3.7-flash"),
-    ("GPT-5.6 Terra", "gpt-5.6-terra"),
-    ("Claude Sonnet 5", "claude-sonnet-5"),
-    ("Claude Sonnet 4.6", "claude-sonnet-4-6"),
-    ("Codex 5.3", "gpt-5.3-codex"),
-    ("Claude Opus 4.7", "claude-opus-4-7"),
-    ("GPT-5.4", "gpt-5.4"),
-    ("Claude Opus 4.6", "claude-opus-4-6"),
-    ("Claude Opus 4.5", "claude-opus-4-5"),
-    ("GPT-5.2", "gpt-5.2"),
-    ("GPT-5.6 Luna", "gpt-5.6-luna"),
-    ("Gemini 3.6 Flash", "gemini-3.6-flash"),
-    ("Gemini 3.1 Pro", "gemini-3.1-pro"),
-    ("GPT-5.4 Mini", "gpt-5.4-mini"),
-    ("GPT-5.4 Nano", "gpt-5.4-nano"),
-    ("Claude Haiku 4.5", "claude-haiku-4-5"),
-    ("Claude Sonnet 4.5", "claude-sonnet-4-5"),
-    ("GPT-5.1", "gpt-5.1"),
-    ("Gemini 3.5 Flash", "gemini-3.5-flash"),
-    ("Claude Sonnet 4", "claude-sonnet-4"),
-    ("GPT-5 Mini", "gpt-5-mini"),
-    ("Kimi K3", "kimi-k3"),
-    ("Kimi K2.7 Code", "kimi-k2.7-code"),
-    ("GLM 5.2", "glm-5.2"),
-    ("Gemini 3 Flash", "gemini-3-flash"),
-];
-
 fn is_cursor_usage_segment(segment: &str) -> bool {
     let Some(number) = segment.strip_suffix(" used") else {
         return false;
@@ -848,6 +864,19 @@ const CURSOR_EFFORT_LABELS: &[(&str, &str)] = &[
     ("High", "high"),
     ("Max", "max"),
 ];
+
+/// `26K`, `1.2M` or `830` as a token count.
+fn cursor_token_count(token: &str) -> Option<u64> {
+    let (number, scale) = match token.strip_suffix('K') {
+        Some(number) => (number, 1_000.0),
+        None => match token.strip_suffix('M') {
+            Some(number) => (number, 1_000_000.0),
+            None => (token, 1.0),
+        },
+    };
+    let value = number.parse::<f64>().ok()?;
+    (value.is_finite() && value >= 0.0).then(|| (value * scale).round() as u64)
+}
 
 fn is_cursor_context_window(token: &str) -> bool {
     let number = token.strip_suffix(['K', 'M']).unwrap_or(token);
@@ -912,13 +941,23 @@ pub(crate) fn match_cursor_statusline(line: &str) -> Option<SessionChatDetectedS
         (combined, None)
     };
     let (model_label, context_window, effort) = split_cursor_model_context_and_effort(combined);
-    let value = CURSOR_MODEL_LABELS
-        .iter()
-        .find(|(candidate, _)| model_label == *candidate)
-        .map_or_else(
-            || model_label.to_string(),
-            |(_, value)| (*value).to_string(),
-        );
+    // CDXC:SessionChatDetectedOptions 2026-09-23 WHY: Cursor reports no context payload, so the
+    // footer's `26K used` and the model's `272K` window are the context meter's and the Context
+    // details rows' only source.
+    let context_usage = SessionChatContextUsage {
+        used_percentage: None,
+        used_tokens: segments
+            .last()
+            .and_then(|usage| usage.strip_suffix(" used"))
+            .and_then(cursor_token_count),
+        window_size: context_window.as_deref().and_then(cursor_token_count),
+    };
+    // Known names map to the catalog value the client can dispatch (the live
+    // catalog, so a model added to it is recognised without a release; an
+    // older spelling is a row's `terminalLabels`); unknown names remain
+    // honest readbacks.
+    let value = crate::agent_model_catalog::model_value_for_label("cursor", &model_label)
+        .unwrap_or_else(|| model_label.to_string());
     let display_model_label = model_label
         .strip_prefix("Cursor ")
         .or_else(|| model_label.strip_prefix("cursor "))
@@ -934,7 +973,7 @@ pub(crate) fn match_cursor_statusline(line: &str) -> Option<SessionChatDetectedS
         context_window,
         terminal_status_line: Some(line.trim().to_string()),
         fast,
-        context_usage: None,
+        context_usage: (!context_usage.is_empty()).then_some(context_usage),
         claude_status: None,
         codex_status: None,
         ..SessionChatDetectedSelection::default()
@@ -975,9 +1014,16 @@ fn match_grok_segment(segment: &str) -> Option<SessionChatDetectedSelection> {
         None => (segment.trim(), None),
         Some((name, rest)) => (name.trim(), Some(rest.strip_suffix(')')?.trim())),
     };
-    if !name
-        .strip_prefix("Grok")
-        .is_some_and(is_model_version_suffix)
+    // Grok 1.0.40 added "Grok 4.7 Fast", whose id in `models_cache.json` is
+    // `grok-4.7-build-fast` rather than the name lowercased.
+    let (base, fast) = name
+        .strip_suffix(" Fast")
+        .map_or((name, false), |base| (base, true));
+    let catalog_value = crate::agent_model_catalog::model_value_for_label("grok", name);
+    if catalog_value.is_none()
+        && !base
+            .strip_prefix("Grok")
+            .is_some_and(is_model_version_suffix)
     {
         return None;
     }
@@ -997,9 +1043,16 @@ fn match_grok_segment(segment: &str) -> Option<SessionChatDetectedSelection> {
     };
     Some(SessionChatDetectedSelection {
         model: Some(SessionChatDetectedChoice {
-            // The catalog id for the displayed name (`Grok 4.6` ⇒ `grok-4.6`),
-            // which is what grok's own `models_cache.json` keys models by.
-            value: name.to_ascii_lowercase().replace(' ', "-"),
+            // The catalog's id for the name, else the id derived from it
+            // (`Grok 4.6` ⇒ `grok-4.6`), which is what grok's own
+            // `models_cache.json` keys models by.
+            value: catalog_value.unwrap_or_else(|| {
+                format!(
+                    "{}{}",
+                    base.to_ascii_lowercase().replace(' ', "-"),
+                    if fast { "-build-fast" } else { "" }
+                )
+            }),
             label: name.to_string(),
             source: SessionChatOptionEvidence::Terminal,
         }),
@@ -1031,21 +1084,14 @@ fn match_grok_segment(segment: &str) -> Option<SessionChatDetectedSelection> {
 
 const ANTIGRAVITY_EFFORTS: &[&str] = &["low", "medium", "high"];
 
-/// Display names that do not derive their catalog id from the name alone:
-/// `agy models` folds the fixed reasoning mode into these ids.
-const ANTIGRAVITY_FIXED_MODEL_IDS: &[(&str, &str)] = &[
-    ("Claude Sonnet 4.6", "claude-sonnet-4-6"),
-    ("Claude Opus 4.6", "claude-opus-4-6-thinking"),
-    ("GPT-OSS 120B", "gpt-oss-120b-medium"),
-];
-
 /// `Gemini 3.8 Flash` ⇒ `gemini-3.8-flash`; `Gemini 3.1 Pro` ⇒ `gemini-3.1-pro`.
+///
+/// The live catalog answers first: `agy models` folds a fixed reasoning mode
+/// into some ids (`Claude Opus 4.6` ⇒ `claude-opus-4-6-thinking`), so only a
+/// Gemini name not in it yet is derived.
 fn antigravity_model_id(name: &str) -> Option<String> {
-    if let Some((_, id)) = ANTIGRAVITY_FIXED_MODEL_IDS
-        .iter()
-        .find(|(display, _)| *display == name)
-    {
-        return Some((*id).to_string());
+    if let Some(value) = crate::agent_model_catalog::model_value_for_label("antigravity", name) {
+        return Some(value);
     }
     let rest = name.strip_prefix("Gemini")?;
     let (version, tier) = rest.trim_start().split_once(' ')?;
@@ -1539,12 +1585,13 @@ pub(crate) fn claude_transcript_model_choice(model: &str) -> Option<SessionChatD
     } else {
         format!("{title} {}", version.join("."))
     };
+    let id = claude_model_value(family, &version.join("."));
     let (value, label) = match variant {
         Some(variant) => (
-            format!("{family}[{variant}]"),
+            format!("{id}[{variant}]"),
             format!("{label} ({})", variant.to_ascii_uppercase()),
         ),
-        None => (family.to_string(), label),
+        None => (id.to_string(), label),
     };
     Some(SessionChatDetectedChoice {
         value,
@@ -2175,6 +2222,14 @@ pub fn detect_session_chat_terminal_state(
     });
     if let Some(notice) = notice.as_mut() {
         crate::session_chat_codex_lock::enrich_notice(repository, project_id, session_id, notice);
+    }
+    if let Some(notice) = notice.as_mut().filter(|notice| {
+        notice.kind == crate::session_chat_notice::SESSION_CHAT_NOTICE_TRUST_PROMPT
+    }) {
+        let remembered = crate::session_chat_trust_memory::session_folders_remembered(
+            repository, project_id, session_id,
+        );
+        crate::session_chat_trust_memory::decorate_trust_notice(notice, remembered);
     }
     let options = merge_session_chat_option_selections(transcript, statusline, terminal)
         .map(SessionChatDetectedOptions::new);
@@ -2847,7 +2902,10 @@ pub(crate) fn session_chat_hook_state_directory(paths: &GxserverPaths) -> std::p
 #[derive(Clone)]
 pub(crate) struct SessionChatOptionDetector {
     cache: Arc<Mutex<HashMap<String, SessionChatOptionCacheEntry>>>,
+    recovery: Arc<crate::accounts::recovery::RecoverySignals>,
     compacting_publisher: crate::session_chat_compacting::SessionChatCompactingPublisher,
+    followers: Arc<Mutex<HashMap<String, SessionChatFollowerEntry>>>,
+    event_hub: GxserverEventHub,
     paths: GxserverPaths,
     server_id: String,
 }
@@ -2856,8 +2914,11 @@ impl SessionChatOptionDetector {
     pub(crate) fn new(state: &AppState) -> Self {
         Self {
             cache: state.session_chat_option_cache.clone(),
+            recovery: state.accounts.recovery.clone(),
             compacting_publisher:
                 crate::session_chat_compacting::SessionChatCompactingPublisher::new(state),
+            followers: state.session_chat_followers.clone(),
+            event_hub: state.event_hub.clone(),
             paths: state.paths.clone(),
             server_id: state.metadata.server_id.clone(),
         }
@@ -2879,7 +2940,7 @@ impl SessionChatOptionDetector {
             .unwrap_or_default();
         detected.notice = detected.notice.filter(|notice| {
             crate::session_chat_notice_progress::visible(project_id, session_id, notice)
-                && !crate::session_chat_notice::account_usage_notice_suppressed(
+                && !crate::session_chat_notice::session_chat_notice_hidden(
                     project_id, session_id, notice,
                 )
         });
@@ -2917,7 +2978,7 @@ impl SessionChatOptionDetector {
                         detected.notice = detected.notice.filter(|notice| {
                             crate::session_chat_notice_progress::visible(
                                 project_id, session_id, notice,
-                            ) && !crate::session_chat_notice::account_usage_notice_suppressed(
+                            ) && !crate::session_chat_notice::session_chat_notice_hidden(
                                 project_id, session_id, notice,
                             )
                         });
@@ -2926,17 +2987,25 @@ impl SessionChatOptionDetector {
                 }
             }
         }
+        let mut auto_trust_plan = None;
         let mut detected = open_gxserver_database(&self.paths)
             .ok()
             .map(|db| {
                 let repository = DomainRepository::new(&db, self.server_id.as_str());
-                crate::session_chat_options::detect_session_chat_terminal_state(
+                let detected = crate::session_chat_options::detect_session_chat_terminal_state(
                     &repository,
                     &session_chat_hook_state_directory(&self.paths),
                     project_id,
                     session_id,
                     agent,
-                )
+                );
+                auto_trust_plan = crate::session_chat_trust_memory::auto_trust_plan(
+                    &repository,
+                    project_id,
+                    session_id,
+                    detected.notice.as_ref(),
+                );
+                detected
             })
             .unwrap_or_default();
         /*
@@ -2980,7 +3049,7 @@ impl SessionChatOptionDetector {
             let previous_monitor = cache.get(&key).and_then(|entry| entry.projected_monitor);
             let detected_monitor = if detected.captured {
                 Some(
-                    crate::session_chat_terminal_activity::is_session_chat_monitor_activity(
+                    crate::session_chat_terminal_activity::is_session_chat_background_work_activity(
                         detected.activity.as_ref(),
                     ),
                 )
@@ -3192,14 +3261,46 @@ impl SessionChatOptionDetector {
                 );
             }
         }
-        // The cache above keeps the raw notice so a repaint keeps its identity; callers only ever see the visible one, and the account-switch suppression is part of visibility (see `account_usage_notice_suppressed`).
+        // A trust prompt on a remembered folder is answered from here, the one
+        // place every fresh capture passes through, so it is accepted whichever
+        // probe first sees it (session_chat_trust_memory.rs).
+        if let Some(plan) = auto_trust_plan {
+            if crate::session_chat_trust_memory::claim_auto_trust_attempt(project_id, session_id) {
+                crate::session_chat_trust_memory::dispatch_auto_trust(
+                    self.clone(),
+                    plan,
+                    project_id,
+                    session_id,
+                    agent,
+                );
+            }
+        }
+        // The cache above keeps the raw notice so a repaint keeps its identity; callers only ever see the visible one, and the account-switch suppression and a remembered folder's auto-trust are part of visibility (see `session_chat_notice_hidden`).
         detected.notice = detected.notice.filter(|notice| {
             crate::session_chat_notice_progress::visible(project_id, session_id, notice)
-                && !crate::session_chat_notice::account_usage_notice_suppressed(
+                && !crate::session_chat_notice::session_chat_notice_hidden(
                     project_id, session_id, notice,
                 )
         });
+        if detected.captured {
+            self.recovery
+                .observe(project_id, session_id, detected.notice.as_ref());
+        }
         detected
+    }
+
+    /// Republish the cached screen state to this session's chat followers,
+    /// for a server-side writer that just changed the screen and re-probed.
+    pub(crate) fn publish_screen_state(&self, project_id: &str, session_id: &str) {
+        publish_cached_session_chat_screen_state(
+            &self.followers,
+            &self.event_hub,
+            &self.paths,
+            &self.server_id,
+            &self.cache,
+            project_id,
+            session_id,
+        );
     }
 
     /// Async handlers must not block the executor on a process spawn.
@@ -3360,47 +3461,69 @@ pub(crate) fn session_chat_terminal_notice_publisher(
     let project_id = project_id.to_string();
     let session_id = session_id.to_string();
     Arc::new(move || {
-        let key = session_observer_key(&project_id, &session_id);
-        let (options, prompt, screen_notice, activity, fleet, tasks, captured) = option_cache
-            .lock()
-            .ok()
-            .and_then(|cache| {
-                cache.get(&key).map(|entry| {
-                    (
-                        entry.value.options.clone(),
-                        entry.value.prompt.clone(),
-                        entry.value.notice.clone(),
-                        entry.value.activity.clone(),
-                        entry.value.fleet.clone(),
-                        entry.value.tasks.clone(),
-                        entry.value.attempted,
-                    )
-                })
-            })
-            .unwrap_or_default();
-        let notice = crate::session_chat_notice::resolve_session_chat_terminal_notice(
-            &project_id,
-            &session_id,
-            screen_notice,
-        );
-        emit_session_chat_options_state_frame(
+        publish_cached_session_chat_screen_state(
             &followers,
             &event_hub,
             &paths,
             &server_id,
+            &option_cache,
             &project_id,
             &session_id,
-            options.as_ref(),
-            crate::session_chat::SessionChatScreenState {
-                prompt: prompt.as_ref(),
-                notice: notice.as_ref(),
-                activity: activity.as_ref(),
-                fleet: fleet.as_ref(),
-                tasks: tasks.as_ref(),
-                probed: captured,
-            },
         );
     })
+}
+
+/// The publisher's body, callable without an `AppState`: read the cached
+/// screen state and emit it to the session's followers.
+fn publish_cached_session_chat_screen_state(
+    followers: &Arc<Mutex<HashMap<String, SessionChatFollowerEntry>>>,
+    event_hub: &GxserverEventHub,
+    paths: &GxserverPaths,
+    server_id: &str,
+    option_cache: &Arc<Mutex<HashMap<String, SessionChatOptionCacheEntry>>>,
+    project_id: &str,
+    session_id: &str,
+) {
+    let key = session_observer_key(project_id, session_id);
+    let (options, prompt, screen_notice, activity, fleet, tasks, captured) = option_cache
+        .lock()
+        .ok()
+        .and_then(|cache| {
+            cache.get(&key).map(|entry| {
+                (
+                    entry.value.options.clone(),
+                    entry.value.prompt.clone(),
+                    entry.value.notice.clone(),
+                    entry.value.activity.clone(),
+                    entry.value.fleet.clone(),
+                    entry.value.tasks.clone(),
+                    entry.value.attempted,
+                )
+            })
+        })
+        .unwrap_or_default();
+    let notice = crate::session_chat_notice::resolve_session_chat_terminal_notice(
+        project_id,
+        session_id,
+        screen_notice,
+    );
+    emit_session_chat_options_state_frame(
+        followers,
+        event_hub,
+        paths,
+        server_id,
+        project_id,
+        session_id,
+        options.as_ref(),
+        crate::session_chat::SessionChatScreenState {
+            prompt: prompt.as_ref(),
+            notice: notice.as_ref(),
+            activity: activity.as_ref(),
+            fleet: fleet.as_ref(),
+            tasks: tasks.as_ref(),
+            probed: captured,
+        },
+    );
 }
 
 /// Fresh lifecycle/working truth for the watchdog's timeout decision. Blocking

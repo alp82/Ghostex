@@ -137,14 +137,23 @@ body:is([data-sidebar-theme='plain-light'], [data-sidebar-theme^='light-'])
   filter: brightness(0);
 }
 
-body[data-sidebar-theme='plain-light'] .group-project-diff-stat-additions {
-  color: #1a7f37;
+/*
+ * CDXC:Theming 2026-09-22 DECISION:
+ * User: also please make it more noticable in the light theme in the sidebar.
+ * The 70% text opacity is the later same-day Theming decision on `.group-project-diff-stats`.
+ * SEE-ALSO: apps/desktop/src/app/native_sidebar/project_status.rs.
+ */
+body:is([data-sidebar-theme='plain-light'], [data-sidebar-theme^='light-'])
+  .group-project-diff-stat-additions {
+  color: #2a7a3a;
 }
-body[data-sidebar-theme='plain-light'] .group-project-diff-stat-deletions {
-  color: #cf222e;
+body:is([data-sidebar-theme='plain-light'], [data-sidebar-theme^='light-'])
+  .group-project-diff-stat-deletions {
+  color: #c43a42;
 }
-body[data-sidebar-theme='plain-light'] .group-project-diff-files {
-  color: #0969da;
+body:is([data-sidebar-theme='plain-light'], [data-sidebar-theme^='light-'])
+  .group-project-diff-files {
+  color: #3b7cc4;
 }
 
 body[data-sidebar-theme='plain-light'] .sidebar-reference-layout[data-reference-sidebar='true'] .group-title {

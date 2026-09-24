@@ -30,13 +30,13 @@ impl GhostexGpuiApp {
                 let tooltip = machine.message.as_ref().map(|message| format!("{}: {message}", machine.label)).unwrap_or_else(|| machine.label.clone());
                 let icon = gpui::svg().path(if id == "local" { "titlebar/device-desktop.svg" } else if busy { "titlebar/loader2.svg" } else { "titlebar/cloud.svg" }).size(px(14.0 * scale)).text_color(if failed { rgb(0xff9494).into() } else { appearance.muted });
                 let glyph = if busy { icon.with_throttled_animation(format!("native-machine-busy-{id}"), std::time::Duration::from_millis(900), |icon, progress| icon.with_transformation(gpui::Transformation::rotate(gpui::percentage(progress)))).into_any_element() } else { icon.into_any_element() };
-                h_flex().id(format!("native-sidebar-machine-{id}")).flex_1().min_w_0().h_full().px(px(6.0 * scale)).justify_center().gap(px(4.0 * scale)).text_size(px(12.0 * scale))
+                h_flex().id(format!("native-sidebar-machine-{id}")).role(gpui::Role::Tab).aria_label(machine.label.clone()).aria_selected(selected).flex_1().min_w_0().h_full().px(px(6.0 * scale)).justify_center().gap(px(4.0 * scale)).text_size(px(12.0 * scale))
                     .when(index > 0, |row| row.border_l_1().border_color(appearance.foreground.opacity(0.12)))
                     .when(selected, |row| row.bg(appearance.selected)).hover(|row| row.bg(appearance.hover))
                     .child(div().id(format!("native-machine-connect-{id}")).flex_shrink_0().child(glyph)
                         .when(id != "local" && machine.state != "connected" && !busy, |icon| icon.on_click(cx.listener(move |app, _, _, cx| { cx.stop_propagation(); app.dispatch_native_sidebar_command(json!({"type": "reconnectRemoteMachine", "remoteMachineId": reconnect}), cx); }))))
                     .child(div().min_w_0().text_ellipsis().child(machine.label.clone()))
-                    .when(machine.working_count > 0, |row| row.child(div().text_color(rgb(0xf8ad07)).child(machine.working_count.to_string())))
+                    .when(machine.working_count > 0, |row| row.child(div().text_color(rgb(super::status::WORKING_COLOR)).child(machine.working_count.to_string())))
                     .when(machine.attention_count > 0, |row| row.child(div().text_color(rgb(0x95d7f6)).child(machine.attention_count.to_string())))
                     .when(self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag(), |row| row.tooltip_show_delay(appearance.tooltip_delay).tooltip(move |window, cx| titlebar_tooltip(tooltip.clone(), window, cx)))
                     .on_click(cx.listener(move |app, _, _, cx| { cx.stop_propagation(); app.dispatch_native_sidebar_ui(json!({"type": "selectMachine", "machineId": id}), cx); }))

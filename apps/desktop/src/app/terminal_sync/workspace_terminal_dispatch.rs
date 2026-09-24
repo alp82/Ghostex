@@ -180,11 +180,8 @@ impl GhostexGpuiApp {
         native_view: *mut std::ffi::c_void,
         cx: &mut gpui::Context<Self>,
     ) {
-        let companion_session_id =
-            self.project_editor_companion_terminal_session_id_containing_responder(native_view);
-        let Some(shell_session_id) = self
-            .agents_terminal_session_id_containing_responder(native_view)
-            .or(companion_session_id)
+        let Some(shell_session_id) =
+            self.agents_terminal_session_id_containing_responder(native_view)
         else {
             return;
         };
@@ -201,21 +198,6 @@ impl GhostexGpuiApp {
             serde_json::json!({ "shellSessionId": format!("{:?}", shell_session_id) }),
         );
         self.dispatch_gpui_workspace_terminal_escape_pressed(shell_session_id, cx);
-        // Escape is terminal input, not a companion-focus exit. Reassert the
-        // exact mounted companion host after the sidebar attention sideband so
-        // AppKit keeps subsequent keys on the same terminal surface.
-        if companion_session_id == Some(shell_session_id)
-            && matches!(
-                self.shell_focus,
-                ShellFocusTarget::ProjectEditorCompanion(mode) if mode == self.active_mode
-            )
-        {
-            self.begin_programmatic_focus();
-            self.sync_project_editor_companion_terminal_ghostty_surface_focus_with_appkit_handoff(
-                true,
-            );
-            self.end_programmatic_focus();
-        }
     }
 
     #[cfg(target_os = "macos")]
@@ -224,24 +206,16 @@ impl GhostexGpuiApp {
         native_view: *mut std::ffi::c_void,
         cx: &mut gpui::Context<Self>,
     ) {
-        let remote_shell_session_id = self
-            .agents_terminal_session_id_containing_responder(native_view)
-            .or_else(|| {
-                self.project_editor_companion_terminal_session_id_containing_responder(native_view)
-            });
-        let remote_context = remote_shell_session_id.and_then(|shell_session_id| {
-            self.remote_prompt_editor_context_for_shell_session(shell_session_id)
-                .map(|(key, connection_generation)| (shell_session_id, key, connection_generation))
-        });
-        if let Some((shell_session_id, key, connection_generation)) = remote_context {
-            let native_view = native_view as usize;
+        let delivery_target = RemotePromptEditorDeliveryTarget::NativeView(native_view as usize);
+        if let Some((key, connection_generation)) =
+            self.remote_prompt_editor_context_for_delivery_target(delivery_target)
+        {
             cx.spawn(async move |this, cx| {
                 let _ = this.update_in(cx, |this, window, cx| {
                     this.queue_remote_prompt_editor_request(
-                        shell_session_id,
                         &key,
                         connection_generation,
-                        RemotePromptEditorDeliveryTarget::NativeView(native_view),
+                        delivery_target,
                         window,
                         cx,
                     );
@@ -286,11 +260,8 @@ impl GhostexGpuiApp {
         &self,
         native_view: *mut std::ffi::c_void,
     ) -> Option<String> {
-        if let Some(shell_session_id) = self
-            .agents_terminal_session_id_containing_responder(native_view)
-            .or_else(|| {
-                self.project_editor_companion_terminal_session_id_containing_responder(native_view)
-            })
+        if let Some(shell_session_id) =
+            self.agents_terminal_session_id_containing_responder(native_view)
         {
             let key = self.local_workspace_session_mappings.iter().find_map(
                 |(key, mapped_session_id)| (*mapped_session_id == shell_session_id).then_some(key),

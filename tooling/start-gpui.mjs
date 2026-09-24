@@ -1,6 +1,13 @@
 #!/usr/bin/env bun
-import { checkClientStorage } from './client-storage/check.mjs';
-checkClientStorage();
+/* CDXC:Build 2026-09-23 WHY:
+ * macOS and Linux starts re-run this script under the start lock, so every check at module load ran twice, and the storage check alone parses ~1,100 files (~0.7s).
+ * Run it only in the process that builds: the locked child, or the single Windows process.
+ */
+const localStartOwnsLock = process.platform === 'win32' || process.env.GHOSTEX_GPUI_START_LOCK_HELD === '1';
+if (localStartOwnsLock) {
+  const { checkClientStorage } = await import('./client-storage/check.mjs');
+  checkClientStorage();
+}
 
 import { spawn, spawnSync } from 'node:child_process';
 import {
@@ -9,10 +16,13 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
+  renameSync,
   rmSync,
   statSync,
+  writeFileSync,
   writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -23,8 +33,14 @@ import {
   resolveLocalStartCodeSignIdentity,
   resolveLocalStartCodeSignTimestampFlag,
   withoutColorDisablingEnvironment,
+  withoutPowerShell7ModulePaths,
 } from './local-start-utils.mjs';
-import { isolatedGpuiConfiguration, prepareIsolatedGpui } from './isolated-gpui.mjs';
+import {
+  isolatedGpuiConfiguration,
+  isolatedGpuiStartCommand,
+  parseIsolatedGpuiArgument,
+  prepareIsolatedGpui,
+} from './isolated-gpui.mjs';
 
 import {
   codeServerComponentIdentity,
@@ -35,7 +51,9 @@ const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), '..');
 const appVersion = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
 const gpuiDir = path.join(repoRoot, 'apps', 'desktop');
-const isolatedInstance = process.argv.slice(2).includes('--isolated') ? isolatedGpuiConfiguration() : undefined;
+const isolatedVariant = resolveIsolatedStartVariant(process.argv.slice(2));
+const isolatedInstance = isolatedVariant ? isolatedGpuiConfiguration(isolatedVariant) : undefined;
+const startCommandHint = isolatedInstance ? isolatedGpuiStartCommand(isolatedInstance.variant) : 'bun run start';
 const appName = isolatedInstance?.appName ?? 'Ghostex';
 const bundleId = isolatedInstance?.bundleId ?? 'com.madda.ghostex.gpui';
 const isDarwin = process.platform === 'darwin';
@@ -88,11 +106,20 @@ const buildScript = path.join(
       : 'build-linux-app.sh'
 );
 const localStartLockFile = path.join(repoRoot, 'build', 'ghostex-gpui-local-start.lock');
+// Where build-macos-app.sh keeps local-start code-server builds outside the bundle (CDXC:CodeEditor 2026-09-23).
+const localStartCodeServerStoreRoot = path.join(repoRoot, 'build', 'dev-components.noindex', 'code-server');
 const dependenciesRoot = path.join(repoRoot, '.dependencies');
 const startOptions = validateStartArguments(process.argv.slice(2));
 const startVerbose = startOptions.verbose;
-const startEnvironment = withoutColorDisablingEnvironment({ ...process.env, ...isolatedInstance?.environment });
+const startEnvironment = withoutPowerShell7ModulePaths(
+  withoutColorDisablingEnvironment({ ...process.env, ...isolatedInstance?.environment })
+);
 const windowsArch = process.arch === 'arm64' ? 'arm64' : 'x64';
+/**
+ * CDXC:PlatformSupport 2026-09-23 WHY:
+ * Native PowerShell development can precede the matching WSL release asset. Honor the packager's explicit opt-out instead of forcing a release download before the native build can start.
+ */
+const requireWindowsWslRuntime = process.env.GHOSTEX_WINDOWS_REQUIRE_WSL_RUNTIME !== '0';
 const explicitWindowsWslArchive = process.env.GHOSTEX_WINDOWS_WSL_GXSERVER_ARCHIVE?.trim();
 const explicitWindowsWslCodeServerArchive = process.env.GHOSTEX_WINDOWS_WSL_CODE_SERVER_ARCHIVE?.trim();
 const windowsCodeServerIdentity = targetsWindows
@@ -127,7 +154,9 @@ const windowsWslCodeServerArchive = targetsWindows
   : undefined;
 const configuration = isDarwin ? resolveLocalStartConfiguration(process.env.CONFIGURATION) : undefined;
 const arch = isDarwin ? resolveLocalMacosArch(process.env.GHOSTEX_MACOS_ARCH) : undefined;
-const localStartCodeSignIdentity = isDarwin ? resolveLocalStartCodeSignIdentity(startEnvironment) : undefined;
+// Probed only in the locked child: the parent just re-executes, and the probe runs security and codesign.
+const localStartCodeSignIdentity =
+  isDarwin && localStartOwnsLock ? resolveLocalStartCodeSignIdentity(startEnvironment, installedAppPath) : undefined;
 const localStartCodeSignTimestampFlag = isDarwin ? resolveLocalStartCodeSignTimestampFlag(startEnvironment) : undefined;
 const buildEnvironment = {
   ...startEnvironment,
@@ -147,14 +176,16 @@ const buildEnvironment = {
         GHOSTEX_GPUI_SIGN_TIMESTAMP_FLAG: localStartCodeSignTimestampFlag,
         GHOSTEX_LOCAL_START: '1',
         GHOSTEX_MACOS_ARCH: arch,
+        ...(startOptions.optimized ? { GHOSTEX_START_OPTIMIZED: '1' } : {}),
         ...(startVerbose ? { GHOSTEX_GPUI_START_VERBOSE: '1', GHOSTEX_START_VERBOSE: '1' } : {}),
       }
     : {}),
   ...(targetsWindows
     ? {
         GHOSTEX_WINDOWS_ARCH: windowsArch,
-        GHOSTEX_WINDOWS_REQUIRE_WSL_RUNTIME: '1',
-        GHOSTEX_WINDOWS_WSL_GXSERVER_ARCHIVE: windowsWslArchive,
+        GHOSTEX_WINDOWS_REQUIRE_WSL_RUNTIME: requireWindowsWslRuntime ? '1' : '0',
+        GHOSTEX_WINDOWS_WSL_GXSERVER_ARCHIVE:
+          requireWindowsWslRuntime || explicitWindowsWslArchive ? windowsWslArchive : '',
         GHOSTEX_WINDOWS_WSL_CODE_SERVER_ARCHIVE: windowsWslCodeServerArchive,
         GHOSTEX_CODE_SERVER_COMPONENT_VERSION: windowsCodeServerIdentity.componentVersion,
         ...(isWsl && !startVerbose ? { GHOSTEX_WINDOWS_BUILD_PROGRESS_PATH: `/proc/${process.pid}/fd/1` } : {}),
@@ -172,14 +203,14 @@ if (isWindows) {
   reexecUnderLocalStartLock();
 }
 if (targetsWindows) {
-  ensureWindowsWslRuntimeArchive();
+  await ensureWindowsWslRuntimeArchive();
 }
 const platformLabel = isDarwin
   ? `${configuration}, ${arch}`
   : targetsWindows
     ? isWsl
       ? 'Windows via WSL2'
-      : 'Windows, WSL2'
+      : requireWindowsWslRuntime ? 'Windows, WSL2' : 'Windows, PowerShell'
     : 'Linux';
 logStartStep(`Checking local GPUI resources (${platformLabel})...`);
 ensureLocalReferenceCheckouts();
@@ -250,10 +281,22 @@ if (targetsWindows) {
     action: `before installing rebuilt app to ${windowsInstalledAppPath}`,
     includeBundleId: false,
   });
+  /*
+  CDXC:ServerDaemon 2026-09-18 WHY:
+  Closing the app leaves its gxserver running, as on macOS, so live wmx sessions survive the relaunch.
+  Without this stop the previous build's control plane kept the port and went on serving the rebuilt app, so a local start never ran the gxserver it had just compiled.
+  /api/control/stop ends only the control plane (stopAll is the call that kills sessions); the rebuilt app then starts its bundled gxserver.
+  A WSL-driven start is not covered: its state lives on the Windows side, which ghostexStateDir does not resolve from Linux.
+  */
+  if (isWindows) {
+    await stopRunningGxserverControlPlaneBeforeLaunch(appPath);
+  }
   installWindowsGpuiApp(appPath);
   logStartStep(`Opening ${appName}...`);
   launchWindowsGpuiApp();
 } else if (isDarwin) {
+  ensureInstalledMacosAppIsWritable();
+  removeStaleMacosAppCopies();
   await closeRunningGpuiBundle(installedAppPath, {
     action: `before installing rebuilt app to ${installedAppPath}`,
     includeBundleId: true,
@@ -267,8 +310,72 @@ if (targetsWindows) {
   });
   installAndLaunchLinuxApp(appPath);
 }
+pruneStaleIncrementalCaches();
 finishStartStep();
 console.log(formatLastRunTimestamp(new Date()));
+
+/* CDXC:Build 2026-09-23 DECISION:
+ * User asked for rustc's incremental caches to be pruned automatically, keeping one cache per binary.
+ * Every build configuration (check, build, test, opt-level, target) gets its own cache directory and nothing ever removes the old ones: apps/desktop/target/debug/incremental had grown to 22GB across ~25 caches per binary.
+ * Each start keeps the newest cache per crate in every incremental folder of the desktop and gxserver targets, and leaves anything touched in the last 30 minutes alone so a build running in another session is never disturbed.
+ * The removal runs detached so the start does not wait for it.
+ */
+function pruneStaleIncrementalCaches() {
+  if (isWindows) {
+    return;
+  }
+  const recentCutoffMs = Date.now() - 30 * 60 * 1000;
+  const incrementalDirs = [];
+  for (const targetRoot of [path.join(gpuiDir, 'target'), path.join(repoRoot, 'server', 'target')]) {
+    for (const first of safeReaddir(targetRoot)) {
+      const firstPath = path.join(targetRoot, first);
+      incrementalDirs.push(path.join(firstPath, 'incremental'));
+      for (const second of safeReaddir(firstPath)) {
+        incrementalDirs.push(path.join(firstPath, second, 'incremental'));
+      }
+    }
+  }
+  const stale = [];
+  for (const incrementalDir of incrementalDirs) {
+    const newestByCrate = new Map();
+    for (const entry of safeReaddir(incrementalDir)) {
+      const entryPath = path.join(incrementalDir, entry);
+      let modifiedMs;
+      try {
+        const stats = statSync(entryPath);
+        if (!stats.isDirectory()) continue;
+        modifiedMs = stats.mtimeMs;
+      } catch {
+        continue;
+      }
+      const crate = entry.replace(/-[^-]+$/, '');
+      const caches = newestByCrate.get(crate) ?? [];
+      caches.push({ entryPath, modifiedMs });
+      newestByCrate.set(crate, caches);
+    }
+    for (const caches of newestByCrate.values()) {
+      caches.sort((left, right) => right.modifiedMs - left.modifiedMs);
+      for (const { entryPath, modifiedMs } of caches.slice(1)) {
+        if (modifiedMs < recentCutoffMs) stale.push(entryPath);
+      }
+    }
+  }
+  if (stale.length === 0) {
+    return;
+  }
+  spawn('/bin/rm', ['-rf', ...stale], { detached: true, stdio: 'ignore' }).unref();
+  logStartDetail(
+    `Removing ${stale.length} old incremental build cache${stale.length === 1 ? '' : 's'} in the background.`
+  );
+}
+
+function safeReaddir(directory) {
+  try {
+    return readdirSync(directory);
+  } catch {
+    return [];
+  }
+}
 
 function startBuildInBackground(label, scriptName) {
   /* CDXC:Build 2026-09-05 WHY:
@@ -387,19 +494,42 @@ function resolveWindowsProgramFilesPaths() {
   return { hostPath, windowsPath };
 }
 
+/**
+ * The isolated instance is selected before the arguments are validated, because the app name, the
+ * install directory and the gxserver port all derive from the variant.
+ */
+function resolveIsolatedStartVariant(args) {
+  let variant;
+  for (const arg of args) {
+    const selected = arg === '--' ? undefined : parseIsolatedGpuiArgument(arg);
+    if (!selected) continue;
+    if (variant && variant !== selected) {
+      throw new Error(`Start one isolated variant at a time: --isolated=${variant} or --isolated=${selected}.`);
+    }
+    variant = selected;
+  }
+  return variant;
+}
+
 function validateStartArguments(args) {
   let verbose =
     truthyStartFlag(process.env.GHOSTEX_GPUI_START_VERBOSE) || truthyStartFlag(process.env.GHOSTEX_START_VERBOSE);
   let profile = false;
+  let optimized = truthyStartFlag(process.env.GHOSTEX_START_OPTIMIZED);
   for (const arg of args) {
     if (arg === '--') {
       continue;
     }
-    if (arg === '--isolated') {
+    if (parseIsolatedGpuiArgument(arg)) {
       continue;
     }
     if (arg === '--profile') {
       profile = true;
+      continue;
+    }
+    // macOS only: build the app and gxserver crates with full release optimization (see build-macos-rust.sh).
+    if (arg === '--optimized') {
+      optimized = true;
       continue;
     }
     if (arg === '--verbose' || arg === '-v') {
@@ -407,10 +537,10 @@ function validateStartArguments(args) {
       continue;
     }
     throw new Error(
-      `Unknown GPUI start argument: ${arg}. Use "bun run start" with optional --verbose, --profile, and --isolated flags.`
+      `Unknown GPUI start argument: ${arg}. Use "bun run start" with optional --verbose, --profile, --optimized, and --isolated[=<variant>] flags.`
     );
   }
-  return { verbose, profile };
+  return { verbose, profile, optimized };
 }
 
 function truthyStartFlag(value) {
@@ -470,31 +600,33 @@ function processIsAlive(pid) {
   }
 }
 
-function ensureWindowsWslRuntimeArchive() {
-  if (!existsSync(windowsWslArchive)) {
+/*
+CDXC:PlatformSupport 2026-09-22 WHY:
+The gxserver runtime is a public release asset, so it is fetched straight from
+the release download URL. `gh release download` was used here before, but the
+GitHub CLI refuses to run unauthenticated and answers 401 whenever its stored
+token has expired, which blocked `bun run start` on a machine that never needed
+GitHub credentials to build the app.
+*/
+async function downloadPublicReleaseAsset(tag, assetName, destination) {
+  const url = `https://github.com/maddada/Ghostex/releases/download/${tag}/${encodeURIComponent(assetName)}`;
+  const response = await fetch(url, { redirect: 'follow' });
+  if (!response.ok || !response.body) {
+    throw new Error(`Could not download ${url}: HTTP ${response.status} ${response.statusText}`);
+  }
+  const partial = `${destination}.partial`;
+  writeFileSync(partial, Buffer.from(await response.arrayBuffer()));
+  renameSync(partial, destination);
+}
+
+async function ensureWindowsWslRuntimeArchive() {
+  if ((requireWindowsWslRuntime || explicitWindowsWslArchive) && !existsSync(windowsWslArchive)) {
     if (explicitWindowsWslArchive) {
       throw new Error(`GHOSTEX_WINDOWS_WSL_GXSERVER_ARCHIVE does not exist: ${windowsWslArchive}`);
     }
     mkdirSync(path.dirname(windowsWslArchive), { recursive: true });
     logStartStep(`Downloading the Ghostex ${appVersion} WSL2 runtime...`);
-    run(
-      'gh',
-      [
-        'release',
-        'download',
-        `v${appVersion}`,
-        '--repo',
-        'maddada/Ghostex',
-        '--pattern',
-        path.basename(windowsWslArchive),
-        '--dir',
-        path.dirname(windowsWslArchive),
-        '--clobber',
-      ],
-      {
-        quietLabel: 'Windows WSL2 runtime download',
-      }
-    );
+    await downloadPublicReleaseAsset(`v${appVersion}`, path.basename(windowsWslArchive), windowsWslArchive);
     if (!existsSync(windowsWslArchive)) {
       throw new Error(`The WSL2 runtime download did not produce ${windowsWslArchive}.`);
     }
@@ -634,13 +766,15 @@ function ensureLocalReferenceCheckouts() {
   });
 }
 
-function requirePinnedDependencyRevision(name, checkoutPath) {
+/**
+ * CDXC:Build 2026-09-22 WHY:
+ * Local starts must build dependency edits before their gitlinks are committed. Requiring the parent HEAD revision blocked valid local GPUI work; initialize missing submodules at the pin, but use an existing checkout as-is.
+ */
+function reportLocalDependencyRevision(name, checkoutPath) {
   const expectedRevision = dependencyGitOutput(repoRoot, ['rev-parse', `HEAD:.dependencies/${name}`]);
   const revision = dependencyGitOutput(checkoutPath, ['rev-parse', 'HEAD']);
   if (revision !== expectedRevision) {
-    throw new Error(
-      `GPUI dependency ${checkoutPath} is at ${revision || 'an unreadable revision'}, expected committed revision ${expectedRevision}. Refusing to alter an existing checkout because it may contain user work.`
-    );
+    logStartDetail(`Using local ${name} revision ${revision} (committed pin ${expectedRevision}).`);
   }
 }
 
@@ -658,7 +792,7 @@ function ensureReferenceCheckout({ name, requiredRelativePath }) {
       throw new Error(`GPUI dependency ${expectedPath} is incomplete after submodule initialization.`);
     }
   }
-  preparePinnedDependency(name, expectedPath);
+  reportLocalDependencyRevision(name, expectedPath);
 }
 
 function dependencySubmoduleIsUninitialized(name) {
@@ -683,10 +817,6 @@ function initializeDependencySubmodule(name) {
     env: startEnvironment,
     quietLabel: `${name} dependency checkout`,
   });
-}
-
-function preparePinnedDependency(name, checkoutPath) {
-  requirePinnedDependencyRevision(name, checkoutPath);
 }
 
 function dependencyGitOutput(checkoutPath, args) {
@@ -785,37 +915,53 @@ function findRunningGpuiPidsByBundleId() {
   if (!isDarwin) {
     return [];
   }
-  const result = spawnSync(
-    'osascript',
-    [
-      '-e',
-      `tell application "System Events" to get the unix id of every process whose bundle identifier is "${bundleId}"`,
-    ],
-    {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      env: startEnvironment,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }
-  );
-  if (result.status !== 0 || !result.stdout.trim()) {
+  /* CDXC:Build 2026-09-23 WHY:
+   * This runs every 100ms while the app quits and launches. Asking System Events through osascript took ~0.27s per call; lsappinfo reads the same Launch Services table in ~0.01s.
+   */
+  const spawnOptions = {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: startEnvironment,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  };
+  const found = spawnSync('lsappinfo', ['find', `bundleid=${bundleId}`], spawnOptions);
+  const asns = found.status === 0 ? (found.stdout.match(/ASN:0x[0-9a-f]+-0x[0-9a-f]+/gi) ?? []) : [];
+  if (asns.length === 0) {
     return [];
   }
-  return parsePidList(result.stdout).filter((pid) => /^\d+$/.test(pid));
+  const info = spawnSync('lsappinfo', ['info', '-only', 'pid', ...asns], spawnOptions);
+  if (info.status !== 0) {
+    return [];
+  }
+  return [...info.stdout.matchAll(/"?pid"?\s*=\s*(\d+)/g)].map((match) => match[1]);
 }
 
 function findRunningGpuiPidsByBundlePath(bundlePath) {
   if (targetsWindows) {
     /*
-    CDXC:PlatformSupport 2026-08-02:
+    CDXC:PlatformSupport 2026-09-18:
     Local Windows development can be driven entirely by the WSL bash launcher.
-    Query the two product-specific image names with tasklist instead of using a
-    PowerShell CIM pipeline; no other application ships either executable name,
-    and taskkill below closes the matching main/helper process tree before the
-    staged directory is replaced.
+    Query the product-specific image names with tasklist instead of using a
+    PowerShell CIM pipeline; no other application ships these executable names,
+    and taskkill below closes each matching process before the staged
+    directory is replaced.
+
+    Supersedes the 2026-08-02 two-name list, which omitted
+    ghostex-gpui-runtime.exe. An installed release runs Ghostex.exe only as the
+    CEF-free bootstrap; the long-lived app is the runtime it launches. Killing
+    just the bootstrap and the CEF helpers left the runtime alive, and it
+    respawned its helpers faster than the exit wait polled, so every start
+    failed with "Ghostex did not exit". GhostexEditor.exe is bundled under
+    resources/ and holds open handles inside the install directory, which
+    Windows will not let the installer replace.
     */
     const pids = [];
-    for (const imageName of ['Ghostex.exe', 'ghostex-gpui-cef-helper.exe']) {
+    for (const imageName of [
+      'Ghostex.exe',
+      'ghostex-gpui-runtime.exe',
+      'ghostex-gpui-cef-helper.exe',
+      'GhostexEditor.exe',
+    ]) {
       const result = spawnSync(
         windowsSystemExecutable('tasklist'),
         ['/FI', `IMAGENAME eq ${imageName}`, '/FO', 'CSV', '/NH'],
@@ -847,14 +993,28 @@ function findRunningGpuiPidsByBundlePath(bundlePath) {
   return result.stdout
     .split(/\r?\n/)
     .map((line) => line.match(/^\s*(\d+)\s+(.+)$/))
-    .filter((match) => match && commandLineBelongsToGpuiBundle(match[2], bundlePath))
+    .filter(
+      (match) =>
+        match &&
+        (commandLineBelongsToGpuiBundle(match[2], bundlePath) ||
+          // The installed app's code-server runs from the local-start store, not from inside the bundle.
+          (isDarwin &&
+            bundlePath === installedAppPath &&
+            match[2].includes(`${localStartCodeServerStoreRoot}${path.sep}`)))
+    )
     .map((match) => match[1]);
 }
 
 function terminateGpuiPids(pids, force) {
   if (targetsWindows) {
+    /*
+    CDXC:PlatformSupport 2026-09-18 WHY:
+    Kill each app process by pid without taskkill /T, the same per-pid close macOS does with process.kill.
+    The runtime is the parent of gxserver.exe, and gxserver parents live wmx.exe terminal sessions, so a tree kill ended every agent running in those sessions.
+    Every app process is already named in findRunningGpuiPidsByBundlePath, so the tree walk was never needed to reach the CEF helpers.
+    */
     for (const pid of pids) {
-      run(windowsSystemExecutable('taskkill'), ['/PID', pid, '/T', ...(force ? ['/F'] : [])], {
+      run(windowsSystemExecutable('taskkill'), ['/PID', pid, ...(force ? ['/F'] : [])], {
         allowFailure: true,
         stdio: 'ignore',
       });
@@ -942,6 +1102,59 @@ function commandLineBelongsToGpuiBundle(commandLine, bundlePath) {
 
 function commandLineRunsExecutable(commandLine, executablePath) {
   return commandLine === executablePath || commandLine.startsWith(`${executablePath} `);
+}
+
+/* CDXC:Build 2026-09-23 WHY:
+ * On 2026-09-21 macOS App Management refused the sync into the installed app halfway ("Operation not permitted"), leaving a broken app, and an agent then installed every later build by hand as Ghostex-new.app plus `mv Ghostex.app Ghostex.old-<time>.app`, leaving a 1.7GB copy per install.
+ * Probe before the running app is closed, so a blocked install stops with the fix instead of breaking the app.
+ * Installing in place, not by swapping in a new bundle, is deliberate: a kept gxserver and live zmx sessions run from files inside the installed bundle.
+ */
+function ensureInstalledMacosAppIsWritable() {
+  if (!existsSync(installedAppPath)) {
+    return;
+  }
+  const probePath = path.join(installedAppPath, 'Contents', `.ghostex-install-probe-${process.pid}`);
+  try {
+    writeFileSync(probePath, '');
+    rmSync(probePath, { force: true });
+  } catch (error) {
+    throw new Error(
+      [
+        `macOS will not let this start modify ${installedAppPath} (${error.code ?? error.message}).`,
+        'This is the App Management privacy setting. Open System Settings > Privacy & Security > App Management and turn it on for the app this command runs in (Ghostex, or your terminal), then run the start again.',
+        'Do not install the build by hand under another name: every such install leaves a full copy of the app behind.',
+      ].join('\n')
+    );
+  }
+}
+
+/* Removes full app copies that hand installs left beside the installed app, identified by their bundle id and never while running. */
+function removeStaleMacosAppCopies() {
+  const leftoverName = new RegExp(
+    `^${appName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\.(?:old|broken|bak|backup)-[^/]*|-new|-old)\\.app$`
+  );
+  let entries = [];
+  try {
+    entries = readdirSync(installDir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!leftoverName.test(entry)) {
+      continue;
+    }
+    const copyPath = path.join(installDir, entry);
+    const infoPlist = path.join(copyPath, 'Contents', 'Info.plist');
+    const bundleIdResult = spawnSync('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleIdentifier', infoPlist], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (bundleIdResult.stdout?.trim() !== bundleId || findRunningGpuiPidsByBundlePath(copyPath).length > 0) {
+      continue;
+    }
+    rmSync(copyPath, { recursive: true, force: true });
+    logStartDetail(`Removed leftover app copy ${copyPath}.`);
+  }
 }
 
 async function installAndOpenMacosApp(stagedAppPath) {
@@ -1107,13 +1320,34 @@ async function stopRunningGxserverControlPlaneBeforeLaunch(stagedAppPath) {
     return;
   }
 
-  const health = await fetchGxserverJson('/api/health/server', { method: 'GET', token });
+  const endpoints = isWindows
+    ? windowsGxserverEndpoints(stagedAppPath)
+    : [{ baseUrl: gxserverBaseUrl }];
+  for (const endpoint of endpoints) {
+    await stopGxserverEndpointBeforeLaunch(endpoint, token, expectedBuildIdentity);
+  }
+  if (endpoints.length === 0) logStartDetail('No running gxserver control plane found.');
+}
+
+async function stopGxserverEndpointBeforeLaunch({ baseUrl, pid }, token, expectedBuildIdentity) {
+  const health = await fetchGxserverJson('/api/health/server', { baseUrl, method: 'GET', token });
+  if (pid && (!health || health.product !== 'gxserver' || health.pid !== pid)) {
+    throw new Error(`Could not verify the gxserver listener owned by pid ${pid} at ${baseUrl}.`);
+  }
   if (!health || health.product !== 'gxserver') {
     logStartDetail('No running gxserver control plane found.');
     return;
   }
 
   const actualBuildIdentity = typeof health.buildIdentity === 'string' ? health.buildIdentity.trim() : '';
+  /* CDXC:ServerDaemon 2026-09-23 WHY:
+   * Every start used to stop the control plane even when the rebuilt app bundles the same gxserver, costing up to 5s plus a daemon cold start on launch.
+   * The build identity hashes the whole staged gxserver package, so a match means the running daemon already is the code this start would launch.
+   */
+  if (expectedBuildIdentity && actualBuildIdentity === expectedBuildIdentity) {
+    logStartDetail('gxserver control plane already runs the bundled build; keeping it.');
+    return;
+  }
   const buildIdentitySuffix =
     actualBuildIdentity && expectedBuildIdentity && actualBuildIdentity !== expectedBuildIdentity
       ? ` (build identity ${actualBuildIdentity} -> ${expectedBuildIdentity})`
@@ -1125,8 +1359,8 @@ async function stopRunningGxserverControlPlaneBeforeLaunch(stagedAppPath) {
   } else {
     logStartDetail(`Stopping running gxserver control plane (${stopReason}).`);
   }
-  await fetchGxserverJson('/api/control/stop', { method: 'POST', token });
-  const stopped = await waitForGxserverStop(token, 5000);
+  await fetchGxserverJson('/api/control/stop', { baseUrl, method: 'POST', token });
+  const stopped = await waitForGxserverStop(baseUrl, token, 5000);
   if (!stopped) {
     throw new Error('gxserver stop was requested, but the old control plane is still responding.');
   }
@@ -1140,14 +1374,13 @@ function gxserverControlPlaneStopReason({ actualBuildIdentity, expectedBuildIden
   if (!actualBuildIdentity) {
     return 'running daemon did not report a build identity';
   }
-  if (actualBuildIdentity !== expectedBuildIdentity) {
-    return 'bundled daemon changed';
-  }
-  return 'local GPUI start resets the daemon even when the bundled identity is current';
+  return 'bundled daemon changed';
 }
 
 function readBundledGxserverBuildIdentity(stagedAppPath) {
-  const identityPath = path.join(stagedAppPath, 'Contents', 'Resources', 'Web', 'gxserver', 'build-identity.json');
+  const identityPath = isWindows
+    ? path.join(stagedAppPath, 'resources', 'build-identity.json')
+    : path.join(stagedAppPath, 'Contents', 'Resources', 'Web', 'gxserver', 'build-identity.json');
   if (!existsSync(identityPath)) {
     return undefined;
   }
@@ -1156,16 +1389,75 @@ function readBundledGxserverBuildIdentity(stagedAppPath) {
   return buildIdentity || undefined;
 }
 
-function readGxserverToken() {
+/**
+ * CDXC:ServerDaemon 2026-09-18 SEE-ALSO:
+ * Mirrors the state_dir resolution in packages/paths (GhostexStoragePaths): GHOSTEX_HOME wins, native Windows keeps state under %LOCALAPPDATA%\Ghostex\State, and everything else follows XDG.
+ * gxserver's own files sit under <state>/gxserver (server/src/paths.rs), so the token and runtime/server.json are both read from here.
+ */
+function ghostexStateDir() {
   const configuredHome = startEnvironment.GHOSTEX_HOME?.trim();
+  if (configuredHome && path.isAbsolute(configuredHome)) {
+    return path.join(configuredHome, 'state');
+  }
+  if (isWindows) {
+    const localAppData = process.env.LOCALAPPDATA?.trim() || path.join(homedir(), 'AppData', 'Local');
+    return path.join(localAppData, 'Ghostex', 'State');
+  }
   const configuredStateHome = process.env.XDG_STATE_HOME?.trim();
-  const explicitHome = configuredHome && path.isAbsolute(configuredHome) ? configuredHome : undefined;
   const absoluteStateHome =
     configuredStateHome && path.isAbsolute(configuredStateHome) ? configuredStateHome : undefined;
-  const stateDir = explicitHome
-    ? path.join(explicitHome, 'state')
-    : path.join(absoluteStateHome || path.join(homedir(), '.local', 'state'), 'ghostex');
-  const tokenPaths = [path.join(stateDir, 'gxserver', 'auth', 'token')];
+  return path.join(absoluteStateHome || path.join(homedir(), '.local', 'state'), 'ghostex');
+}
+
+/**
+ * CDXC:ServerDaemon 2026-09-23 WHY:
+ * A previous daemon's shutdown could remove its replacement's runtime metadata while the replacement still owned its listening socket. Discover Windows listeners from the exact installed, staged, or managed CLI package executable's process, and retain that endpoint through shutdown polling; metadata disappearance is not proof the server stopped. This supersedes discovery solely from runtime/server.json.
+ */
+function windowsGxserverEndpoints(stagedAppPath) {
+  const configuredHome = startEnvironment.GHOSTEX_HOME?.trim();
+  const dataDir = configuredHome && path.isAbsolute(configuredHome)
+    ? configuredHome
+    : path.join(startEnvironment.LOCALAPPDATA?.trim() || path.join(homedir(), 'AppData', 'Local'), 'Ghostex', 'Data');
+  const script = `
+$ErrorActionPreference = 'Stop'
+$serverPaths = ConvertFrom-Json -InputObject $env:GHOSTEX_START_SERVER_PATHS
+$servers = @(Get-Process gxserver -ErrorAction SilentlyContinue | Where-Object { $_.Path -in $serverPaths })
+$listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)
+@($servers | ForEach-Object {
+  $serverProcess = $_
+  $listeners | Where-Object { $_.OwningProcess -eq $serverProcess.Id -and $_.LocalAddress -eq '127.0.0.1' } | ForEach-Object {
+    @{ pid = $serverProcess.Id; port = $_.LocalPort }
+  }
+}) | ConvertTo-Json -Compress
+`;
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 15000,
+    env: {
+      ...withoutPowerShell7ModulePaths(startEnvironment),
+      GHOSTEX_START_SERVER_PATHS: JSON.stringify(
+        [
+          ...[installedAppPath, stagedAppPath].map((directory) => path.join(directory, 'resources', 'native', 'gxserver.exe')),
+          path.join(dataDir, 'gxserver', 'package', 'bin', 'gxserver.exe'),
+        ]
+      ),
+    },
+  });
+  if (result.status !== 0) {
+    throw new Error(`Could not inspect Windows gxserver listeners: ${result.stderr || result.error || 'PowerShell failed'}`);
+  }
+  const records = JSON.parse(result.stdout.trim() || '[]');
+  return (Array.isArray(records) ? records : [records]).map(({ pid, port }) => ({
+    baseUrl: `http://127.0.0.1:${port}`,
+    pid,
+  }));
+}
+
+function readGxserverToken() {
+  const configuredHome = startEnvironment.GHOSTEX_HOME?.trim();
+  const explicitHome = configuredHome && path.isAbsolute(configuredHome) ? configuredHome : undefined;
+  const tokenPaths = [path.join(ghostexStateDir(), 'gxserver', 'auth', 'token')];
   if (!explicitHome) {
     // Read-only upgrade compatibility before the app has had a chance to run
     // the storage migration. Current XDG state always wins.
@@ -1182,23 +1474,23 @@ function readGxserverToken() {
   return undefined;
 }
 
-async function waitForGxserverStop(token, timeoutMs) {
+async function waitForGxserverStop(baseUrl, token, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const health = await fetchGxserverJson('/api/health/server', { method: 'GET', token, timeoutMs: 500 });
+    const health = await fetchGxserverJson('/api/health/server', { baseUrl, method: 'GET', token, timeoutMs: 500 });
     if (!health) {
       return true;
     }
     await sleep(100);
   }
-  return !(await fetchGxserverJson('/api/health/server', { method: 'GET', token, timeoutMs: 500 }));
+  return !(await fetchGxserverJson('/api/health/server', { baseUrl, method: 'GET', token, timeoutMs: 500 }));
 }
 
-async function fetchGxserverJson(pathname, { method, token, timeoutMs = 1000 }) {
+async function fetchGxserverJson(pathname, { baseUrl, method, token, timeoutMs = 1000 }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${gxserverBaseUrl}${pathname}`, {
+    const response = await fetch(`${baseUrl}${pathname}`, {
       headers: {
         authorization: `Bearer ${token}`,
         'x-gxserver-protocol-version': String(protocolVersion),
@@ -1293,13 +1585,6 @@ function installWindowsGpuiApp(stagedAppPath) {
     throw new Error(`The installed Ghostex executable is missing at ${windowsInstalledAppPath}\\Ghostex.exe.`);
   }
   logStartDetail(`Installed app and Start Menu shortcut are ready for all Windows users.`);
-}
-
-function parsePidList(value) {
-  return value
-    .split(/[,\s]+/)
-    .map((pid) => pid.trim())
-    .filter(Boolean);
 }
 
 function uniquePids(pids) {
@@ -1459,9 +1744,7 @@ function reportQuietCommandFailure(label, status, logPath) {
   const relativeLogPath = path.relative(repoRoot, logPath);
   console.error(`${label} failed with exit code ${status}.`);
   console.error(`Full log: ${relativeLogPath}`);
-  console.error(
-    `Rerun with ${isolatedInstance ? 'bun run start:isolated' : 'bun run start'} --verbose for live output.`
-  );
+  console.error(`Rerun with ${startCommandHint} --verbose for live output.`);
   const tail = readQuietLogTail(logPath);
   if (tail) {
     console.error(

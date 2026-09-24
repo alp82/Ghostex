@@ -34,7 +34,9 @@ export type ghostexHotkeyActionId =
   | 'openModelPicker'
   | 'toggleChatView'
   | 'openFindPrompts'
-  | 'toggleCompanionPane'
+  | 'toggleViewPanel'
+  | 'expandViewPanel'
+  | 'expandViewPanelFully'
   | 'toggleAgentActions'
   | 'toggleSidebarCollapsed'
   | 'wakeFocusedSession'
@@ -62,6 +64,7 @@ export type ghostexHotkeyActionId =
   | 'switchKanbanView'
   | 'switchManageView'
   | 'switchAutomateView'
+  | 'switchTerminalView'
   | `switchTitlebarView${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
   | `runActionSlot${1 | 2 | 3 | 4 | 5}`
   | `jumpToProject${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
@@ -123,11 +126,13 @@ export type ghostexHotkeyAction =
   | {
       id: ghostexHotkeyActionId;
       kind: 'switchWorkareaView';
-      view: 'agents' | 'github' | 'kanban' | 'manage' | 'source' | 'automate';
+      view: 'agents' | 'github' | 'kanban' | 'manage' | 'source' | 'automate' | 'terminal';
     }
   | { id: ghostexHotkeyActionId; kind: 'switchTitlebarView'; viewIndex: number }
   | { id: ghostexHotkeyActionId; kind: 'terminalToolbarAction'; terminalToolbarAction: ghostexTerminalToolbarAction }
-  | { id: ghostexHotkeyActionId; kind: 'toggleCompanionPane' }
+  | { id: ghostexHotkeyActionId; kind: 'toggleViewPanel' }
+  | { id: ghostexHotkeyActionId; kind: 'expandViewPanel' }
+  | { id: ghostexHotkeyActionId; kind: 'expandViewPanelFully' }
   | { id: ghostexHotkeyActionId; kind: 'toggleSidebarCollapsed' }
   | { direction: 'horizontal' | 'vertical'; id: ghostexHotkeyActionId; kind: 'splitFocusedPane' };
 
@@ -275,15 +280,36 @@ export const GHOSTEX_HOTKEY_DEFINITIONS: readonly ghostexHotkeyDefinition[] = [
     title: 'Toggle Sidebar',
   },
   {
-    action: { id: 'toggleCompanionPane', kind: 'toggleCompanionPane' },
+    action: { id: 'toggleViewPanel', kind: 'toggleViewPanel' },
     /**
-     * CDXC:CodeEditor 2026-07-29-05:03:
-     * Cmd+Option+B toggles the project-editor companion independently from the main app sidebar. Collapsing transfers focus to the active Code, Browser, Kanban, Automate, or Docs pane; expanding restores and focuses the companion.
+     * CDXC:Workarea 2026-09-20 WHY:
+     * Cmd+Option+B opens and closes the view panel beside the sessions, independently of the main app
+     * sidebar. Closing it leaves the sessions the whole work area; opening it comes back to the view
+     * this project last showed. This supersedes the 2026-07-29 companion-pane wording, whose pane the
+     * view panel replaced.
      */
     defaultKey: 'cmd+alt+b',
-    description: 'Collapse or expand the project companion pane.',
-    id: 'toggleCompanionPane',
-    title: 'Toggle Companion Pane',
+    description: 'Open or close the view panel beside your sessions.',
+    id: 'toggleViewPanel',
+    title: 'Toggle View Panel',
+  },
+  {
+    action: { id: 'expandViewPanel', kind: 'expandViewPanel' },
+    /**
+     * CDXC:Workarea 2026-09-21 DECISION:
+     * User: Expand side panel and Expand side panel fully each get a hotkey, Cmd+Ctrl based with E for expand, and the full one is the same chord with Shift held.
+     */
+    defaultKey: 'cmd+ctrl+e',
+    description: 'Expand the side panel over the Agents Panel, or bring the Agents Panel back.',
+    id: 'expandViewPanel',
+    title: 'Expand Side Panel',
+  },
+  {
+    action: { id: 'expandViewPanelFully', kind: 'expandViewPanelFully' },
+    defaultKey: 'cmd+ctrl+shift+e',
+    description: 'Expand the side panel over the Agents Panel and hide the sidebar, or bring both back.',
+    id: 'expandViewPanelFully',
+    title: 'Expand Side Panel Fully',
   },
   {
     action: { id: 'renameActiveSession', kind: 'renameActiveSession' },
@@ -317,6 +343,7 @@ export const GHOSTEX_HOTKEY_DEFINITIONS: readonly ghostexHotkeyDefinition[] = [
       ['switchKanbanView', 'kanban', 'alt+4', 'Kanban'],
       ['switchManageView', 'manage', 'alt+5', 'Docs'],
       ['switchAutomateView', 'automate', '', 'Automate'],
+      ['switchTerminalView', 'terminal', '', 'Terminal'],
     ] as const
   ).map(([id, view, defaultKey, title]) => ({
     action: {
@@ -349,9 +376,9 @@ export const GHOSTEX_HOTKEY_DEFINITIONS: readonly ghostexHotkeyDefinition[] = [
       viewIndex: slot - 1,
     },
     defaultKey: `alt+${slot}`,
-    description: `Open view ${slot} in the displayed titlebar order.`,
+    description: `Open tab ${slot} in the view panel's tab strip.`,
     id: `switchTitlebarView${slot}` as const,
-    title: `Switch to Titlebar View ${slot}`,
+    title: `Switch to View Tab ${slot}`,
   })),
   {
     action: {
@@ -689,7 +716,7 @@ export const GHOSTEX_HOTKEY_DEFINITIONS: readonly ghostexHotkeyDefinition[] = [
   {
     action: { command: 'open', id: 'openNotifications', kind: 'notificationFeed' },
     defaultKey: 'cmd+i',
-    description: 'Open the Notifications panel under the titlebar bell.',
+    description: "Open the Notifications panel under the bell in the sidebar's top row.",
     id: 'openNotifications',
     title: 'Open Notifications',
   },
@@ -762,7 +789,7 @@ export const GHOSTEX_HOTKEY_DEFINITIONS: readonly ghostexHotkeyDefinition[] = [
      * Directional pane focus uses Cmd+Alt+Arrow so app navigation no longer steals common editing shortcuts.
      */
     defaultKey: `cmd+alt+${direction}`,
-    description: `Move focus ${direction}.`,
+    description: `Move focus ${direction} between the session panes and the Commands pane.`,
     id: `focus${capitalize(direction)}` as ghostexHotkeyActionId,
     retiredDefaultKeys: [`cmd+${direction}`],
     title: `Focus ${capitalize(direction)}`,

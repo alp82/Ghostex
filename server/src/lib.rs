@@ -1,6 +1,7 @@
 pub(crate) mod accounts;
 pub(crate) mod agent_cli;
 pub mod agent_hooks;
+pub mod agent_model_catalog;
 pub mod agent_prompt_search;
 pub mod agent_skills;
 pub mod agent_skills_remote;
@@ -96,6 +97,7 @@ pub mod session_chat_omp_blocking;
 pub mod session_chat_options;
 pub mod session_chat_paths;
 pub mod session_chat_pi_blocking;
+pub mod session_chat_question_liveness;
 pub mod session_chat_queue;
 pub mod session_chat_queue_runtime;
 pub mod session_chat_read;
@@ -116,6 +118,7 @@ pub mod session_chat_terminal_activity;
 pub mod session_chat_terminal_dialog;
 #[cfg(test)]
 mod session_chat_tests;
+pub mod session_chat_trust_memory;
 pub mod session_chat_watchdog;
 pub mod session_chat_workspace_trust;
 pub mod session_chat_zcode;

@@ -328,7 +328,10 @@ fn table_actions(
             "titlebar/copy.svg",
             p,
             move |cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(markdown.clone()));
+                crate::app::helpers::gpui_copy_to_clipboard(
+                    ClipboardItem::new_string(markdown.clone()),
+                    cx,
+                );
             },
         ))
         .child(table_action(
@@ -336,7 +339,10 @@ fn table_actions(
             "titlebar/layout-columns.svg",
             p,
             move |cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(table_csv(&csv)));
+                crate::app::helpers::gpui_copy_to_clipboard(
+                    ClipboardItem::new_string(table_csv(&csv)),
+                    cx,
+                );
             },
         ))
         .into_any_element()
@@ -413,6 +419,8 @@ impl NativeChatView {
         };
         let header_wraps = wraps.clone();
         TextView::markdown(id, content)
+            .min_w_0()
+            .max_w(gpui::relative(1.0))
             .link_presentation(move |href, label| {
                 references
                     .get(&(href.to_owned(), label.to_owned()))

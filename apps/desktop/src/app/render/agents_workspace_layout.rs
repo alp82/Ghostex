@@ -25,9 +25,28 @@ use crate::app::model::*;
 use crate::app::render::resize_rail::*;
 use crate::*;
 
+/// Where the Agents workspace sits in the workarea this frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum AgentsWorkspaceLayout {
+    /// No view is open, so the Agents workspace has the whole workarea.
+    FullWidth,
+    /// A view panel is open beside it; `split_ratio` is the Agents column's share of the row.
+    Column { split_ratio: f32 },
+    /// The workarea folded the column away and the left-edge reveal is carrying it, so it fills a
+    /// slot in the floating panel instead of a column of the main window. There is no header above
+    /// it there and no command pane beside it, so it neither insets for one nor fades under one.
+    Floating,
+}
+
 impl GhostexGpuiApp {
+    /// CDXC:Workarea 2026-09-20 WHY:
+    /// The Agents workspace is rendered on every frame now, either alone or as the left column of a
+    /// workarea whose right half is an open view. Terminals and chats therefore keep recording body
+    /// bounds across a view open, change or close, which is what keeps their Ghostty surfaces and
+    /// chat pages mounted; nothing outside this function decides whether they exist.
     pub(crate) fn render_agents_workspace(
         &self,
+        layout: AgentsWorkspaceLayout,
         window: &Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
@@ -38,37 +57,104 @@ impl GhostexGpuiApp {
         CDXC:Workarea 2026-06-22-14:40:
         The Agents workspace root must be a vertical flex container, not only a flex-sized child of the command-pane wrapper. The rendered split or leaf tree uses flex_1 sizing, so it needs this parent layout context to fill the available height above the command pane instead of leaving a black shell gap below the terminal pane.
         */
-        let outer_rail_edges = self.main_workspace_outer_rail_edges(window);
-        v_flex()
+        /*
+        CDXC:Titlebar 2026-09-20 WHY:
+        This column is the one the header floats over, so it starts at the window's top edge while
+        it holds the GPUI chat the fade is drawn over, and one header height down in every other
+        case, so a tab bar, a pane outline, a terminal grid or a CEF page never ends up behind the
+        header. The top edge is the header's own line there, so the pane draws no border against it,
+        exactly as it draws none against a resize rail. The rule is in
+        render/workarea_header/overlap.rs and the decision behind it on the header itself.
+
+        CDXC:Titlebar 2026-09-21 WHY:
+        Dropping the border is the wider of the two answers: a GPUI chat that starts below the row
+        because its own chrome sits above the transcript still meets the header on a band painted in
+        its own colour, so a hairline there would be the only thing drawing the header as a separate
+        bar. Whether the column also starts at the window's top edge stays the narrower answer.
+        */
+        let floating = layout == AgentsWorkspaceLayout::Floating;
+        let meets_header = !floating && self.agents_column_meets_gpui_chat();
+        let flows_under_header = !floating && self.agents_column_flows_under_workarea_header(cx);
+        let solo_chat = self
+            .agents_column_solo_gpui_chat()
+            .filter(|_| flows_under_header)
+            .map(|chat| chat.entity_id());
+        for chat in self.native_chat_views.values() {
+            let under = solo_chat == Some(chat.entity_id());
+            if chat.read(cx).under_workarea_header != under {
+                chat.update(cx, |chat, cx| chat.set_under_workarea_header(under, cx));
+            }
+        }
+        let top_inset = if floating {
+            0.0
+        } else {
+            self.workarea_header_column_top_inset(flows_under_header)
+        };
+        let rail_edges = if floating {
+            // The panel's own rail is the only line on the column's left; nothing else in that
+            // window touches it.
+            RailFacingEdges {
+                left: true,
+                ..RailFacingEdges::default()
+            }
+        } else {
+            let outer_rail_edges = RailFacingEdges {
+                top: meets_header,
+                ..self.main_workspace_outer_rail_edges(window)
+            };
+            match layout {
+                // The split divider is the column's right-hand rail, so the panes there own no
+                // border.
+                AgentsWorkspaceLayout::Column { .. } => RailFacingEdges {
+                    right: true,
+                    ..outer_rail_edges
+                },
+                _ => outer_rail_edges,
+            }
+        };
+        let root = v_flex()
             .id("ghostex-gpui-agents-workspace")
-            .flex_1()
-            .min_w_0()
+            .relative()
+            .pt(px(top_inset))
             .min_h_0()
             .overflow_hidden()
-            .bg(workspace_background_color())
-            .child(
-                if let Some(pane_id) = self.agents_workspace.focus_mode_pane
-                    && let Some(leaf) = self.agents_workspace.find_leaf(pane_id)
-                {
-                    self.render_workspace_leaf(leaf, outer_rail_edges, window, cx)
-                } else {
-                    self.render_workspace_node(
-                        &self.agents_workspace.root,
-                        outer_rail_edges,
-                        window,
-                        cx,
-                    )
-                },
-            )
-            .into_any_element()
+            .bg(workspace_nested_background());
+        let root = match layout {
+            AgentsWorkspaceLayout::FullWidth | AgentsWorkspaceLayout::Floating => {
+                root.flex_1().min_w_0()
+            }
+            AgentsWorkspaceLayout::Column { split_ratio } => root
+                .flex_grow(split_ratio)
+                .flex_shrink_1()
+                .flex_basis(relative(0.0))
+                .h_full()
+                .min_w(px(WORKAREA_AGENTS_COLUMN_MIN_WIDTH)),
+        };
+        root.child(
+            if let Some(pane_id) = self.agents_workspace.focus_mode_pane
+                && let Some(leaf) = self.agents_workspace.find_leaf(pane_id)
+            {
+                self.render_workspace_leaf(leaf, rail_edges, window, cx)
+            } else {
+                self.render_workspace_node(&self.agents_workspace.root, rail_edges, window, cx)
+            },
+        )
+        .when(
+            flows_under_header && self.workarea_header_content_fade_visible(cx),
+            |this| this.child(self.render_workarea_header_content_fade()),
+        )
+        .into_any_element()
     }
 
     /// The sides of the main workspace area, in any view, that touch a rail owned by something outside
     /// it: the sidebar divider on the left, and the command pane boundary below or to the right when pinned.
+    ///
+    /// CDXC:CommandPane 2026-09-23 WHY:
+    /// The collapsed command strip draws its own top line, so the panes above it count that edge as a rail too. Drawing their bottom border as well stacked two 1px lines into one 2px line above the strip.
     pub(crate) fn main_workspace_outer_rail_edges(&self, window: &Window) -> RailFacingEdges {
         let layout_plan = command_pane_workspace_layout_plan(
             self.command_pane.mode,
-            self.command_pane.has_sessions(),
+            self.command_pane.has_panel_sessions(),
             command_pane_content_height(window),
             self.command_pane.height_ratio,
             self.command_pane_side,
@@ -82,7 +168,11 @@ impl GhostexGpuiApp {
                 CommandPaneWorkspaceLayoutPlan::PinnedRight { .. }
             ),
             top: false,
-            bottom: matches!(layout_plan, CommandPaneWorkspaceLayoutPlan::Pinned { .. }),
+            bottom: matches!(
+                layout_plan,
+                CommandPaneWorkspaceLayoutPlan::Pinned { .. }
+                    | CommandPaneWorkspaceLayoutPlan::Collapsed { .. }
+            ),
         }
     }
 
@@ -202,16 +292,8 @@ impl GhostexGpuiApp {
         let split_id = split.id;
         let axis = split.axis;
         let hover_visible = self.workspace_split_hover_line_visible(split_id);
-        // A pane showing React chat is a CEF page, which takes the mouse itself, so the grab strip moves
-        // wholly onto the other side when only one side of the rail has such a pane.
-        let grab_side = match (
-            self.workspace_node_shows_cef_chat(&split.first),
-            self.workspace_node_shows_cef_chat(&split.second),
-        ) {
-            (true, false) => ResizeRailGrabSide::Trailing,
-            (false, true) => ResizeRailGrabSide::Leading,
-            _ => ResizeRailGrabSide::Straddle,
-        };
+        // Both sides are GPUI-painted panes, so the grab strip straddles the rail.
+        let grab_side = ResizeRailGrabSide::Straddle;
         let rail = div()
             .id(format!(
                 "ghostex-gpui-workspace-split-handle-{}",
@@ -229,7 +311,6 @@ impl GhostexGpuiApp {
                 format!("ghostex-gpui-workspace-split-grab-strip-{}", split_id.0),
                 axis,
                 grab_side,
-                self.resize_rail_drag_active(),
             )
             .on_hover(cx.listener(move |this, hovered, _, cx| {
                 this.set_workspace_split_hovering(split_id, *hovered, cx);
@@ -261,18 +342,6 @@ impl GhostexGpuiApp {
         .into_any_element()
     }
 
-    pub(crate) fn workspace_node_shows_cef_chat(&self, node: &WorkspaceNode) -> bool {
-        match node {
-            WorkspaceNode::Split(split) => {
-                self.workspace_node_shows_cef_chat(&split.first)
-                    || self.workspace_node_shows_cef_chat(&split.second)
-            }
-            WorkspaceNode::Leaf(leaf) => leaf.tab_group.active_session_id().is_some_and(|id| {
-                self.agents_chat_mode_sessions.contains(&id) && !self.session_chat_use_gpui
-            }),
-        }
-    }
-
     pub(crate) fn render_workspace_leaf(
         &self,
         leaf: &WorkspaceLeaf,
@@ -283,6 +352,15 @@ impl GhostexGpuiApp {
         let pane_id = leaf.pane_id;
         let border_state = self.workspace_leaf_border_state(leaf, window, cx);
         let view = cx.entity().clone();
+        // Only the lone GPUI chat of the docked column is handed a header-facing top edge: in a
+        // split, the top edge of a lower pane is a rail, and the panes of the top row close their
+        // outline along their own top instead of running it up around the header.
+        let header_reach =
+            (rail_edges.top && self.agents_column_solo_gpui_chat().is_some()).then(|| {
+                self.workarea_header_column_top_inset(
+                    self.agents_column_flows_under_workarea_header(cx),
+                )
+            });
 
         v_flex()
             .on_children_prepainted(move |child_bounds, _window, cx| {
@@ -307,9 +385,10 @@ impl GhostexGpuiApp {
                     rail_edges,
                     workspace_pane_border_color_for_state(border_state),
                     workspace_pane_border_color(),
+                    header_reach,
                 )
             })
-            .bg(workspace_terminal_placeholder_color())
+            .bg(glass_clear(workspace_terminal_placeholder_color()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
@@ -319,9 +398,12 @@ impl GhostexGpuiApp {
                     }
                 }),
             )
-            .when(self.agents_workspace_tab_bar_visible(), |this| {
-                this.child(self.render_workspace_tab_bar(leaf, cx))
-            })
+            // CDXC:Workarea 2026-09-22 DECISION:
+            // User: the Agents pane has no tab bar any more. The sidebar is the list of sessions,
+            // selecting one shows it in the focused pane, and dragging a row onto a pane splits it
+            // (session_pane_placement.rs). This supersedes the 2026-09-04 rule that hid the bar
+            // only while the workspace was not split, and its setting is gone with it.
+            .children(self.render_workspace_pane_grip(leaf, cx))
             .when_some(
                 self.render_agents_terminal_search_bar(leaf, cx),
                 |this, surface| this.child(surface),

@@ -1,5 +1,5 @@
 use super::state::NativeChatView;
-use gpui::{Context, Focusable as _, Window};
+use gpui::{Context, EntityInputHandler as _, Focusable as _, Window};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 
@@ -8,6 +8,19 @@ thread_local! {
     static KILL_BUFFER: RefCell<String> = const { RefCell::new(String::new()) };
     /// Set while a background keystroke is being replayed into the focused composer.
     static REPLAYING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The text a keystroke types when it is not a chord: what the platform would insert through the IME path.
+fn typed_text(keystroke: &gpui::Keystroke) -> Option<&str> {
+    let modifiers = keystroke.modifiers;
+    if modifiers.platform || modifiers.control || modifiers.function {
+        return None;
+    }
+    let text = keystroke.key_char.as_deref()?;
+    if text.is_empty() || text.chars().any(char::is_control) {
+        return None;
+    }
+    Some(text)
 }
 
 fn platform() -> &'static str {
@@ -99,6 +112,37 @@ impl NativeChatView {
             return false;
         };
         let modifiers = keystroke.modifiers;
+        /*
+        CDXC:SessionChat 2026-09-22 DECISION:
+        User: the GPUI chat view puts typed input into the text box automatically, like the React composer did; clicking outside the text box and then typing writes into the composer where the caret was last set.
+        The composer keeps its caret across blur, so focusing it and inserting the keystroke's text lands the character there; the IME path cannot do it because the platform input handler only follows focus on the next paint.
+        Enter keeps its view-level meaning from React (send, Shift+Enter newline, Option+Enter compact and send) by running the composer's own Enter handling once the composer has focus.
+        */
+        if keystroke.key == "enter" && !modifiers.platform && !modifiers.control {
+            self.short_pane_composer_open = true;
+            self.invoke(json!({"type":"composerExpand","editor":true}), cx);
+            if modifiers.shift {
+                // The composer's key handling leaves Shift+Enter to the input's own newline, which a replay never reaches.
+                input.update(cx, |input, cx| {
+                    input.focus(window, cx);
+                    input.replace_text_in_range(None, "\n", window, cx);
+                });
+            } else {
+                input.read(cx).focus_handle(cx).focus(window, cx);
+                self.composer_bound_key("enter", window, cx);
+            }
+            return true;
+        }
+        if let Some(text) = typed_text(keystroke) {
+            let text = text.to_owned();
+            self.short_pane_composer_open = true;
+            self.invoke(json!({"type":"composerExpand","editor":true}), cx);
+            input.update(cx, |input, cx| {
+                input.focus(window, cx);
+                input.replace_text_in_range(None, &text, window, cx);
+            });
+            return true;
+        }
         let event = json!({
             "key": keystroke.key, "alt": modifiers.alt, "control": modifiers.control,
             "platform": modifiers.platform, "shift": modifiers.shift,
@@ -122,5 +166,28 @@ impl NativeChatView {
             REPLAYING.with(|flag| flag.set(false));
         });
         true
+    }
+
+    /// Whether any text field inside this chat pane holds GPUI focus: the composer, the Cmd+F
+    /// find field, the session note, question answers or the terminal dialog field.
+    ///
+    /// CDXC:SessionChat 2026-09-22 WHY:
+    /// Background typing sends keys to the composer only when no chat field is focused. Checking
+    /// just the composer made every other field (the Cmd+F find bar first) lose its typing to the
+    /// composer; every in-pane text field must be listed here.
+    pub(crate) fn chat_text_field_focused(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.input
+            .iter()
+            .chain(self.search_input.iter())
+            .chain(self.note_input.iter())
+            .chain(self.answer_input.iter().map(|(_, input)| input))
+            .chain(self.async_answer_input.iter().map(|(_, input)| input))
+            .chain(
+                self.terminal_dialog_input
+                    .iter()
+                    .map(|dialog| &dialog.input),
+            )
+            .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+            || self.terminal_dialog_key_focus.is_focused(window)
     }
 }

@@ -12,6 +12,11 @@ use std::{
 
 #[derive(Clone)]
 pub(crate) struct NativeChatConfig {
+    /// `"local"` for a chat on this computer, the saved machine's settings id otherwise. It is the
+    /// spelling `session_chat_runtime.rs` puts on the broker's `identity`, and the Rust host builds
+    /// its `remote-<machineId>:` storage prefix from the same test, so a remote chat reads back the
+    /// drafts, notices and option pills the TypeScript brain wrote rather than a local session's.
+    pub(crate) machine_id: String,
     pub(crate) project_id: String,
     pub(crate) session_id: String,
     pub(crate) sidebar_session_id: String,
@@ -46,6 +51,7 @@ pub(crate) struct NativeChatView {
     input_subscription: Option<Subscription>,
     input_observer: Option<Subscription>,
     pub(super) suggestions: super::suggestions::SuggestionWindowState,
+    pub(super) frosted_overlays: super::frosted_overlay_window::FrostedOverlayWindows,
     pub(super) composer_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
     pub(super) suggestion_selection: Option<(String, usize)>,
     input_window: Option<gpui::WindowId>,
@@ -83,6 +89,9 @@ pub(crate) struct NativeChatView {
     /// The transcript scrollbar's measured track: from the top of the transcript region to the
     /// bottom of the pane, so the composer's height never shortens it (scrollbar.rs).
     pub(super) scrollbar_track: std::rc::Rc<std::cell::Cell<gpui::Pixels>>,
+    /// When the reader last scrolled the transcript, the only thing that shows its scrollbar.
+    /// `instant::Instant` because gpui-component's scrollbar takes that type; it is std's on native and a browser clock on wasm32.
+    pub(super) transcript_scrolled_at: Option<instant::Instant>,
     input_needs_sync: bool,
     input_placeholder: String,
     input_undoable: bool,
@@ -100,6 +109,7 @@ pub(crate) struct NativeChatView {
     pub(super) composer_caret_image: Option<String>,
     pub(super) async_answer_input: Option<(String, Entity<InputState>)>,
     pub(super) async_answer_subscription: Option<Subscription>,
+    pub(super) async_answer_echo: super::async_questions::AsyncAnswerEcho,
     pub(crate) answer_input: Option<(String, Entity<InputState>)>,
     pub(crate) answer_subscription: Option<Subscription>,
     pub(super) terminal_dialog_input: Option<super::terminal_dialog::TerminalDialogInput>,
@@ -118,6 +128,14 @@ pub(crate) struct NativeChatView {
     pub(crate) pending_send: bool,
     pub(crate) composer_ready: bool,
     pub(crate) expanded: HashSet<String>,
+    /// Scroll offsets of the capped boxes inside transcript rows (nested_scroll.rs).
+    pub(super) nested_scrolls: super::nested_scroll::NestedScrolls,
+    /// The detail of each row drawn open, keyed like the row (row_details.rs).
+    pub(super) row_details: Value,
+    /// The details this frame's rows asked for, and the set last sent to the host.
+    pub(super) detail_demand: std::collections::BTreeMap<String, Value>,
+    pub(super) detail_sent: std::collections::BTreeMap<String, Value>,
+    pub(super) detail_sync_scheduled: bool,
     /// Armed Delayed Send / Close After Done labels drawn on the working row, set by the app (session_chat_armed_actions.rs).
     pub(crate) armed_actions: Value,
     pub(crate) collapsed: HashSet<String>,
@@ -129,6 +147,10 @@ pub(crate) struct NativeChatView {
     /// The tables whose cells the reader capped back to one line (React's collapsed table).
     pub(super) table_collapsed: HashSet<String>,
     pub(crate) list: gpui::ListState,
+    /// The transcript's own cached view, created on the first draw (transcript_host.rs).
+    pub(super) transcript_host: Option<Entity<super::transcript_host::TranscriptHost>>,
+    /// The composer tween's bottom inset for the row list, computed once per chat render.
+    pub(super) transcript_inset: f32,
     /// The transcript minimap's dashes, hover and measured column (minimap.rs).
     pub(super) minimap: super::minimap::MinimapState,
     /// The subagent viewer's list, kept apart so opening it never disturbs the main transcript's scroll.
@@ -141,12 +163,17 @@ pub(crate) struct NativeChatView {
     /// Whether this chat's composer field itself holds the keyboard, which is what the `@`, `$` and
     /// `/` picker window keys off (`suggestions/window.rs`).
     pub(super) composer_focused: bool,
+    /// Whether the user opened the chat box of a short pane (composer_scroll.rs).
+    pub(crate) short_pane_composer_open: bool,
     pub(crate) focus_requested: bool,
     pub(crate) subscriptions: Vec<Subscription>,
     /// When this view last rendered; a parked chat keeps applying frames without redrawing the window.
-    pub(crate) last_render: Option<std::time::Instant>,
-    last_notified: Option<std::time::Instant>,
+    pub(crate) last_render: Option<web_time::Instant>,
+    last_notified: Option<web_time::Instant>,
     notify_scheduled: bool,
+    /// The transcript starts at the window's top edge under the floating work area header, so its
+    /// first row reserves the header's height (`set_under_workarea_header`).
+    pub(crate) under_workarea_header: bool,
 }
 
 impl EventEmitter<NativeChatEvent> for NativeChatView {}
@@ -155,9 +182,19 @@ impl NativeChatView {
     pub(crate) fn new(config: NativeChatConfig, cx: &mut Context<Self>) -> Self {
         super::fonts::register(cx);
         super::keyboard::register(cx);
+        let runtime = (!config.session_id.is_empty()).then(|| Self::start_runtime(&config, cx));
+        let error = None;
+        Self::with_runtime(config, runtime, error, cx)
+    }
+
+    pub(super) fn start_runtime(
+        config: &NativeChatConfig,
+        cx: &mut Context<Self>,
+    ) -> ChatRuntimeWorker {
         let (wake, mut wakes) = futures::channel::mpsc::unbounded::<()>();
         let runtime = ChatRuntimeWorker::start(
-            json!({"clientId":config.client_id,"projectId":config.project_id,"initialSnapshot":config.initial_snapshot,"initialPresentation":config.initial_presentation,"preview":config.preview}),
+            json!({"clientId":config.client_id,"machineId":config.machine_id,"projectId":config.project_id,"sessionId":config.session_id,"initialSnapshot":config.initial_snapshot,"initialPresentation":config.initial_presentation,"preview":config.preview}),
+            super::replay_recording::recording_path(&config.project_id, &config.session_id),
             move || {
                 let _ = wake.unbounded_send(());
             },
@@ -170,20 +207,39 @@ impl NativeChatView {
             }
         })
         .detach();
-        let (runtime, error) = (Some(runtime), None);
+        runtime
+    }
+
+    fn with_runtime(
+        config: NativeChatConfig,
+        runtime: Option<ChatRuntimeWorker>,
+        error: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let list = gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.0));
         list.set_follow_mode(gpui::FollowMode::Tail);
         let subagent_list = gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.0));
         subagent_list.set_follow_mode(gpui::FollowMode::Tail);
         let chat = cx.weak_entity();
+        // The header's fade is painted by the app, so the app repaints when the list reaches or
+        // leaves its top (`transcript_scrolled_to_top`).
+        let at_top = std::rc::Rc::new(std::cell::Cell::new(true));
         list.set_scroll_handler(move |_, _, cx| {
             let chat = chat.clone();
+            let at_top = at_top.clone();
             cx.defer(move |cx| {
                 let _ = chat.update(cx, |chat, cx| {
+                    chat.transcript_scrolled_at = Some(instant::Instant::now());
                     if chat.list.is_following_tail() && chat.snapshot["composerCollapsed"] == true {
                         chat.invoke(json!({"type":"composerExpand"}), cx);
                     }
                     chat.load_earlier_if_near_top(cx);
+                    let now = chat.transcript_scrolled_to_top();
+                    if at_top.replace(now) != now
+                        && let Some(app) = chat.config.app.as_ref().and_then(|app| app.upgrade())
+                    {
+                        app.update(cx, |_, cx| cx.notify());
+                    }
                     cx.notify();
                 });
             });
@@ -200,13 +256,18 @@ impl NativeChatView {
             config,
             runtime,
             error,
-            snapshot: Arc::new(Value::Null),
+            snapshot: Arc::new(json!({
+                "composerPlaceholder": ghostex_gx_chat_core::composer::policy::DESKTOP_COMPOSER_PLACEHOLDER,
+                "composerActions": {"summary": true, "note": false, "stash": true, "attach": true, "terminal": true},
+                "optionLabels": {"showModel": true}
+            })),
             items: Arc::default(),
             subagent_items: Arc::default(),
             input: None,
             input_subscription: None,
             input_observer: None,
             suggestions: Default::default(),
+            frosted_overlays: Default::default(),
             composer_bounds: Default::default(),
             suggestion_selection: None,
             input_window: None,
@@ -233,6 +294,7 @@ impl NativeChatView {
             context_status_measurements: None,
             bounds: Default::default(),
             scrollbar_track: Default::default(),
+            transcript_scrolled_at: None,
             input_needs_sync: false,
             input_placeholder: String::new(),
             input_undoable: false,
@@ -246,6 +308,7 @@ impl NativeChatView {
             composer_caret_image: None,
             async_answer_input: None,
             async_answer_subscription: None,
+            async_answer_echo: Default::default(),
             answer_input: None,
             answer_subscription: None,
             terminal_dialog_input: None,
@@ -261,23 +324,32 @@ impl NativeChatView {
             pending_send: false,
             composer_ready: false,
             expanded: HashSet::new(),
+            nested_scrolls: Default::default(),
+            row_details: Value::Null,
+            detail_demand: Default::default(),
+            detail_sent: Default::default(),
+            detail_sync_scheduled: false,
             armed_actions: Value::Array(Vec::new()),
             collapsed: HashSet::new(),
             code_wrap: HashMap::new(),
             code_wrap_default: false,
             table_collapsed: HashSet::new(),
             list,
+            transcript_host: None,
+            transcript_inset: 0.0,
             minimap: Default::default(),
             subagent_list,
             subagent_focus: cx.focus_handle(),
             subagent_focused: false,
             pane_focused: false,
             composer_focused: false,
+            short_pane_composer_open: false,
             focus_requested: false,
             subscriptions: Vec::new(),
             last_render: None,
             last_notified: None,
             notify_scheduled: false,
+            under_workarea_header: false,
         }
     }
 
@@ -325,6 +397,9 @@ impl NativeChatView {
                             return;
                         }
                         this.invoke(json!({"type":"composerExpand","editor":true}), cx);
+                        if this.composer_focused {
+                            this.short_pane_composer_open = true;
+                        }
                         this.draft = draft;
                         this.draft_revision += 1;
                         this.persist_draft(cx);
@@ -337,11 +412,15 @@ impl NativeChatView {
                         this.sync_suggestion_window(cx);
                         this.invoke(json!({"type":"composerExpand","editor":true}), cx);
                         cx.emit(NativeChatEvent::ComposerFocused);
+                        cx.notify();
                     }
                     InputEvent::Blur => {
                         this.composer_focused = false;
+                        this.short_pane_composer_open = false;
                         this.sync_suggestion_window(cx);
                         this.save_draft(cx);
+                        // A short pane's box collapses again once it loses focus (composer_scroll.rs).
+                        cx.notify();
                     }
                     _ => {}
                 },
@@ -416,19 +495,29 @@ impl NativeChatView {
     }
 
     pub(crate) fn insert_prompt(&mut self, content: &str, cx: &mut Context<Self>) {
-        self.replace_draft(content, false, cx);
+        self.replace_draft(content, false, false, cx);
     }
 
-    fn replace_draft(&mut self, content: &str, history: bool, cx: &mut Context<Self>) {
+    fn replace_draft(
+        &mut self,
+        content: &str,
+        history: bool,
+        preserve_error: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.draft = content.to_string();
         self.draft_revision += 1;
         self.input_needs_sync = true;
         self.input_undoable = true;
         self.focus_requested = true;
         if self.composer_ready {
-            self.invoke(json!({"type":"editDraft", "text":self.draft, "draftVersion":{"draftId":self.draft_id,"revision":self.draft_revision.max(1)},"history":history}),cx);
+            self.invoke(json!({"type":"editDraft", "text":self.draft, "draftVersion":{"draftId":self.draft_id,"revision":self.draft_revision.max(1)},"history":history,"preserveError":preserve_error}),cx);
         }
-        self.save_draft(cx);
+        if preserve_error && self.composer_ready {
+            self.invoke(json!({"type":"saveDraft","content":self.draft,"draftVersion":{"draftId":self.draft_id,"revision":self.draft_revision},"preserveError":true}),cx);
+        } else {
+            self.save_draft(cx);
+        }
         cx.notify();
     }
 
@@ -474,15 +563,18 @@ impl NativeChatView {
     /// CDXC:SessionChat 2026-09-19 WHY:
     /// A streaming agent produced a runtime output several times a frame, and each one redrew the whole window, which re-lays out every visible transcript row; with a few agents streaming that was most of the UI thread.
     /// Redraws from runtime output are coalesced to one per 50ms; the last output in a burst still paints, only never sooner than that.
+    /// CDXC:SessionChat 2026-09-21 WHY:
+    /// The quick picker opened from terminal view belongs to a parked chat view and repaints only by observing it, so an open picker counts as shown; otherwise its keys moved the selection in the runtime while the window kept painting the state it opened with.
     fn notify_if_shown(&mut self, cx: &mut Context<Self>) {
         const NOTIFY_MIN_INTERVAL: Duration = Duration::from_millis(50);
-        if !self
-            .last_render
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        if !self.model_picker_window.is_open()
+            && !self
+                .last_render
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
         {
             return;
         }
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         if let Some(at) = self.last_notified
             && now.duration_since(at) < NOTIFY_MIN_INTERVAL
         {
@@ -493,7 +585,7 @@ impl NativeChatView {
                     cx.background_executor().timer(wait).await;
                     let _ = this.update(cx, |this, cx| {
                         this.notify_scheduled = false;
-                        this.last_notified = Some(std::time::Instant::now());
+                        this.last_notified = Some(web_time::Instant::now());
                         cx.notify();
                     });
                 })
@@ -549,12 +641,30 @@ impl NativeChatView {
             self.apply_subagent_splice(&mut splice);
             self.notify_if_shown(cx);
         }
+        if let Some(details) = output
+            .as_object_mut()
+            .and_then(|output| output.remove("rowDetails"))
+        {
+            self.row_details = details;
+            self.list.remeasure();
+            self.subagent_list.remeasure();
+            self.notify_if_shown(cx);
+        }
         if let Some(mut snapshot) = output
             .as_object_mut()
             .and_then(|output| output.remove("snapshot"))
         {
             // The pane's keyboard zoom is its own, and outlives the snapshots the host publishes.
             self.apply_chat_zoom(&mut snapshot);
+            self.retain_launch_welcome(&mut snapshot);
+            if let Some(measured) = self
+                .composer_measurements
+                .as_ref()
+                .and_then(|value| serde_json::from_value(value.clone()).ok())
+            {
+                snapshot["composerOverflow"] =
+                    json!(ghostex_gx_chat_core::composer::layout::fit_composer_controls(&measured));
+            }
             self.snapshot = Arc::new(snapshot);
             self.adopt_status_line_reservation();
             self.sync_model_picker_window(cx);
@@ -570,17 +680,29 @@ impl NativeChatView {
                 Some("rpc") => self.rpc(request.clone(), cx),
                 Some("broker") => cx.emit(NativeChatEvent::Broker(request.clone())),
                 Some("composerClearExpected") => {
-                    if request["params"]["text"].as_str() == Some(self.draft.as_str()) { self.replace_draft("",false,cx); }
+                    if request["params"]["text"].as_str() == Some(self.draft.as_str()) { self.replace_draft("",false,false,cx); }
                 }
                 Some("returnedPrompt") => self.invoke(json!({"type":"applyReturned","text":request["params"]["text"],"current":self.draft}),cx),
                 Some("composerInit") => {
+                    let local_draft = (self.draft_revision > 0).then(|| self.draft.clone());
                     let entry = &request["params"]["entry"];
                     self.config.client_id = request["params"]["clientId"].as_str().unwrap_or_default().to_string();
                     self.draft_id = entry["version"]["draftId"].as_str().unwrap_or_default().to_string();
                     self.draft_revision = entry["version"]["revision"].as_u64().unwrap_or(1);
-                    self.draft = if entry["parked"] == true || entry["submitted"] == true { String::new() } else { entry["text"].as_str().unwrap_or_default().to_string() };
-                    self.input_needs_sync = true;
+                    let restored = if entry["parked"] == true || entry["submitted"] == true { String::new() } else { entry["text"].as_str().unwrap_or_default().to_string() };
+                    let draft = match &local_draft {
+                        Some(local) => format!("{restored}{local}"),
+                        None => restored,
+                    };
+                    self.input_needs_sync = self.draft != draft;
+                    self.draft = draft;
                     self.composer_ready = true;
+                    self.composer_measurements = None;
+                    if local_draft.is_some() {
+                        self.draft_revision += 1;
+                        self.persist_draft(cx);
+                        self.save_draft(cx);
+                    }
                     self.host("composerReady", json!({}), cx);
                     // The stash badge and the session-note dot need their first read (native-composer-chrome.ts).
                     self.invoke(json!({"type":"refreshComposerChrome","sessionId":self.config.session_id}), cx);
@@ -622,8 +744,7 @@ impl NativeChatView {
                 }
                 Some("markdownSaved") => {
                     let path = request["params"]["path"].as_str().unwrap_or_default().to_string();
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(path.clone()));
-                    crate::app::helpers::gpui_play_copy_sound();
+                    crate::app::helpers::gpui_copy_to_clipboard(gpui::ClipboardItem::new_string(path.clone()), cx);
                     if let Some(main) = self.main_window {
                         cx.defer(move |cx| {
                             let _ = main.update(cx, |_, window, cx| {
@@ -635,9 +756,30 @@ impl NativeChatView {
                 }
                 Some("host") => self.host(request["method"].as_str().unwrap_or_default(), request["params"].clone(), cx),
                 Some("chatImage") => self.receive_chat_image(request, cx),
+                // The two arms the Rust brain's `Effect::Copy` and `Effect::Toast` ride in. The
+                // QuickJS brain pushed neither (a clipboard write only ever reached the view inside
+                // `markdownSaved`), so nothing here changes under `chatBrain: quickjs`.
+                Some("copy") => {
+                    if let Some(text) = request["params"]["text"].as_str() {
+                        crate::app::helpers::gpui_copy_to_clipboard(gpui::ClipboardItem::new_string(text.to_string()), cx);
+                    }
+                }
+                Some("toast") => {
+                    let message = request["params"]["message"].as_str().unwrap_or_default().to_string();
+                    let error = request["params"]["level"] == "error";
+                    if let Some(main) = self.main_window && !message.is_empty() {
+                        cx.defer(move |cx| {
+                            let _ = main.update(cx, |_, window, cx| {
+                                use gpui_component::WindowExt as _;
+                                use gpui_component::notification::Notification;
+                                window.push_notification(if error { Notification::error(message) } else { Notification::success(message) }, cx);
+                            });
+                        });
+                    }
+                }
                 Some("actionError") => { cx.notify(); }
                 Some("composer") => {
-                    self.replace_draft(request["params"]["content"].as_str().unwrap_or_default(), request["method"] == "history", cx);
+                    self.replace_draft(request["params"]["content"].as_str().unwrap_or_default(), request["method"] == "history", request["params"]["preserveError"] == true, cx);
                     self.input_caret = request["params"]["caret"].as_u64().map(|caret|caret as usize);
                 }
                 _ => {}
@@ -664,6 +806,7 @@ impl NativeChatView {
             return;
         }
         let endpoint = format!("/api/{method}");
+        let diagnostic_method = method.to_owned();
         let import_attachments = method == "importNativeAttachments";
         let mut params = request["params"].as_object().cloned().unwrap_or_default();
         params.insert("projectId".into(), config.project_id.into());
@@ -675,7 +818,7 @@ impl NativeChatView {
                 return super::attachments::import_paths(&config.remote, &params)
                     .map_err(|message| json!({"message":message,"endpoint":endpoint}));
             }
-            super::rpc::request(config.remote, &endpoint, &params)
+            super::rpc::request(config.remote, &endpoint, &params).await
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -684,6 +827,17 @@ impl NativeChatView {
                     Ok(value) => (value, Value::Null),
                     Err(error) => (Value::Null, error),
                 };
+                crate::support_logs::append_for_scenario(
+                    crate::support_logs::GpuiSupportLog::SessionChat,
+                    "gpui.sessionChat.viewState",
+                    "sessionChat.nativeRpcResult",
+                    json!({
+                        "method": diagnostic_method,
+                        "requestId": id,
+                        "succeeded": error.is_null(),
+                        "errorCode": error["code"],
+                    }),
+                );
                 if let Some(runtime) = &this.runtime {
                     runtime.call("resolve", vec![id, value, error]);
                 }

@@ -262,6 +262,28 @@ impl FocusState {
         }
     }
 
+    /// Local intent: make a USER-MADE session group active, which is what
+    /// `createWorkspaceGroupFromSession` does after it mints one.
+    ///
+    /// It is `focus_project` plus the group, in that order and with the same rule about the
+    /// focused session, rather than a second body: the only thing this adds is that the active
+    /// group is the subgroup the caller names instead of the project's default one. A group id the
+    /// document does not hold is re-homed by `reconcile` on the next store change, which is what
+    /// keeps a stale id from naming a group the list draws no row for.
+    pub fn focus_subgroup(
+        &mut self,
+        store: &PresentationStore,
+        project: ProjectKey,
+        group_id: String,
+        now_ms: u64,
+    ) -> FocusOutcome {
+        let before = self.projection();
+        let mut outcome = self.focus_project(store, project.clone(), now_ms);
+        self.active_group = Some(ActiveGroup::Subgroup { project, group_id });
+        outcome.changed = before != self.projection();
+        outcome
+    }
+
     /// Local intent: the host reports the exact set of sessions that own a pane.
     pub fn set_visible_sessions(&mut self, sessions: Vec<SessionKey>, now_ms: u64) -> FocusOutcome {
         self.stamp(now_ms);
@@ -443,6 +465,22 @@ impl FocusState {
             self.focused_session.clone(),
             self.visible_sessions.clone(),
         )
+    }
+}
+
+/// Whether the store confirms an empty workspace tab list, judged by the group it holds for the
+/// project the list names. `false` for every list that is not `Loaded` and empty, so a machine
+/// without its first snapshot and a group that does not exist never read as "no tabs".
+///
+/// CDXC:Workarea 2026-09-21 WHY:
+/// An empty tab list clears every restored tab, split and mapping of a project (the guard and the failure it exists for are in selectors.rs `Loadable` and in the host's `confirms_empty_tab_list`), so it may only be believed when the store agrees, and a disagreement must always refuse rather than allow. A project's own tab list leaves out the sessions of its user-made groups, so an EMPTY user-made group is not evidence that the project has no tabs: it is one group of it that is empty, which is what the last member of a group being closed leaves behind. Judging by such a group alone confirmed a clear the store's own rows contradicted, so a user-made group confirms only together with the project's own list.
+pub fn empty_tab_list_confirmed(store: &PresentationStore, group: &ActiveGroup) -> bool {
+    let empty = |group: &ActiveGroup| matches!(store.tab_sessions(group), crate::selectors::Loadable::Loaded(tabs) if tabs.is_empty());
+    match group {
+        ActiveGroup::Subgroup { project, .. } => {
+            empty(group) && empty(&default_group_for_project(store, project))
+        }
+        ActiveGroup::Project(_) | ActiveGroup::Chats(_) => empty(group),
     }
 }
 

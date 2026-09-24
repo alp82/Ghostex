@@ -10,6 +10,10 @@ import {
   AUTO_SLEEP_IDLE_MINUTE_OPTIONS,
   CHAT_FILE_OPEN_VIEW_OPTIONS,
   COMMANDS_PANEL_SIDE_OPTIONS,
+  WINDOW_GLASS_OPTIONS,
+  WINDOW_GLASS_SOURCE_OPTIONS,
+  WINDOW_GLASS_IMAGE_PLACEMENT_OPTIONS,
+  PANEL_ANIMATION_SPEED_OPTIONS,
   COMMANDS_PANEL_AUTO_MINIMIZE_DELAY_OPTIONS,
   GHOSTTY_CONFIRM_CLOSE_SURFACE_OPTIONS,
   GHOSTTY_COPY_ON_SELECT_OPTIONS,
@@ -19,6 +23,8 @@ import {
   PREFERRED_AGENT_INTERFACE_OPTIONS,
   PROMPT_EDITOR_BACKEND_OPTIONS,
   SESSION_CHAT_THEME_OPTIONS,
+  DARK_THEME_PRESET_OPTIONS,
+  LIGHT_THEME_PRESET_OPTIONS,
   SIDEBAR_SETTINGS_PRESETS,
   SIDEBAR_THEME_SETTING_OPTIONS,
   SIDEBAR_SPACES_ENABLED_OPTIONS,
@@ -56,19 +62,29 @@ export type SettingsSearchSectionDefinition = {
  * maintaining a second hand-written list that drifts from Settings.
  * SEE-ALSO: skills/ghostex-help/references/settings-catalog.json, server/src/ghostex_cli/settings.rs.
  */
+/**
+ * CDXC:Theming 2026-09-23 DECISION:
+ * User: "fully hide the custom app icon feature". The App Icon picker, its search row, the Help catalog row and the
+ * `ghostex settings` entry are all off while this is false; the picker code and `appIconSourceId` stay, so an icon
+ * that was already chosen keeps working.
+ */
+export const APP_ICON_CONTROLS_VISIBLE = false;
+
 export function getSettingsSearchSectionDefinitions() {
   const settingsSearchSections = {
     // CDXC:Icons 2026-06-25-21:50: Make the App Icon section findable by Settings search.
     appIcon: {
       title: 'App Icon',
-      settings: [
-        {
-          key: 'appIconSourceId',
-          subtitle:
-            'Choose the application and app-switcher icon. The app file icon may also change when the operating system allows it.',
-          title: 'App Icon',
-        },
-      ],
+      settings: APP_ICON_CONTROLS_VISIBLE
+        ? [
+            {
+              key: 'appIconSourceId',
+              subtitle:
+                'Choose the application and app-switcher icon. The app file icon may also change when the operating system allows it.',
+              title: 'App Icon',
+            },
+          ]
+        : [],
     },
     /*
      * CDXC:Extensions 2026-08-30:
@@ -192,8 +208,8 @@ export function getSettingsSearchSectionDefinitions() {
       settings: [
         {
           key: 'hideKeepAwakeTitlebarControl',
-          subtitle: 'Hide the keep-awake control from the title bar.',
-          title: 'Hide title-bar keep-awake control',
+          subtitle: 'Hide the Keep Awake entry from the sidebar menu.',
+          title: 'Hide Keep Awake',
         },
         {
           key: 'keepAwakeDefaultDurationMinutes',
@@ -201,7 +217,7 @@ export function getSettingsSearchSectionDefinitions() {
             label: option.label,
             value: String(option.value),
           })),
-          subtitle: 'Choose the duration used by the title-bar keep-awake button.',
+          subtitle: 'Choose the duration Keep Awake uses by default.',
           title: 'Default keep-awake duration',
         },
         {
@@ -400,8 +416,15 @@ export function getSettingsSearchSectionDefinitions() {
         {
           key: 'sidebarCollapseAnimationDurationMs',
           subtitle:
-            'Set how quickly sidebar sections, groups, and projects expand or collapse. Set to 0 for no animation.',
+            'Set how quickly sidebar sections, groups, and projects expand or collapse, and how quickly the floating sidebar and Agents Panel slide in from the window edge. Set to 0 for no animation.',
           title: 'Collapse animation speed',
+        },
+        {
+          key: 'panelAnimationSpeed',
+          options: PANEL_ANIMATION_SPEED_OPTIONS,
+          subtitle:
+            'Set how fast the sidebar, the side panel, the Agents Panel and the bottom or right panel slide open and closed: Off, Slow, Normal or Fast. Reduce Motion in your computer settings always turns it off.',
+          title: 'Panel animations',
         },
         {
           key: 'sidebarTooltipDelayMs',
@@ -488,8 +511,52 @@ export function getSettingsSearchSectionDefinitions() {
         {
           key: 'sidebarTheme',
           options: SIDEBAR_THEME_SETTING_OPTIONS,
-          subtitle: 'Follow the system appearance by default, or choose Light or Dark Gray.',
-          title: 'App theme',
+          subtitle: 'Follow the system appearance by default, or choose Light or Dark.',
+          title: 'Appearance',
+        },
+        {
+          key: 'darkThemePreset',
+          options: DARK_THEME_PRESET_OPTIONS,
+          subtitle: 'Preset dark chrome for the sidebar and window, or Custom to tune its contrast and tint.',
+          title: 'Dark theme',
+        },
+        {
+          key: 'customSidebarTitlebarBackgroundDarknessPercent',
+          subtitle: 'Contrast of the dark sidebar and window chrome background while Dark theme is Custom.',
+          title: 'Dark theme background contrast',
+        },
+        {
+          key: 'customSidebarTitlebarBackgroundTintColor',
+          subtitle: 'Subtle tint of the dark sidebar and window chrome background while Dark theme is Custom.',
+          title: 'Dark theme background tint',
+        },
+        {
+          key: 'lightThemePreset',
+          options: LIGHT_THEME_PRESET_OPTIONS,
+          subtitle: 'Preset light chrome for the sidebar and window, or Custom to tune its contrast and tint.',
+          title: 'Light theme',
+        },
+        {
+          key: 'themeSidebarContrast',
+          subtitle:
+            "The sidebar's contrast. Higher makes dark backgrounds darker and light backgrounds whiter; 0 is the theme's own.",
+          title: 'Sidebar contrast',
+        },
+        {
+          key: 'themeWorkAreaContrast',
+          subtitle:
+            "The work area's contrast (chat, terminals and views). Higher makes dark backgrounds darker and light backgrounds whiter; 0 is the theme's own.",
+          title: 'Work area contrast',
+        },
+        {
+          key: 'customSidebarTitlebarLightBackgroundLightnessPercent',
+          subtitle: 'Contrast of the light sidebar and window chrome background while Light theme is Custom.',
+          title: 'Light theme background contrast',
+        },
+        {
+          key: 'customSidebarTitlebarLightBackgroundTintColor',
+          subtitle: 'Subtle tint of the light sidebar and window chrome background while Light theme is Custom.',
+          title: 'Light theme background tint',
         },
         {
           key: 'sessionChatTheme',
@@ -518,20 +585,58 @@ export function getSettingsSearchSectionDefinitions() {
           title: 'Terminal dark palette',
         },
         {
-          key: 'customSidebarTitlebarBackgroundDarknessPercent',
-          subtitle: 'Contrast level for the sidebar and titlebar background in dark mode. Light mode stays light gray.',
-          title: 'Dark theme background contrast',
+          key: 'windowGlass',
+          options: WINDOW_GLASS_OPTIONS,
+          subtitle: 'Let the blurred desktop show through the window. By default, light mode stays opaque.',
+          title: 'Window glass',
         },
         {
-          key: 'customSidebarTitlebarBackgroundTintColor',
+          key: 'windowGlassSource',
+          options: WINDOW_GLASS_SOURCE_OPTIONS,
           subtitle:
-            'Subtle tint color for the sidebar and titlebar background in dark mode. Light mode stays light gray.',
-          title: 'Dark theme background tint',
+            'Wallpaper only keeps other windows from showing through the glass. Custom image shows a picture you choose.',
+          title: 'Glass shows',
         },
         {
-          key: 'accentColor',
-          subtitle: 'Highlight color for accent text, status highlights, and advanced-setting markers in dark mode.',
-          title: 'Dark theme accent color',
+          key: 'windowGlassImagePlacement',
+          options: WINDOW_GLASS_IMAGE_PLACEMENT_OPTIONS,
+          subtitle:
+            'Where the wallpaper or custom picture sits behind the glass. Stays with the desktop can trail the window while you drag it.',
+          title: 'Glass picture position',
+        },
+        {
+          key: 'windowGlassImageDark',
+          subtitle: 'The picture the glass blurs in dark mode when Glass shows is Custom image.',
+          title: 'Glass image for dark mode',
+        },
+        {
+          key: 'windowGlassImageLight',
+          subtitle: 'The picture the glass blurs in light mode when Glass shows is Custom image.',
+          title: 'Glass image for light mode',
+        },
+        {
+          key: 'windowGlassSidebarOpacityDark',
+          subtitle:
+            'How much of the desktop the sidebar hides in dark mode. Lower shows more of your desktop through it.',
+          title: 'Sidebar tint in dark mode',
+        },
+        {
+          key: 'windowGlassWorkAreaTintDark',
+          subtitle:
+            'How much of the desktop the work area hides in dark mode, set on its own so either area can be the darker one. Lower shows more of your desktop through it.',
+          title: 'Work area tint in dark mode',
+        },
+        {
+          key: 'windowGlassSidebarOpacityLight',
+          subtitle:
+            'How much of the desktop the sidebar hides in light mode. Lower shows more of your desktop through it.',
+          title: 'Sidebar tint in light mode',
+        },
+        {
+          key: 'windowGlassWorkAreaTintLight',
+          subtitle:
+            'How much of the desktop the work area hides in light mode, set on its own so either area can be the darker one. Lower shows more of your desktop through it.',
+          title: 'Work area tint in light mode',
         },
         {
           key: 'showActivePaneOutline',
@@ -548,11 +653,6 @@ export function getSettingsSearchSectionDefinitions() {
     chat: {
       title: 'Chat',
       settings: [
-        {
-          key: 'sessionChatUseGpui',
-          subtitle: 'Use native GPUI chat on desktop. Turn off to use React chat. Restart the desktop app to apply; mobile and web are unchanged.',
-          title: 'Use GPUI chat',
-        },
         {
           key: 'preferredAgentInterface',
           options: PREFERRED_AGENT_INTERFACE_OPTIONS,
@@ -585,6 +685,12 @@ export function getSettingsSearchSectionDefinitions() {
           subtitle:
             'Show the first seven code lines in each file edit. Turn off to show only the path and change counts.',
           title: 'Show file edit previews',
+        },
+        {
+          key: 'sessionChatKeepComposerExpanded',
+          subtitle:
+            'Keep the desktop chat box at full size while you scroll the transcript instead of shrinking it as you scroll up and growing it back at the end.',
+          title: 'Keep chat box expanded while scrolling',
         },
         {
           key: 'sessionChatSimpleMode',
@@ -688,8 +794,8 @@ export function getSettingsSearchSectionDefinitions() {
         },
         {
           key: 'workspaceBackgroundColor',
-          subtitle: 'Color shown behind terminal panes.',
-          title: 'Terminal Background',
+          subtitle: 'Only changes the terminal panes. Leave on Follow theme to match your theme.',
+          title: 'Terminal background',
         },
         {
           key: 'terminalBackgroundImage',
@@ -782,11 +888,6 @@ export function getSettingsSearchSectionDefinitions() {
           key: 'clickToWakeSleepingSessions',
           subtitle: 'Select sleeping pane tabs without waking them until the empty pane is clicked.',
           title: 'Click to Wake Sleeping Panes',
-        },
-        {
-          key: 'showAgentsPaneTabBarWhenUnsplit',
-          subtitle: 'Keep the tabs bar above the agents pane even when the screen is not split.',
-          title: 'Show tabs bar when not split',
         },
         {
           key: 'showQuickModelPickerInTerminal',
@@ -994,11 +1095,10 @@ export function getMainSettingsSectionNavigation(mainSettingsGroupSearch: MainSe
      * subsections, but clicking down this rail should always move down the
      * Settings page instead of jumping above an earlier-looking destination.
      */
-    {
-      id: 'appearance',
-      searchResult: mainSettingsGroupSearch.appearance,
-      title: 'Theme',
-    },
+    /*
+     * CDXC:Theming 2026-09-23 DECISION:
+     * User: "make theme into it's own page in settings below General". The Theme and App Icon sections render on the Theme page (settings-modal/tabs/theme.tsx), so General's rail starts at Sidebar; their search rows and the `appearance` group stay in this catalog so one query still finds them.
+     */
     { id: 'sidebar', searchResult: mainSettingsGroupSearch.sidebar, title: 'Sidebar' },
     { id: 'chat', searchResult: mainSettingsGroupSearch.chat, title: 'Chat' },
     ...(PET_CONTROLS_VISIBLE

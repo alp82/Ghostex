@@ -29,18 +29,14 @@ pub(crate) struct GpuiTerminalChatClaimState {
 impl GhostexGpuiApp {
     fn agents_terminal_chat_is_visible(&self, session_id: TerminalSessionId) -> bool {
         self.agents_chat_mode_sessions.contains(&session_id)
-            && if self.active_mode == TitlebarMode::Agents {
-                self.agents_workspace
-                    .rendered_leaf_order()
-                    .iter()
-                    .any(|pane_id| {
-                        self.agents_workspace.active_session_in_pane(*pane_id) == Some(session_id)
-                    })
-            } else {
-                self.current_project_editor_companion_terminal_body_mount_slots()
-                    .iter()
-                    .any(|slot| slot.session_id == session_id)
-            }
+            && self.agents_workspace_visible()
+            && self
+                .agents_workspace
+                .rendered_leaf_order()
+                .iter()
+                .any(|pane_id| {
+                    self.agents_workspace.active_session_in_pane(*pane_id) == Some(session_id)
+                })
     }
 
     pub(crate) fn sync_agents_terminal_chat_claims(&mut self, cx: &mut gpui::Context<Self>) {
@@ -157,18 +153,14 @@ impl GhostexGpuiApp {
         if self.agents_chat_mode_sessions.contains(&session_id) {
             return false;
         }
-        if self.active_mode == TitlebarMode::Agents {
-            self.agents_workspace
+        self.agents_workspace_visible()
+            && self
+                .agents_workspace
                 .rendered_leaf_order()
                 .iter()
                 .any(|pane_id| {
                     self.agents_workspace.active_session_in_pane(*pane_id) == Some(session_id)
                 })
-        } else {
-            self.current_project_editor_companion_terminal_body_mount_slots()
-                .iter()
-                .any(|slot| slot.session_id == session_id)
-        }
     }
 
     pub(crate) fn agents_terminal_has_detachable_viewer(
@@ -316,13 +308,25 @@ impl GhostexGpuiApp {
     }
 
     pub(crate) fn agents_terminal_viewer_has_pending_work(&self, id: TerminalSessionId) -> bool {
-        self.agents_workspace.session(id).is_some_and(|session| session.delayed_send_active)
+        self.agents_workspace
+            .session(id)
+            .is_some_and(|session| session.delayed_send_active)
             || self.agents_delayed_send_timers.contains_key(&id)
             || self.agents_send_when_stopped_watchers.contains_key(&id)
-            || self.pending_session_terminal_composer_insert.contains_key(&id)
+            || self
+                .pending_session_terminal_composer_insert
+                .contains_key(&id)
             || self.pending_session_chat_draft_handoffs.contains(&id)
             || self.agents_sessions_pending_surface_transfer.contains(&id)
-            || self.source_code_server_runtime.pending_remote_prompt_editor_request.as_ref().is_some_and(|request| request.shell_session_id == id && matches!(request.delivery_target, RemotePromptEditorDeliveryTarget::GpuiEngineTerminal { runtime_session_id, .. } if self.agents_terminal_runtime_sessions.runtime_session_id_for_shell_session(id) == Some(runtime_session_id)))
+            || self
+                .agents_terminal_runtime_sessions
+                .runtime_session_id_for_shell_session(id)
+                .is_some_and(|runtime| {
+                    self.has_pending_remote_prompt_editor_for_engine_target(
+                        GpuiEngineTerminalEventTarget::Agents(id),
+                        runtime,
+                    )
+                })
             || self.terminal_paste_confirmation_dialog_open
     }
 
@@ -414,8 +418,7 @@ impl GhostexGpuiApp {
             && (self.workspace_tab_drag_active
                 || self.command_tab_drag_active
                 || self.workspace_split_drag.is_some()
-                || self.project_editor_companion_drag.is_some()
-                || self.project_editor_companion_split_drag.is_some())
+                || self.workarea_split_drag.is_some())
         {
             return;
         }
@@ -544,6 +547,10 @@ impl GhostexGpuiApp {
                 let session = self.command_pane.session(*id)?;
                 (self.command_gpui_terminal_viewer_recipes.contains_key(id)
                     && !visible.contains(id)
+                    && !self.has_pending_remote_prompt_editor_for_engine_target(
+                        GpuiEngineTerminalEventTarget::Command(*id),
+                        record.runtime_session_id,
+                    )
                     && !record.viewer_is_pinned()
                     && !record.view.read(cx).model().has_pending_input()
                     && !session.delayed_send_active

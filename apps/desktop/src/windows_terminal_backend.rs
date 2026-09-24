@@ -94,6 +94,8 @@ pub(crate) fn reload_preference_for_setup() {
 
 #[cfg(windows)]
 mod native;
+#[cfg(windows)]
+mod native_package;
 #[cfg(target_os = "windows")]
 mod platform;
 
@@ -155,6 +157,14 @@ pub(crate) fn terminal_invocation(
     working_directory: Option<&std::path::Path>,
 ) -> (String, Vec<String>) {
     platform::terminal_invocation(command, working_directory)
+}
+
+#[cfg(windows)]
+pub(crate) fn native_terminal_invocation(
+    command: Option<String>,
+    working_directory: Option<&std::path::Path>,
+) -> (String, Vec<String>) {
+    native::invocation(command, working_directory)
 }
 
 #[cfg(target_os = "windows")]

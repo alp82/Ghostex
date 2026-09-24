@@ -5,14 +5,13 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeSidebarSnapshot {
-    pub(crate) version: u32,
-    pub(crate) revision: u64,
     pub(crate) scroll_scope: String,
     pub(crate) rename_request: Option<NativeSidebarRenameRequest>,
     pub(crate) reveal_request: Option<NativeSidebarRevealRequest>,
-    pub(crate) ready: bool,
     pub(crate) empty_state: Value,
-    pub(crate) hud: Value,
+    /// Shared with the runtime facts channel rather than copied per install
+    /// (gx_store/runtime_facts.rs).
+    pub(crate) hud: std::sync::Arc<Value>,
     pub(crate) groups: Vec<NativeSidebarGroup>,
     pub(crate) selected_machine_id: String,
     pub(crate) machines: Vec<NativeSidebarMachine>,
@@ -28,7 +27,6 @@ pub(crate) struct NativeSidebarSnapshot {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeSidebarGroup {
-    pub(crate) collection_color: Option<String>,
     pub(crate) title_tooltip: Option<String>,
     pub(crate) group_id: String,
     pub(crate) storage_id: String,
@@ -38,13 +36,15 @@ pub(crate) struct NativeSidebarGroup {
     pub(crate) hidden_session_count: usize,
     pub(crate) show_list_toggle: bool,
     pub(crate) hover_actions_expanded: bool,
-    pub(crate) menu: Value,
-    pub(crate) header_actions: Vec<Value>,
+    /// Behind an `Arc` because they are the heavy part of a group and never change on their own:
+    /// the header buttons carry the agent launcher, whose rows each hold a logo data URL of up to
+    /// eight kilobytes. A snapshot is cloned whole on every patch and whenever a clock wake moves
+    /// one row's label, and those two must not copy a few hundred kilobytes of menu JSON.
+    pub(crate) menu: Arc<Value>,
+    pub(crate) header_actions: Arc<Vec<Value>>,
     pub(crate) sections: Vec<NativeSidebarSection>,
     pub(crate) title: String,
     pub(crate) is_active: bool,
-    #[serde(default)]
-    pub(crate) is_chat_collection: bool,
     #[serde(default)]
     pub(crate) is_stale: bool,
     pub(crate) project_context: Option<Value>,
@@ -73,6 +73,8 @@ pub(crate) struct NativeSidebarSession {
     pub(crate) display_title: Option<String>,
     pub(crate) alias: String,
     pub(crate) activity: String,
+    #[serde(default)]
+    pub(crate) has_background_work: bool,
     pub(crate) agent_icon: Option<String>,
     pub(crate) kind: Option<String>,
     pub(crate) session_kind: Option<String>,
@@ -80,8 +82,6 @@ pub(crate) struct NativeSidebarSession {
     pub(crate) is_visible: bool,
     #[serde(default)]
     pub(crate) is_pinned: bool,
-    #[serde(default)]
-    pub(crate) is_parked: bool,
     #[serde(default)]
     pub(crate) is_draft: bool,
     pub(crate) last_interaction_at: Option<String>,
@@ -106,7 +106,7 @@ impl NativeSidebarSession {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeSidebarMachine {
     pub(crate) working_count: usize,
@@ -141,7 +141,6 @@ pub(crate) struct NativeSidebarOrderItem {
 pub(crate) struct NativeSidebarCollection {
     pub(crate) awake_count: u64,
     pub(crate) collection_id: String,
-    pub(crate) storage_id: String,
     pub(crate) title: String,
     pub(crate) color: String,
     pub(crate) group_ids: Vec<String>,
@@ -149,50 +148,17 @@ pub(crate) struct NativeSidebarCollection {
     pub(crate) contains_active_session: bool,
     pub(crate) working_count: usize,
     pub(crate) attention_count: usize,
-    pub(crate) menu: Value,
+    pub(crate) menu: Arc<Value>,
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub(crate) enum NativeSidebarUpdate {
-    Snapshot(NativeSidebarSnapshot),
-    Patch(super::updates::NativeSidebarPatch),
-    Flash {
-        version: u32,
-        #[serde(rename = "sessionId")]
-        session_id: String,
-    },
-    Menu {
-        version: u32,
-        #[serde(rename = "ownerId")]
-        owner_id: String,
-        items: Vec<Value>,
-        close: bool,
-    },
-    Clock {
-        version: u32,
-        rows: Vec<NativeSidebarClockRow>,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct NativeSidebarClockRow {
-    pub(crate) session_id: String,
-    pub(crate) timer_label: Option<String>,
-    pub(crate) last_interaction_label: Option<String>,
-    #[serde(default)]
-    pub(crate) armed_actions: Option<Value>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeSidebarRevealRequest {
     pub(crate) session_id: String,
     pub(crate) request_id: u64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeSidebarRenameRequest {
     pub(crate) collection_id: String,

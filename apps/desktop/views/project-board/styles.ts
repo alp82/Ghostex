@@ -8,11 +8,12 @@ export const PROJECT_BOARD_STYLES = `
     --foreground: light-dark(#27272a, oklch(0.985 0 0));
     --card: light-dark(#ffffff, #161616);
     --card-foreground: light-dark(#27272a, oklch(0.985 0 0));
-    --popover: light-dark(#ffffff, #161616);
+    --popover: var(--app-menu-background, light-dark(#ffffff, #161616));
     --popover-foreground: light-dark(#27272a, oklch(0.985 0 0));
     --primary: light-dark(#27272a, oklch(0.922 0 0));
     --primary-foreground: light-dark(#fafafa, oklch(0.205 0 0));
-    --secondary: light-dark(#e9e9eb, #242424);
+    /* A wash of the text colour over the tinted page, so filled buttons carry the theme's tint. */
+    --secondary: color-mix(in srgb, var(--foreground) 8%, var(--background));
     --secondary-foreground: light-dark(#27272a, oklch(0.985 0 0));
     --muted: light-dark(#e9e9eb, #242424);
     --muted-foreground: light-dark(#626269, oklch(0.708 0 0));
@@ -49,8 +50,8 @@ export const PROJECT_BOARD_STYLES = `
     /*
      * CDXC:Theming 2026-08-24:
      * The Kanban/Automate page is loaded outside the sidebar chrome effects and
-     * its bridge state carries no settings, so it can only paint the shipped
-     * default accent until live accentColor plumbing reaches this page.
+     * its bridge state carries no settings, so it can only paint the neutral
+     * tint's accent until the tint-derived accent is plumbed to this page.
      */
     --ghostex-accent: #86d3f8;
   }
@@ -1163,4 +1164,10 @@ export const PROJECT_BOARD_STYLES = `
     .project-ticket-conversation-controls { grid-template-columns: 1fr; }
     .project-ticket-meta-grid { grid-template-columns: 1fr; }
   }
+
+  /* The toast close button shows only on hover, restated from packages/core-ui/styles/modals.css because this page loads only the generated sheet. */
+  [data-sonner-toast] [data-close-button] { opacity: 0; }
+  [data-sonner-toast]:hover [data-close-button],
+  [data-sonner-toast]:focus-within [data-close-button],
+  [data-sonner-toast] [data-close-button]:focus-visible { opacity: 1; }
 `;

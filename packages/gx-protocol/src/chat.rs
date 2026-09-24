@@ -156,6 +156,23 @@ pub struct ChatMessage {
     pub queued: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_work: Option<DeferredWork>,
+    /// A client's presentation of an accepted send still waiting for the terminal.
+    ///
+    /// Never on the wire: only a client-sourced row carries it, and the renderer draws the row's
+    /// "Queued" or "Failed" label from it. Not the agent CLI's own queue, which is `queued`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_delivery: Option<StartupDelivery>,
+}
+
+/// Where an accepted send stands with the terminal, as the sending client sees it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupDelivery {
+    pub prompt_id: String,
+    /// `queued`, `sending` or `failed`.
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,6 +261,19 @@ pub struct ChatSnapshotFrame {
     pub working: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    /// The three read-only draft-agent fields an ordinary daemon frame does NOT own.
+    ///
+    /// A host that synthesizes snapshots from reads (the mobile SSH host, and the retained-session
+    /// store's own `snapshotEvent`) sets them as own properties deliberately, including a cleared
+    /// one on promotion. Absent means the frame does not own them and the folded value stands;
+    /// present means it does. `controller.ts` tests exactly that with
+    /// `'sessionAgentId' in event`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_agents: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switchable_agents: Option<Value>,
     /// Absent on a snapshot or replaced frame means cleared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<TurnLifecycle>,

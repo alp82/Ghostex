@@ -32,6 +32,24 @@ pub enum Intent {
     FocusProject {
         project: ProjectKey,
     },
+    /// Make one of a project's USER-MADE session groups active without choosing a session, which
+    /// is what creating a group from a session does.
+    FocusSubgroup {
+        project: ProjectKey,
+        group_id: String,
+    },
+    /// A client-owned document, after a LOCAL edit or after an echo its guard let through: the
+    /// workspace session groups document, the project collections document, or the Spaces
+    /// document. The list draws all three from the store's side state, so the only way an edit
+    /// reaches the screen is to put it there; it carries no revision, because the client owns these
+    /// documents and the daemon keeps a copy.
+    ///
+    /// ONE variant for all three rather than one each: the three differ only in which field of the
+    /// side state they land in, and `SideStateUpdate` already says that.
+    SetSideState {
+        machine: MachineId,
+        update: Box<SideStateUpdate>,
+    },
     /// The host reports the exact set of sessions that own a pane.
     SetVisibleSessions {
         sessions: Vec<SessionKey>,
@@ -67,6 +85,12 @@ pub enum Intent {
     /// The request a patch anticipated failed.
     ClearSessionPatch {
         session: SessionKey,
+    },
+    /// The manual order of a project's sessions, written locally before `/api/updateSessionOrder`
+    /// is awaited so the rows move under the user's finger.
+    ReorderProjectSessions {
+        project: ProjectKey,
+        session_ids: Vec<String>,
     },
 }
 
@@ -190,6 +214,27 @@ impl Core {
         self.focus = focus;
     }
 
+    /// Seeds a remote machine the host has not connected to in this run from its last-seen
+    /// snapshot, so the user sees its sessions faded instead of an empty tab. Not a local intent
+    /// and not a frame: nothing here came from a daemon, which is the whole point.
+    ///
+    /// Returns the changes so the caller can feed them to its list exactly as a frame's are fed.
+    /// See [`PresentationStore::seed_last_seen`] for the user decision and the revision rules.
+    pub fn seed_last_seen_presentation(
+        &mut self,
+        machine: &MachineId,
+        snapshot: PresentationSnapshot,
+    ) -> Output {
+        let mut output = Output {
+            changes: self.presentation.seed_last_seen(machine, snapshot),
+            ..Output::default()
+        };
+        // The same two follow-ups a frame gets, so a seeded machine cannot leave focus or the tab
+        // generation behind, and its effects reach the host rather than being dropped here.
+        self.settle_after_change(&mut output);
+        output
+    }
+
     /// The workspace tabs of the active group. `NotLoaded` until the owning machine's first
     /// snapshot arrived and while no group is active; never `Missing` after an event was handled,
     /// because focus is re-homed when its project goes away.
@@ -289,15 +334,23 @@ impl Core {
             Event::Intent(intent) => self.handle_intent(intent, now_ms, &mut output),
             Event::Tick => output.changes = self.presentation.expire_patches(now_ms),
         }
+        self.settle_after_change(&mut output);
+        output
+    }
+
+    /// What every handled event and the last-seen seed both owe once the store has moved: re-home
+    /// focus if anything changed, and advance the tab generation if a tab list did. One function
+    /// rather than two copies, because a seed that skipped either would leave focus naming a row
+    /// nobody holds and a tab strip drawing a list that moved.
+    fn settle_after_change(&mut self, output: &mut Output) {
         // Focus can only fall out of step with the store when something changed.
         if !output.changes.is_empty() {
             let focus = self.focus.reconcile(&self.presentation);
-            self.note_focus(focus, &mut output);
+            self.note_focus(focus, output);
         }
         if output.changes.tab_lists_changed() {
             self.tabs_generation += 1;
         }
-        output
     }
 
     fn handle_frame(
@@ -475,6 +528,22 @@ impl Core {
                     .focus_project(&self.presentation, project, now_ms);
                 self.note_focus(focus, output);
             }
+            Intent::FocusSubgroup { project, group_id } => {
+                let loaded = self.presentation.loaded(&project.machine).is_some();
+                if loaded && self.presentation.project(&project).is_none() {
+                    output.changes = ChangeSummary::ignored(IgnoredReason::UnknownTarget);
+                    return;
+                }
+                let focus =
+                    self.focus
+                        .focus_subgroup(&self.presentation, project, group_id, now_ms);
+                self.note_focus(focus, output);
+            }
+            Intent::SetSideState { machine, update } => {
+                output.changes = self
+                    .presentation
+                    .apply_side_state(&machine, "", None, *update);
+            }
             Intent::SetVisibleSessions { sessions } => {
                 let focus = self.focus.set_visible_sessions(sessions, now_ms);
                 self.note_focus(focus, output);
@@ -504,6 +573,14 @@ impl Core {
             }
             Intent::ClearSessionPatch { session } => {
                 output.changes = self.presentation.clear_session_patch(&session);
+            }
+            Intent::ReorderProjectSessions {
+                project,
+                session_ids,
+            } => {
+                output.changes = self
+                    .presentation
+                    .reorder_project_sessions(&project, &session_ids);
             }
         }
     }

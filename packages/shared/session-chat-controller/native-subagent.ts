@@ -116,6 +116,11 @@ export class NativeSubagentViewer {
     };
   }
 
+  /** An open row's detail, when the row belongs to the transcript this viewer shows. */
+  rowDetail(kind: string, messageId: string, index: number) {
+    return this.presentation.rowDetail(kind, messageId, index);
+  }
+
   private projector(): NativeChatPresentation {
     const presentation = new NativeChatPresentation();
     presentation.onBackfill = () => {

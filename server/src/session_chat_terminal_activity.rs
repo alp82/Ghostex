@@ -269,9 +269,9 @@ pub fn publishable_session_chat_terminal_activity(
     activity.filter(|activity| working || activity.remains_live_when_ready())
 }
 
-/// CDXC:SessionStatus 2026-09-06 DECISION:
-/// User: Claude must be considered working while its footer reports one or more monitors running.
-pub(crate) fn is_session_chat_monitor_activity(
+/// CDXC:SessionStatus 2026-09-22 DECISION:
+/// User: a Claude session whose footer reports a background shell still running gets its own sidebar indicator (a grey dot) rather than showing idle. This widens the 2026-09-06 decision, which counted only monitors, and both now feed the `backgroundWorkDetectedAt` presentation field through the persisted `sessionChatMonitorDetectedAt` marker instead of the working state.
+pub(crate) fn is_session_chat_background_work_activity(
     activity: Option<&SessionChatTerminalActivity>,
 ) -> bool {
     activity.is_some_and(|activity| {
@@ -282,7 +282,13 @@ pub(crate) fn is_session_chat_monitor_activity(
                 .is_some_and(|(_, status)| {
                     status.split_once(' ').is_some_and(|(count, suffix)| {
                         count.parse::<u64>().is_ok_and(|count| count > 0)
-                            && matches!(suffix, "monitor still running" | "monitors still running")
+                            && matches!(
+                                suffix,
+                                "shell still running"
+                                    | "shells still running"
+                                    | "monitor still running"
+                                    | "monitors still running"
+                            )
                     })
                 })
     })
@@ -901,6 +907,9 @@ fn claude_tool_activity(rows: &[ScreenRow], gutter: usize) -> Option<SessionChat
     {
         return None;
     }
+    if !bullet && row.after_blank && !claude_block_owned_by_bullet(rows, start) {
+        return None;
+    }
     let label = joined_claude_status_line(rows, start);
     let raw_label = label
         .strip_prefix('⏺')
@@ -911,6 +920,36 @@ fn claude_tool_activity(rows: &[ScreenRow], gutter: usize) -> Option<SessionChat
         activity.detail = claude_tool_gutter_text(rows, gutter);
     }
     Some(activity)
+}
+
+/*
+CDXC:AgentScreenDetection 2026-09-20 WHY:
+Claude paints every row of a turn at the same two-space indent, so a paragraph
+that opens after a blank row carries no evidence of its own about whose rows
+they are; only the un-indented marker above the whole block says that. A
+message from `ghostex agents send` arrives as a header paragraph, a blank row
+and the body, and the notice Claude hangs under the submitted prompt (any `⎿`
+row) made the walk-back above stop on the body and publish the whole message as
+a pending tool call, so the chat showed it as a tool card until the transcript
+replaced it with the sender's message. The 2026-09-05 guard covered one wording
+of the same shape ("N skills available"); this covers the shape itself. A
+blank-separated paragraph is a tool row only while the `⏺` that owns it is
+still on the grid: a `>` prompt row, a spinner, a rule or a scrolled-off owner
+is not evidence of a tool, and Claude repaints an in-flight tool row every
+second anyway.
+*/
+fn claude_block_owned_by_bullet(rows: &[ScreenRow], start: usize) -> bool {
+    let mut index = start;
+    while index > 0 {
+        index -= 1;
+        let row = &rows[index];
+        if row.indent < CLAUDE_STATUS_CONTINUATION_INDENT
+            || row.text.starts_with(CLAUDE_TOOL_OUTPUT_MARKER)
+        {
+            return row.text.starts_with('⏺');
+        }
+    }
+    false
 }
 
 /*

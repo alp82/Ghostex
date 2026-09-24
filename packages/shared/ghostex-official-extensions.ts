@@ -12,6 +12,7 @@
  * is `false` or unset.
  */
 import type { ghostexSettings } from './ghostex-settings';
+import { PROJECT_WEBSITE_PROVIDERS, type ProjectWebsiteId } from './ghostex-settings/project-websites';
 
 type BooleanGhostexSettingsKey = {
   [Key in keyof ghostexSettings]-?: boolean extends ghostexSettings[Key] ? Key : never;
@@ -37,6 +38,11 @@ export type GhostexOfficialExtensionSettingsKey = Extract<
   | 'openInTitlebarButtonHidden'
   | 'quickActionsTitlebarButtonHidden'
   | 'resourcesTitlebarButtonHidden'
+  | 'storybookViewTabHidden'
+  | 'linearViewTabHidden'
+  | 'jiraViewTabHidden'
+  | 'githubViewTabHidden'
+  | 'terminalViewTabHidden'
   | 'tipsAndTricksTitlebarButtonHidden'
 >;
 
@@ -44,6 +50,7 @@ export type GhostexOfficialExtensionSettingsKey = Extract<
 export type GhostexOfficialExtensionPlacement = 'view' | 'titlebar-button';
 
 export type GhostexOfficialExtensionId =
+  | ProjectWebsiteId
   | 'automate'
   | 'browser'
   | 'code'
@@ -57,9 +64,16 @@ export type GhostexOfficialExtensionId =
   | 'openIn'
   | 'quickActions'
   | 'resources'
+  | 'storybook'
+  | 'terminal'
   | 'tips';
 
 export type GhostexOfficialExtension = {
+  /**
+   * CDXC:Titlebar 2026-09-21 DECISION:
+   * User: Ask Ghostex, Tips & Tricks and Resources open as overlays from the ⋯ menu again (no longer view tabs), and stay app-wide: available in every project regardless of scope. An app-wide entry has an on/off switch and nothing else: no "where it appears" editor, because there is no project it could be narrowed to.
+   */
+  appWide?: true;
   description: string;
   id: GhostexOfficialExtensionId;
   placement: GhostexOfficialExtensionPlacement;
@@ -68,6 +82,21 @@ export type GhostexOfficialExtension = {
 };
 
 export const GHOSTEX_OFFICIAL_EXTENSIONS: readonly GhostexOfficialExtension[] = [
+  ...PROJECT_WEBSITE_PROVIDERS.map((provider): GhostexOfficialExtension => ({
+    id: provider.id,
+    title: provider.title,
+    description: provider.description,
+    settingsKey: provider.hiddenSettingsKey,
+    placement: 'view',
+  })),
+  {
+    description:
+      'Build, browse, and annotate your project’s components without a persistent development server. Appears only in projects with Storybook.',
+    id: 'storybook',
+    placement: 'view',
+    settingsKey: 'storybookViewTabHidden',
+    title: 'Storybook',
+  },
   {
     description:
       'Explore, edit, and search your project in a familiar, full-featured workspace without ever leaving Ghostex.',
@@ -105,64 +134,77 @@ export const GHOSTEX_OFFICIAL_EXTENSIONS: readonly GhostexOfficialExtension[] = 
     title: 'Docs',
   },
   {
-    description: 'Title bar button that opens short tips for getting more out of Ghostex.',
+    description:
+      'A command terminal beside your sessions, with its own tabs and splits, that works like the Commands pane but lives in the view panel.',
+    id: 'terminal',
+    placement: 'view',
+    settingsKey: 'terminalViewTabHidden',
+    title: 'Terminal',
+  },
+  {
+    appWide: true,
+    description: 'A panel of short tips for getting more out of Ghostex, opened from the ⋯ menu.',
     id: 'tips',
     placement: 'titlebar-button',
     settingsKey: 'tipsAndTricksTitlebarButtonHidden',
     title: 'Tips & Tricks',
   },
   {
-    description: 'Title bar bell that lists what your agents finished or need from you.',
+    description: "A bell in the sidebar's top row that lists what your agents finished or need from you.",
     id: 'notifications',
     placement: 'titlebar-button',
     settingsKey: 'notificationsTitlebarButtonHidden',
     title: 'Notifications',
   },
   {
+    appWide: true,
     description:
-      'Title bar button with sample questions that start a Ghostex Help chat: an agent explains the app or changes settings for you.',
+      'A ⋯ menu entry with sample questions that start a Ghostex Help chat: an agent explains the app or changes settings for you.',
     id: 'help',
     placement: 'titlebar-button',
     settingsKey: 'helpTitlebarButtonHidden',
     title: 'Ghostex Help',
   },
   {
-    description: 'Title bar button that lists development servers running on this computer.',
+    description:
+      'A ⋯ menu panel listing development servers running on this computer. A new Browser tab shows the same list.',
     id: 'devServers',
     placement: 'titlebar-button',
     settingsKey: 'devServersTitlebarButtonHidden',
     title: 'Dev servers',
   },
   {
-    description: 'Title bar button that opens Ghostex docs, guides, and community links.',
+    appWide: true,
+    description:
+      'A ⋯ menu panel listing what Ghostex is running right now, with the CPU and memory each part is using.',
     id: 'resources',
     placement: 'titlebar-button',
     settingsKey: 'resourcesTitlebarButtonHidden',
     title: 'Resources',
   },
   {
-    description: 'Title bar button for commit, branch, and worktree helpers on the active project.',
+    description: 'A work area header button for commit, branch, and worktree helpers on the active project.',
     id: 'gitActions',
     placement: 'titlebar-button',
     settingsKey: 'gitActionsTitlebarButtonHidden',
     title: 'Git actions',
   },
   {
-    description: 'Title bar button that runs your saved terminal and browser actions in one click.',
+    description: 'A work area header button that runs your saved terminal and browser actions in one click.',
     id: 'quickActions',
     placement: 'titlebar-button',
     settingsKey: 'quickActionsTitlebarButtonHidden',
     title: 'Quick Actions',
   },
   {
-    description: 'Title bar button that opens the active project in another app.',
+    description: 'A work area header button that opens the active project in another app.',
     id: 'openIn',
     placement: 'titlebar-button',
     settingsKey: 'openInTitlebarButtonHidden',
     title: 'Open In',
   },
   {
-    description: 'Title bar button that opens this Extensions page.',
+    description: 'An entry in the work area header’s ⋯ menu that opens this Extensions page.',
     id: 'extensionsButton',
     placement: 'titlebar-button',
     settingsKey: 'extensionsTitlebarButtonHidden',

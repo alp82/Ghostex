@@ -83,11 +83,13 @@ impl NativeChatView {
         let pane = self.bounds.get();
         let bounds = gpui::Bounds::new(window.bounds().origin + pane.origin, pane.size);
         let parent_native_view = self.config.parent_native_view;
-        let display_id = window.display(cx).map(|display| display.id());
+        let display_id = crate::app::window::popup_frame::display_at(bounds.center(), cx)
+            .or_else(|| window.display(cx).map(|display| display.id()));
         let chat = cx.entity();
         cx.defer(move |cx| {
             let result = cx.open_window(
                 WindowOptions {
+                    kind: crate::app::window::popup_frame::child_window_kind(),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     display_id,
                     app_id: crate::gpui_platform_window_app_id(),
@@ -104,6 +106,7 @@ impl NativeChatView {
                 {
                     let chat = chat.clone();
                     move |window, cx| {
+                        crate::app::window::popup_frame::strip_gpui_popup_window_frame(window);
                         crate::app::window::attach_gpui_app_modal_window_to_main_window(
                             window,
                             parent_native_view,

@@ -350,10 +350,13 @@ impl GhostexGpuiApp {
         if !self.command_pane_tab_exists(group_id, session_id) {
             return false;
         }
-        let expand_pane = !self.command_pane.is_expanded();
+        let expand_pane = self.command_pane.dock_for_group(group_id)
+            == Some(CommandPaneDock::Panel)
+            && !self.command_pane.is_expanded();
         if !self.select_command_pane_tab(group_id, session_id, expand_pane, window, cx) {
             return false;
         }
+        self.reveal_command_group_dock(group_id, cx);
         if self
             .command_pane
             .session(session_id)
@@ -566,7 +569,7 @@ impl GhostexGpuiApp {
     ) {
         /*
         CDXC:Onboarding 2026-06-24-23:17:
-        The GPUI info glyph opens the shared React `titlebar-host.html?ghostexTitlebarPanel=tips` document inside an app-owned anchored overlay whose top edge is TITLEBAR_HEIGHT. Because the rendered child is a native CEF view, dropdown state changes must explicitly show/hide the CEF surface instead of relying on GPUI paint removal.
+        The GPUI info glyph opens the shared React `titlebar-host.html?ghostexTitlebarPanel=tips` document inside an app-owned anchored overlay whose top edge is the workarea header's measured bottom edge. Because the rendered child is a native CEF view, dropdown state changes must explicitly show/hide the CEF surface instead of relying on GPUI paint removal.
         */
         if open {
             self.close_gpui_titlebar_popup(None, window, cx);
@@ -1236,26 +1239,18 @@ impl GhostexGpuiApp {
         if let Some(surface) = gpui_telemetry_surface_for_app_modal(modal) {
             record_gpui_surface_opened_telemetry(surface, cx.background_executor());
         }
+        if modal == GpuiAppModalKind::StashedPrompts {
+            self.enrich_gpui_saved_prompts_quick_access_open_message(&mut open_message);
+        }
         // Kinds rebuilt in native GPUI leave the React host here (native_app_modal_lifecycle.rs).
         if self.try_open_native_app_modal(modal, &open_message, cx) {
             return;
-        }
-        if modal == GpuiAppModalKind::StashedPrompts {
-            self.enrich_gpui_saved_prompts_quick_access_open_message(&mut open_message);
         }
         // The launcher owns modal hydration. Session-scoped callers such as
         // Rename and Delayed Send must not diverge based on their entry point.
         if modal.requires_sidebar_state() {
             open_message["latestSidebarStateMessage"] = sidebar_state_message.clone();
         }
-        let quick_access_sidebar_state_message = matches!(
-            modal,
-            GpuiAppModalKind::CommandPalette
-                | GpuiAppModalKind::PreviousSessions
-                | GpuiAppModalKind::RecentProjects
-                | GpuiAppModalKind::StashedPrompts
-        )
-        .then(|| sidebar_state_message.clone());
         self.open_gpui_app_modal_window_inner(
             modal,
             open_message,
@@ -1264,11 +1259,6 @@ impl GhostexGpuiApp {
             true,
             cx,
         );
-        if let Some(sidebar_state_message) = quick_access_sidebar_state_message
-            && self.app_modal_window.is_some()
-        {
-            self.refresh_gpui_quick_access_sessions_state_in_background(sidebar_state_message, cx);
-        }
     }
 
     /*
@@ -1413,11 +1403,15 @@ impl GhostexGpuiApp {
                         cx,
                     );
                     modal_window.resize(window_size);
-                    modal_window.set_window_title(if modal.has_titlebar() {
-                        &window_title
-                    } else {
-                        ""
-                    });
+                    modal_window.set_window_title(
+                        if cfg!(any(target_os = "windows", target_os = "linux"))
+                            || modal.has_titlebar()
+                        {
+                            &window_title
+                        } else {
+                            ""
+                        },
+                    );
                     modal_window.activate_window();
                     modal_window.refresh();
                 });
@@ -1484,6 +1478,7 @@ impl GhostexGpuiApp {
             window_size,
         ));
         let options = WindowOptions {
+            kind: crate::app::window::popup_frame::child_window_kind(),
             window_bounds: Some(window_bounds),
             app_id: gpui_platform_window_app_id(),
             focus: true,
@@ -1491,9 +1486,13 @@ impl GhostexGpuiApp {
             show: true,
             is_resizable: modal.is_resizable(),
             window_min_size: Some(modal.window_min_size(&open_message)),
-            display_id: self.main_window_display_id,
+            display_id: crate::app::window::popup_frame::display_at(
+                self.main_window_bounds.center(),
+                cx,
+            )
+            .or(self.main_window_display_id),
             titlebar: modal.has_titlebar().then(|| gpui::TitlebarOptions {
-                title: Some(window_title.into()),
+                title: Some(window_title.clone().into()),
                 appears_transparent: false,
                 traffic_light_position: None,
             }),
@@ -1531,7 +1530,13 @@ impl GhostexGpuiApp {
         self.app_modal_window = cx
             .open_window(options, |modal_window, cx| {
                 if !modal.has_titlebar() {
-                    modal_window.set_window_title("");
+                    modal_window.set_window_title(
+                        if cfg!(any(target_os = "windows", target_os = "linux")) {
+                            &window_title
+                        } else {
+                            ""
+                        },
+                    );
                 }
                 modal_window.activate_window();
                 /*
@@ -1939,6 +1944,7 @@ impl GhostexGpuiApp {
         &self,
         mut message: serde_json::Value,
     ) -> serde_json::Value {
+        message = self.with_remote_project_action_rows(message);
         /*
         CDXC:CommandPane 2026-06-25-10:50:
         App-modal sidebar hydrates must carry the same command-session indicators as the live GPUI sidebar HUD. Reuse the sanitized command-pane summary and gxserver command rows; never compute from command text, paths, status-file paths, terminal output, logs, or persisted shell-state JSON.
@@ -2020,6 +2026,8 @@ impl GhostexGpuiApp {
         self.apply_gpui_command_pane_side_from_saved_settings(settings_snapshot);
         refresh_gpui_visual_settings(settings_snapshot);
         apply_gpui_component_theme(cx);
+        self.native_kanban_notify_appearance(cx);
+        self.native_automate_notify_appearance(cx);
         self.refresh_sidebar_runtime_settings_from_shared_settings(settings_snapshot, cx);
         self.coerce_active_mode_to_available_project_context(cx);
         self.prune_project_workarea_runtime_cef_surfaces_for_current_gates(cx);
@@ -2032,93 +2040,7 @@ impl GhostexGpuiApp {
         let sidebar_state_message =
             self.gpui_app_modal_sidebar_state_message_from_settings_snapshot(settings_snapshot);
         self.refresh_open_gpui_app_modal_sidebar_state(sidebar_state_message, cx);
-        let chat_theme = gpui_session_chat_theme_from_settings(settings_snapshot.object());
-        let chat_theme_literal =
-            serde_json::to_string(chat_theme).unwrap_or_else(|_| "\"dark\"".to_string());
-        let chat_theme_script =
-            format!("window.ghostexSetSessionChatTheme?.({chat_theme_literal});undefined;");
-        let chat_font_family =
-            gpui_session_chat_font_family_from_settings(settings_snapshot.object());
-        let chat_font_family_literal =
-            serde_json::to_string(&chat_font_family).unwrap_or_else(|_| "\"\"".to_string());
-        let chat_font_family_script = format!(
-            "window.ghostexSetSessionChatFontFamily?.({chat_font_family_literal});undefined;"
-        );
-        let chat_custom_transcript_width_enabled =
-            gpui_session_chat_custom_transcript_width_enabled_from_settings(
-                settings_snapshot.object(),
-            );
-        let chat_custom_transcript_width_script = format!(
-            "window.ghostexSetSessionChatCustomTranscriptWidthEnabled?.({chat_custom_transcript_width_enabled});undefined;"
-        );
-        let chat_transcript_width_percent =
-            gpui_session_chat_transcript_width_percent_from_settings(settings_snapshot.object());
-        let chat_transcript_width_script = format!(
-            "window.ghostexSetSessionChatTranscriptWidthPercent?.({chat_transcript_width_percent});undefined;"
-        );
-        let code_file_view_available = self.titlebar_mode_available(TitlebarMode::Source)
-            && self.embedded_code_editor_unavailable_reason().is_none();
-        let docs_file_view_available = self.titlebar_mode_available(TitlebarMode::Manage);
-        let chat_file_views_script = format!(
-            "window.ghostexSetSessionChatFileViews?.({code_file_view_available},{docs_file_view_available});undefined;"
-        );
-        let chat_file_edit_previews =
-            gpui_session_chat_file_edit_previews_from_settings(settings_snapshot.object());
-        let chat_file_edit_previews_script = format!(
-            "window.ghostexSetSessionChatFileEditPreviews?.({chat_file_edit_previews});undefined;"
-        );
-        let chat_model_picks_session_only =
-            gpui_session_chat_model_picks_session_only_from_settings(settings_snapshot.object());
-        let chat_model_picks_session_only_script = format!(
-            "window.ghostexSetSessionChatModelPicksSessionOnly?.({chat_model_picks_session_only});undefined;"
-        );
-        let chat_simple_mode =
-            gpui_session_chat_simple_mode_from_settings(settings_snapshot.object());
-        let chat_simple_mode_script =
-            format!("window.ghostexSetSessionChatSimpleMode?.({chat_simple_mode});undefined;");
-        let chat_verbose_mode =
-            gpui_session_chat_verbose_mode_from_settings(settings_snapshot.object());
-        let chat_verbose_mode_script =
-            format!("window.ghostexSetSessionChatVerboseMode?.({chat_verbose_mode});undefined;");
-        let chat_hotkeys = settings_snapshot
-            .object()
-            .get("hotkeys")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let chat_hotkeys_script =
-            format!("window.ghostexSetSessionChatHotkeys?.({chat_hotkeys});undefined;");
-        let hide_account_emails = settings_snapshot
-            .object()
-            .get("hideAccountEmails")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        let account_privacy_script =
-            format!("window.ghostexSetHideAccountEmails?.({hide_account_emails});undefined;");
         self.sync_titlebar_account_privacy(cx);
-        for surface in self.agents_chat_surfaces.values().chain(
-            self.parked_agents_chat_runtimes_by_project
-                .values()
-                .flat_map(|parked| parked.surfaces.values()),
-        ) {
-            surface.update(cx, |surface, _| {
-                surface.refresh_session_chat_zoom();
-                surface.execute_app_owned_script(&account_privacy_script);
-                surface.execute_app_owned_script(&chat_file_edit_previews_script);
-                surface.execute_app_owned_script(&chat_model_picks_session_only_script);
-                surface.execute_app_owned_script(&chat_file_views_script);
-                surface.execute_app_owned_script(&chat_simple_mode_script);
-                surface.execute_app_owned_script(&chat_hotkeys_script);
-            });
-        }
-        for surface in self.agents_chat_surfaces.values() {
-            surface.update(cx, |surface, _| {
-                surface.execute_app_owned_script(&chat_theme_script);
-                surface.execute_app_owned_script(&chat_font_family_script);
-                surface.execute_app_owned_script(&chat_custom_transcript_width_script);
-                surface.execute_app_owned_script(&chat_transcript_width_script);
-                surface.execute_app_owned_script(&chat_verbose_mode_script);
-            });
-        }
         // Newly saved hotkey chords bind immediately. The save boundary first
         // adds targeted Unbind markers for the prior Ghostex action chords, so
         // removed/remapped entries stop dispatching without clearing GPUI or
@@ -2150,7 +2072,11 @@ impl GhostexGpuiApp {
         #[cfg(not(target_os = "macos"))]
         let mut config =
             terminal_gpui_engine::GpuiTerminalEngineConfig::from_shared(&shared_engine_settings);
-        config.apply_color_scheme(&shared_engine_settings, gpui_system_uses_light_appearance());
+        config.apply_color_scheme(
+            &shared_engine_settings,
+            gpui_system_uses_light_appearance(),
+            gpui_terminal_theme_background(&shared_engine_settings),
+        );
 
         // This setting is app-owned and is not part of Ghostty's finalized
         // config string on macOS.
@@ -2158,6 +2084,7 @@ impl GhostexGpuiApp {
             shared_engine_settings.scroll_to_bottom_when_typing;
         config.view.background_image =
             terminal_gpui_engine::terminal_background_image_from_settings(&shared_engine_settings);
+        config.view.background_alpha = terminal_default_background_alpha();
 
         let confirm_close_behavior =
             terminal_gpui_engine::gpui_engine_confirm_close_behavior(&config);
@@ -2233,7 +2160,8 @@ impl GhostexGpuiApp {
         let Some(handle) = self.app_modal_window.clone() else {
             return;
         };
-        let sidebar_state_message = self.with_project_view_scope_options(sidebar_state_message);
+        let sidebar_state_message =
+            self.with_gpui_command_pane_sidebar_indicators(sidebar_state_message);
         let update_result = handle.update(cx, |host, modal_window, cx| {
             host.refresh_sidebar_state_message(sidebar_state_message.clone(), cx);
             modal_window.refresh();
@@ -2253,6 +2181,20 @@ impl GhostexGpuiApp {
         Settings status/action responses are transient `sidebarState` messages to the shared React modal host. They must clear modal loading states without replacing the stored full hydrate snapshot used when the app-modal host becomes ready or a Settings save rehydrates the modal.
         */
         let Some(handle) = self.app_modal_window.clone() else {
+            /*
+            CDXC:AppModal 2026-09-20 WHY:
+            Quick Access is a native GPUI window now, and its controller lives in the sidebar
+            runtime rather than in a modal-host page. Its answers (recent projects, saved prompts,
+            previous sessions, transcript sizes) reach it through the sidebar host-message bridge,
+            which re-emits them on the runtime's own message source.
+            */
+            if self
+                .native_app_modal_kind()
+                .and_then(crate::app::window::quick_access::QuickAccessTabId::from_modal_kind)
+                .is_some()
+            {
+                self.dispatch_gpui_sidebar_host_message(payload, cx);
+            }
             return;
         };
         let update_result = handle.update(cx, |host, modal_window, cx| {

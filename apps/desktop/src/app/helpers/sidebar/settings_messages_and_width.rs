@@ -254,6 +254,18 @@ pub(crate) fn gpui_session_chat_uses_light_theme(
     }
 }
 
+/// CDXC:Theming 2026-09-22 DECISION:
+/// User: the workarea header (the top bar) matches the theme too. Every surface that backs a GPUI
+/// chat, the transcript, the header band over it, its fade ramp and the chat placeholders, reads
+/// this one colour: the chat's own theme variant's work area colour (`work_area_background_for_variant`,
+/// the chrome at the work area contrast stepped toward white), so a tinted preset carries into all of them at once.
+pub(crate) fn gpui_session_chat_background_rgb(
+    settings: &serde_json::Map<String, serde_json::Value>,
+) -> u32 {
+    let light = gpui_session_chat_uses_light_theme(settings);
+    work_area_background_for_variant(settings, light)
+}
+
 pub(crate) fn gpui_session_chat_font_family_from_settings(
     settings: &serde_json::Map<String, serde_json::Value>,
 ) -> String {
@@ -265,70 +277,14 @@ pub(crate) fn gpui_session_chat_font_family_from_settings(
         .to_string()
 }
 
-pub(crate) fn gpui_session_chat_custom_transcript_width_enabled_from_settings(
-    settings: &serde_json::Map<String, serde_json::Value>,
-) -> bool {
-    settings
-        .get("sessionChatCustomTranscriptWidthEnabled")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-}
-
-pub(crate) fn gpui_session_chat_transcript_width_percent_from_settings(
-    settings: &serde_json::Map<String, serde_json::Value>,
-) -> u8 {
-    const MIN_PERCENT: f64 = 50.0;
-    const MAX_PERCENT: f64 = 100.0;
-    const STEP_PERCENT: f64 = 5.0;
-    const DEFAULT_PERCENT: f64 = 75.0;
-
-    let value = settings
-        .get("sessionChatTranscriptWidthPercent")
-        .and_then(serde_json::Value::as_f64)
-        .unwrap_or(DEFAULT_PERCENT)
-        .clamp(MIN_PERCENT, MAX_PERCENT);
-    ((value / STEP_PERCENT).round() * STEP_PERCENT) as u8
-}
-
-pub(crate) fn gpui_session_chat_model_picks_session_only_from_settings(
-    settings: &serde_json::Map<String, serde_json::Value>,
-) -> bool {
-    settings
-        .get("sessionChatModelPicksSessionOnly")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-}
-
-pub(crate) fn gpui_session_chat_file_edit_previews_from_settings(
-    settings: &serde_json::Map<String, serde_json::Value>,
-) -> bool {
-    settings
-        .get("sessionChatFileEditPreviews")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-}
-
-pub(crate) fn gpui_session_chat_verbose_mode_from_settings(
-    settings: &serde_json::Map<String, serde_json::Value>,
-) -> bool {
-    settings
-        .get("sessionChatVerboseMode")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-}
-
-pub(crate) fn gpui_session_chat_simple_mode_from_settings(
-    settings: &serde_json::Map<String, serde_json::Value>,
-) -> bool {
-    settings
-        .get("sessionChatSimpleMode")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-}
-
+/// CDXC:Workarea 2026-09-20 WHY:
+/// With a view open the workarea has to hold the Agents column, the split divider and the view panel,
+/// so the sidebar may only grow into what is left after all three.
 pub(crate) fn current_sidebar_max_width(window: &Window, mode: TitlebarMode) -> f32 {
     let workspace_min_width = if mode.is_project_editor_mode() {
-        PROJECT_EDITOR_MAIN_MIN_WIDTH
+        WORKAREA_AGENTS_COLUMN_MIN_WIDTH
+            + WORKSPACE_SPLIT_HANDLE_THICKNESS
+            + WORKAREA_VIEW_PANEL_MIN_WIDTH
     } else {
         WORKSPACE_MIN_WIDTH
     };

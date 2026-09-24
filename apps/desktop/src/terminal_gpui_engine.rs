@@ -110,12 +110,15 @@ impl GpuiTerminalEngineConfig {
     }
 
     /// CDXC:Theming 2026-09-13 DECISION:
-    /// User: terminals can follow the system with a separate light theme, while dark mode stays exactly as it is.
-    /// Only light mode replaces the finalized color palette and background; returning to dark restores the existing Ghostty config and custom background.
+    /// User: terminals can follow the system with a separate light theme. Only light mode replaces the finalized color palette; returning to dark restores the existing Ghostty config palette.
+    ///
+    /// CDXC:Theming 2026-09-23 DECISION:
+    /// User: the terminal background follows the theme like the chat does, in both appearances, then "wtf does terminal color have to do with workarea theme??? pls make this more intuitive pls". This supersedes the 2026-09-13 "dark mode stays exactly as it is" for the background only: the palette still comes from the Ghostty config or the light theme, while the background is the theme's content colour (`theme_background`). The Terminal background setting follows the theme by default (an empty value); a chosen colour replaces it behind terminal cells in dark mode only and never colours the work area (SEE-ALSO `refresh_gpui_visual_settings` in app/helpers/project/colors.rs).
     pub(crate) fn apply_color_scheme(
         &mut self,
         settings: &SharedGpuiTerminalEngineSettings,
         system_is_light: bool,
+        theme_background: [u8; 3],
     ) {
         self.view.light_theme = settings.uses_light_theme(system_is_light);
         if self.view.light_theme {
@@ -124,8 +127,11 @@ impl GpuiTerminalEngineConfig {
             // GPUI retains ANSI foreground colors in selected text; Ghostty's opaque selection background assumes a separate selection foreground.
             // Use the renderer's adaptive translucent selection tint so light palettes remain readable.
             self.view.selection_background = None;
-        } else if let Some(background) = settings.terminal_background_rgb {
-            self.apply_terminal_background(background);
+            self.apply_terminal_background(theme_background);
+        } else {
+            self.apply_terminal_background(
+                settings.terminal_background_rgb.unwrap_or(theme_background),
+            );
         }
     }
 
@@ -175,13 +181,6 @@ struct GpuiTerminalTheme {
     cursor_text: Option<Rgb>,
     selection_background: Option<Rgb>,
     palette: [Rgb; 256],
-}
-
-pub(crate) fn light_theme_background(name: &str) -> Rgb {
-    gpui_terminal_theme(name)
-        .or_else(|| gpui_terminal_theme("GitHub Light Default"))
-        .expect("bundled GitHub Light Default palette")
-        .background
 }
 
 pub(crate) fn ghostty_theme_source(name: &str) -> Option<&'static str> {
@@ -426,6 +425,21 @@ pub(crate) fn gpui_engine_terminal_spawn_config(
         env.push(("WAYLAND_DISPLAY".into(), wayland_display.to_string()));
     }
 
+    #[cfg(windows)]
+    let (program, args) = {
+        // CDXC:RemoteMachines 2026-09-23 WHY:
+        // Remote SSH uses the host's OpenSSH and credential helper even when local projects use WSL; routing this payload through WSL would lose its Windows executable paths and askpass environment.
+        let native_remote = env
+            .iter()
+            .any(|(key, value)| key == "GHOSTEX_REMOTE_SSH_CLIENT" && value == "windows");
+        env.retain(|(key, _)| key != "GHOSTEX_REMOTE_SSH_CLIENT");
+        if native_remote {
+            crate::windows_terminal_backend::native_terminal_invocation(command, cwd.as_deref())
+        } else {
+            spawn_invocation(command, cwd.as_deref())
+        }
+    };
+    #[cfg(not(windows))]
     let (program, args) = spawn_invocation(command, cwd.as_deref());
 
     TerminalSpawnConfig {

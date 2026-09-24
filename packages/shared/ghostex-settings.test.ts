@@ -392,7 +392,7 @@ describe('normalizeghostexSettings', () => {
     The Settings and first-time modal title-agent dropdowns must show the exact command template Ghostex sends, including model ids from each installed CLI's local model catalog.
     */
     expect(getSessionTitleGenerationCommandPreview('codex')).toBe(
-      "codex --yolo exec --ephemeral --skip-git-repo-check -m gpt-5.6-luna -c 'model_reasoning_effort=\"low\"' <<'PROMPT'\n<title generation prompt>\nPROMPT"
+      "codex --yolo exec --ephemeral --skip-git-repo-check -m gpt-6-luna -c 'model_reasoning_effort=\"low\"' <<'PROMPT'\n<title generation prompt>\nPROMPT"
     );
     expect(getSessionTitleGenerationCommandPreview('cursor')).toBe(
       "cursor-agent --print --yolo --trust --model cursor-grok-4.5-low --output-format text '<title generation prompt>'"
@@ -966,7 +966,7 @@ describe('normalizeghostexSettings', () => {
       sidebarTheme: 'system',
     });
     expect(SIDEBAR_THEME_SETTING_OPTIONS).toEqual([
-      { label: 'Dark Gray', value: 'dark-2' },
+      { label: 'Dark', value: 'dark-2' },
       { label: 'Light', value: 'plain-light' },
       { label: 'System', value: 'system' },
     ]);
@@ -1024,7 +1024,6 @@ describe('normalizeghostexSettings', () => {
     expect(DEFAULT_ghostex_SETTINGS.customSidebarTitlebarBackgroundTintColor).toBe('#808080');
     expect(DEFAULT_ghostex_SETTINGS.customSidebarTitlebarBackgroundDarknessPercent).toBe(96);
     expect(DEFAULT_ghostex_SETTINGS.customSidebarTitlebarBackgroundColor).toBe('#0b0b0b');
-    expect(DEFAULT_ghostex_SETTINGS.accentColor).toBe('#86d3f8');
     expect(getSidebarTitlebarBackgroundForDarkness(95, '#884444')).toBe('#0d0005');
     expect(getSidebarTitlebarBackgroundForDarkness(95, '#336699')).toBe('#0c0e11');
     expect(getSidebarTitlebarBackgroundForDarkness(95, '#000000')).toBe('#000000');
@@ -1033,7 +1032,6 @@ describe('normalizeghostexSettings', () => {
       customSidebarTitlebarBackgroundTintColor: '#808080',
       customSidebarTitlebarBackgroundDarknessPercent: 96,
       customSidebarTitlebarBackgroundColor: '#0b0b0b',
-      accentColor: '#86d3f8',
     });
     /*
      * A legacy saved background only ever seeded the contrast slider, never the
@@ -1174,13 +1172,16 @@ describe('normalizeghostexSettings', () => {
     });
   });
 
-  test('keeps the workspace background color setting', () => {
-    expect(DEFAULT_ghostex_SETTINGS.workspaceBackgroundColor).toBe('#010101');
+  test('keeps the terminal background setting, empty following the theme', () => {
+    expect(DEFAULT_ghostex_SETTINGS.workspaceBackgroundColor).toBe('');
     expect(normalizeghostexSettings({ workspaceBackgroundColor: '#202020' })).toMatchObject({
       workspaceBackgroundColor: '#202020',
     });
     expect(normalizeghostexSettings({ workspaceBackgroundColor: '   ' })).toMatchObject({
-      workspaceBackgroundColor: DEFAULT_ghostex_SETTINGS.workspaceBackgroundColor,
+      workspaceBackgroundColor: '',
+    });
+    expect(normalizeghostexSettings({ workspaceBackgroundColor: '#010101' })).toMatchObject({
+      workspaceBackgroundColor: '',
     });
   });
 

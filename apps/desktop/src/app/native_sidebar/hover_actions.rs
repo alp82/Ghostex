@@ -8,7 +8,10 @@ use gpui::{
     AnyElement, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
     div, px,
 };
-use gpui_component::h_flex;
+use gpui_component::{
+    h_flex,
+    tooltip::{ManagedTooltipExt as _, ManagedTooltipPlacement},
+};
 use serde_json::{Value, json};
 
 impl GhostexGpuiApp {
@@ -34,9 +37,16 @@ impl GhostexGpuiApp {
         }
         actions.extend(after.into_iter().flatten().cloned());
         h_flex()
+            .id(format!("native-sidebar-hover-actions-{id}"))
             .flex_shrink_0()
             .h_full()
             .gap(px(2.0 * scale))
+            // CDXC:Sidebar 2026-09-21 DECISION: User: "make pointer over an inner button of the session also remove the tooltip". The title's tooltip was anchored to the title's width before these buttons appeared and took part of it, so the pointer reaching them does not read as leaving the title; close it here.
+            .on_hover(|hovered, window, cx| {
+                if *hovered {
+                    gpui_component::Root::hide_tooltip(window, cx);
+                }
+            })
             .children(actions.into_iter().enumerate().map(|(index, item)| {
                 let label = item["label"].as_str().unwrap_or("").to_owned();
                 let command = item.get("command").cloned();
@@ -45,16 +55,27 @@ impl GhostexGpuiApp {
                 let storage_id = group.storage_id.clone();
                 div()
                     .id(format!("native-sidebar-hover-{id}-{index}"))
+                    .role(gpui::Role::Button)
+                    .aria_label(label.clone())
                     .size(px(20.0 * scale))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded(px(4.0 * scale))
                     .cursor_pointer()
-                    .when(appearance.light, |item| item.bg(gpui::rgb(0xf4f4f5)))
+                    // On light-mode glass the buttons are white washes like the selected row.
+                    .when(appearance.light, |item| {
+                        item.bg(if appearance.glass {
+                            gpui::Hsla::from(gpui::rgb(0xffffff)).opacity(0.55)
+                        } else {
+                            gpui::Hsla::from(gpui::rgb(0xf4f4f5))
+                        })
+                    })
                     .hover(|item| {
-                        item.bg(if appearance.light {
-                            gpui::rgb(0xe4e4e7).into()
+                        item.bg(if appearance.light && appearance.glass {
+                            gpui::Hsla::from(gpui::rgb(0xffffff)).opacity(0.85)
+                        } else if appearance.light {
+                            gpui::Hsla::from(gpui::rgb(0xe4e4e7))
                         } else {
                             appearance.hover
                         })
@@ -70,7 +91,9 @@ impl GhostexGpuiApp {
                             && self.native_sidebar.menu.is_none()
                             && !cx.has_active_drag(),
                         |row| {
-                            row.tooltip_show_delay(appearance.tooltip_delay).tooltip(
+                            row.managed_discrete_tooltip_with_placement(
+                                ManagedTooltipPlacement::BelowLeft,
+                                appearance.tooltip_delay,
                                 move |window, cx| titlebar_tooltip(label.clone(), window, cx),
                             )
                         },

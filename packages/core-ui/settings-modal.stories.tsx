@@ -193,6 +193,7 @@ function SettingsModalStory({
   initialSettings?: ghostexSettings;
   initialTab?:
     | 'settings'
+    | 'theme'
     | 'integrations'
     | 'projects'
     | 'agents'
@@ -412,7 +413,7 @@ const storySpaces: ProjectViewSpace[] = [
 /*
  * CDXC:Extensions 2026-09-18:
  * Settings -> Extensions with Spaces and Projects available, so the per-row Edit button and its
- * "Available in" editor can be reviewed on the Workareas, Title bar buttons, and Your views lists.
+ * view scope editor can be reviewed on the Workareas, Title bar buttons, and Your views lists.
  * The Extensions Store section needs a gxserver bootstrap and is absent here by design.
  */
 const storyPluginStatus: SidebarPluginSettingsStatusMessage = {
@@ -458,6 +459,10 @@ export const Extensions: Story = {
  * one card). Between them they cover every field primitive the redesign
  * touches.
  */
+export const Theme: Story = {
+  render: () => <SettingsModalStory initialTab='theme' />,
+};
+
 export const Hotkeys: Story = {
   render: () => <SettingsModalStory initialTab='hotkeys' />,
 };
@@ -500,7 +505,7 @@ export const Theming: Story = {
     <SettingsModalStory
       initialSettings={{
         ...modalSettings,
-        showAdvancedSettings: true,
+        darkThemePreset: 'custom',
       }}
     />
   ),
@@ -512,7 +517,9 @@ export const CustomColorPicker: Story = {
 
     await step('open the nested color picker dialog', async () => {
       await userEvent.click(await body.findByRole('button', { name: 'Appearance' }));
-      await userEvent.click(await body.findByRole('button', { name: 'Accent Color custom color picker' }));
+      await userEvent.click(
+        await body.findByRole('button', { name: 'Dark theme background tint custom color picker' })
+      );
       await body.findByRole('dialog', { name: 'Pick Color' });
     });
   },
@@ -520,7 +527,7 @@ export const CustomColorPicker: Story = {
     <SettingsModalStory
       initialSettings={{
         ...modalSettings,
-        showAdvancedSettings: true,
+        darkThemePreset: 'custom',
       }}
     />
   ),

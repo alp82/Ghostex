@@ -13,6 +13,9 @@ use std::time::SystemTime;
 // RefCell backs cross-platform runtime state (window frame persistence), not
 // just the macOS-only shims that first introduced the import.
 
+use crate::app::floating_reveal::model::SIDEBAR_HOVER_REVEAL_ACTIVE_POLL;
+use crate::app::floating_reveal::model::SIDEBAR_HOVER_REVEAL_IDLE_POLL;
+
 use gpui::InteractiveElement as _;
 use gpui::IntoElement;
 use gpui::MouseButton;
@@ -50,6 +53,7 @@ impl GhostexGpuiApp {
         let system_is_light = refresh_gpui_system_appearance(cx);
         if self.system_color_scheme_is_light != system_is_light {
             self.system_color_scheme_is_light = system_is_light;
+            self.notify_native_chat_views(cx);
             if settings
                 .object()
                 .get("sidebarTheme")
@@ -74,11 +78,23 @@ impl GhostexGpuiApp {
             }
         }
         let changed = self.refresh_sidebar_runtime_settings_from_shared_settings(&settings, cx);
+        if changed {
+            self.notify_native_chat_views(cx);
+        }
         let appearance_settings_changed = changed && {
             let previous_settings =
                 serde_json::from_str::<serde_json::Value>(&previous_settings_json).ok();
             let appearance_settings_changed = [
                 "sidebarTheme",
+                "darkThemePreset",
+                "lightThemePreset",
+                "themeContrast",
+                "themeSidebarContrast",
+                "themeWorkAreaContrast",
+                "customSidebarTitlebarBackgroundDarknessPercent",
+                "customSidebarTitlebarBackgroundTintColor",
+                "customSidebarTitlebarLightBackgroundLightnessPercent",
+                "customSidebarTitlebarLightBackgroundTintColor",
                 "sessionChatTheme",
                 "terminalColorScheme",
                 "terminalGhosttyLightTheme",
@@ -251,19 +267,6 @@ impl GhostexGpuiApp {
         if let Some(sidebar) = self.sidebar.clone() {
             sidebar.update(cx, |surface, _| {
                 surface.refresh_sidebar_gxserver_bootstrap(next_bootstrap.clone());
-            });
-        }
-        /*
-        CDXC:SessionChat 2026-07-31:
-        Session Chat surfaces carry either the local loopback bootstrap or the
-        owning remote machine's loopback SSH-tunnel bootstrap. Refresh each
-        surface from its session identity so a local bootstrap replay cannot
-        redirect an already-open remote chat to the local daemon.
-        */
-        for (session_id, surface) in &self.agents_chat_surfaces {
-            let bootstrap = self.agents_session_chat_gxserver_bootstrap(*session_id);
-            surface.update(cx, |surface, _| {
-                surface.refresh_session_chat_gxserver_bootstrap(bootstrap);
             });
         }
         self.reconcile_agents_pane_surfaces(cx);
@@ -441,15 +444,15 @@ impl GhostexGpuiApp {
         sidebar.update(cx, |surface, _| surface.execute_app_owned_script(&script))
     }
 
-    /// CDXC:Spaces 2026-08-27:
-    /// The New/Edit Space dialog's confirm and delete. The dialog is an app-modal
-    /// window, so its result has to cross back into the sidebar page — and it is
-    /// SidebarApp, not Rust, that owns the Space document, so this forwards the
-    /// user's field values verbatim under the inbound
-    /// `applySidebarSpaceEditorResult` type and applies nothing itself. Only
-    /// bounded metadata crosses: the mode enum, a Space id, a name, an icon id, a
-    /// color, an optional member id, and the owning machine id — never a Space
-    /// document, a project path, or daemon state.
+    /// CDXC:Spaces 2026-09-21 WHY:
+    /// The New/Edit Space dialog's confirm and delete. The dialog is an app-modal window, so its
+    /// result has to cross back, and only bounded metadata does: the mode enum, a Space id, a name,
+    /// an icon id, a colour, an optional member id and the owning machine id, never a Space
+    /// document, a project path or daemon state. Supersedes `CDXC:Spaces 2026-08-27`'s placement,
+    /// which said SidebarApp owns the Space document: for THIS COMPUTER the app owns it now
+    /// (gx_store/space_editor.rs) and the page is only told, so its Space selection and its
+    /// projection stay in step. A REMOTE machine's document is still the page's, because
+    /// `updateRemoteSidebarSpaces` is a direct call down that machine's tunnel.
     pub(crate) fn forward_gpui_sidebar_space_editor_result_to_sidebar(
         &mut self,
         command: &serde_json::Map<String, serde_json::Value>,
@@ -486,12 +489,20 @@ impl GhostexGpuiApp {
                 message.insert(field.to_string(), serde_json::json!(value));
             }
         }
+        // Deleting the Space a section is filtered by leaves that section naming a Space that is
+        // gone, and the sidebar's own state is the store's since M5 piece 7c
+        // (gx_store/sidebar_ui_paths.rs).
+        self.gx_store_note_sidebar_space_editor_result(&message, cx);
+        // The document edit itself, for this computer. The page is still told, because it keeps its
+        // own Space selection and draws its own projection until that projection is deleted; what
+        // it no longer does is write the document, so there is one writer.
+        self.gx_store_run_space_editor_result(&message, cx);
         self.dispatch_gpui_sidebar_host_message(serde_json::Value::Object(message), cx)
     }
 
     /// CDXC:Spaces 2026-09-15 DECISION:
     /// User: a project added through the Add Project dialog joins the Space that is open in the sidebar and goes to the top of it.
-    /// SidebarApp owns the Space document and the selected Space, so only the added project's raw id and the owning machine id cross, under the inbound `assignAddedProjectToSelectedSpace` type, and nothing is applied here.
+    /// The app applies both halves for THIS COMPUTER (gx_store/added_project.rs) and still tells the sidebar page, which keeps them for a remote machine and keeps its own selected Space; only the added project's raw id and the owning machine id cross under the inbound `assignAddedProjectToSelectedSpace` type.
     /// It must be dispatched before the project activation so the membership exists when the activation reveal resolves the project's Space.
     pub(crate) fn forward_gpui_added_project_to_sidebar(
         &mut self,
@@ -515,9 +526,11 @@ impl GhostexGpuiApp {
             "type".to_string(),
             serde_json::json!("assignAddedProjectToSelectedSpace"),
         );
-        if let Some(machine_id) = remote_machine_id.and_then(bounded) {
+        let remote_machine_id = remote_machine_id.and_then(bounded);
+        if let Some(machine_id) = &remote_machine_id {
             message.insert("remoteMachineId".to_string(), serde_json::json!(machine_id));
         }
+        self.gx_store_note_added_project(&project_id, remote_machine_id.as_deref(), cx);
         self.dispatch_gpui_sidebar_host_message(serde_json::Value::Object(message), cx)
     }
 
@@ -935,7 +948,11 @@ impl GhostexGpuiApp {
                 .spawn(async move { gpui_os_integration_resolved_terminal_cwd(cwd) })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.switch_workarea_from_hotkey(TitlebarMode::Agents, window, cx);
+                // CDXC:Workarea 2026-09-20 WHY:
+                // "Open Terminal" used to switch the app to Agents so the new terminal was on
+                // screen. The sessions column is always on screen now, so it lands there without
+                // closing whatever view the user had open.
+                let _ = window;
                 let mut message = serde_json::json!({
                     "action": "createQuickTerminal",
                     "cwd": resolved_cwd,
@@ -1153,6 +1170,47 @@ impl GhostexGpuiApp {
         &mut self,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.pick_image_for_app_modal(
+            |path| {
+                serde_json::json!({
+                    "path": path,
+                    "type": "terminalBackgroundImageFilePicked",
+                })
+            },
+            cx,
+        );
+    }
+
+    /// Settings -> Window glass -> Custom image: the Choose button of the dark or light picture.
+    pub(crate) fn handle_gpui_pick_window_glass_image_message(
+        &mut self,
+        message: &serde_json::Value,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let appearance = if message["appearance"] == "light" {
+            "light"
+        } else {
+            "dark"
+        };
+        self.pick_image_for_app_modal(
+            move |path| {
+                serde_json::json!({
+                    "appearance": appearance,
+                    "path": path,
+                    "type": "windowGlassImageFilePicked",
+                })
+            },
+            cx,
+        );
+    }
+
+    /// A native image dialog whose picked absolute path is posted back to the open app-modal
+    /// window as the message `reply` builds.
+    fn pick_image_for_app_modal(
+        &mut self,
+        reply: impl FnOnce(String) -> serde_json::Value + 'static,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -1166,14 +1224,9 @@ impl GhostexGpuiApp {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
+            let message = reply(path.to_string_lossy().into_owned());
             let _ = this.update(cx, |this, cx| {
-                this.dispatch_open_gpui_app_modal_message(
-                    serde_json::json!({
-                        "path": path.to_string_lossy(),
-                        "type": "terminalBackgroundImageFilePicked",
-                    }),
-                    cx,
-                );
+                this.dispatch_open_gpui_app_modal_message(message, cx);
             });
         })
         .detach();
@@ -1491,6 +1544,7 @@ impl GhostexGpuiApp {
         &mut self,
         cx: &mut gpui::Context<Self>,
     ) -> bool {
+        self.schedule_close_terminal_view_if_empty(cx);
         let sessions = self.command_pane.sidebar_command_session_sources(
             self.shell_focus == ShellFocusTarget::CommandPane,
             &self.command_delayed_send_timers,
@@ -1575,42 +1629,6 @@ impl GhostexGpuiApp {
         }
         self.sidebar_agents_delayed_sends_snapshot = snapshot;
         true
-    }
-
-    /*
-    CDXC:Browser 2026-08-18:
-    Record that a newly opened Browser tab should be revealed in the sidebar.
-    Only the tab identity is stored; the reveal itself is sent once the tab has
-    actually been published to the sidebar, so the sidebar never receives a
-    request for a row it cannot resolve. A second open replaces an unsent
-    request because only the newest tab is worth revealing.
-    */
-    pub(crate) fn request_sidebar_browser_tab_reveal(&mut self, tab_id: BrowserTabId) {
-        let Some(project_id) = self.browser_tabs_project_id.clone() else {
-            return;
-        };
-        self.pending_sidebar_browser_tab_reveal =
-            Some(PendingSidebarBrowserTabReveal { project_id, tab_id });
-    }
-
-    pub(crate) fn dispatch_pending_sidebar_browser_tab_reveal(
-        &mut self,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let Some(pending) = self.pending_sidebar_browser_tab_reveal.take() else {
-            return;
-        };
-        self.sidebar_browser_tab_reveal_request_id =
-            self.sidebar_browser_tab_reveal_request_id.wrapping_add(1);
-        let request_id = self.sidebar_browser_tab_reveal_request_id;
-        let script = gpui_sidebar_reveal_browser_tab_script(&serde_json::json!({
-            "projectId": pending.project_id,
-            "requestId": request_id,
-            "tabId": pending.tab_id.0.to_string(),
-        }));
-        if let Some(sidebar) = self.sidebar.clone() {
-            sidebar.update(cx, |surface, _| surface.execute_app_owned_script(&script));
-        }
     }
 
     pub(crate) fn refresh_gpui_sidebar_browser_tabs_if_changed(
@@ -1713,30 +1731,8 @@ impl GhostexGpuiApp {
                     })
             })
             .collect::<Vec<_>>();
-        /*
-        CDXC:Browser 2026-08-18:
-        A reveal may only be sent for a tab this snapshot actually carries;
-        otherwise the sidebar would be asked to expand and scroll to a row it
-        has never been told about. A pending reveal whose tab is missing from a
-        published snapshot is dropped, because the tab it named is gone.
-        */
-        let pending_reveal_is_published = self
-            .pending_sidebar_browser_tab_reveal
-            .as_ref()
-            .is_some_and(|pending| {
-                let pending_tab_id = pending.tab_id.0.to_string();
-                tabs.iter().any(|tab| {
-                    tab.get("projectId").and_then(serde_json::Value::as_str)
-                        == Some(pending.project_id.as_str())
-                        && tab.get("tabId").and_then(serde_json::Value::as_str)
-                            == Some(pending_tab_id.as_str())
-                })
-            });
         let snapshot = serde_json::Value::Array(tabs).to_string();
         if self.sidebar_browser_tabs_snapshot == snapshot {
-            if pending_reveal_is_published {
-                self.dispatch_pending_sidebar_browser_tab_reveal(cx);
-            }
             return false;
         }
         let Some(sidebar) = self.sidebar.clone() else {
@@ -1747,11 +1743,6 @@ impl GhostexGpuiApp {
             return false;
         }
         self.sidebar_browser_tabs_snapshot = snapshot;
-        if pending_reveal_is_published {
-            self.dispatch_pending_sidebar_browser_tab_reveal(cx);
-        } else {
-            self.pending_sidebar_browser_tab_reveal = None;
-        }
         true
     }
 
@@ -1769,9 +1760,8 @@ impl GhostexGpuiApp {
         idle agent the user is sitting in front of looked retirable.
 
         Rust is the only party that knows what is on screen, so it publishes
-        that set (Agents rendered leaves in Agents mode, companion terminal
-        mount slots in the project-editor modes — chat-mode sessions included,
-        because the tab still owns its pane) and the sweep protects it. The
+        that set (the Agents column's rendered leaves, chat-mode sessions
+        included, because the tab still owns its pane) and the sweep protects it. The
         bridge carries bounded local gxserver session ids only: no titles,
         paths, commands, terminal output, or project bodies.
         */
@@ -2046,16 +2036,24 @@ impl GhostexGpuiApp {
             // The body row sits 1px under the titlebar so panes can own
             // their top edge; carry the titlebar hairline across the divider.
             .border_t_1()
-            .border_color(titlebar_button_border_color())
-            .bg(sidebar_divider_line_color())
-            // The workspace beside the sidebar is often a CEF page (React chat, Browser, Docs), so the
+            .border_color(glass_divider(titlebar_button_border_color()))
+            // Under glass the divider sits on the sidebar's tint (nothing tints the window beneath
+            // it), with its faint line laid over that.
+            .bg(if window_glass_active() {
+                sidebar_glass_tint()
+            } else {
+                sidebar_divider_line_color()
+            })
+            .when(window_glass_active(), |this| {
+                this.child(div().absolute().inset_0().bg(sidebar_divider_line_color()))
+            })
+            // The workspace beside the sidebar is often a CEF page (Browser, Docs), so the
             // whole grab strip lies over the native sidebar.
             .child(resize_rail_deferred_strip(
                 resize_rail_grab_strip(
                     "ghostex-gpui-sidebar-resize-grab-strip",
                     WorkspaceSplitAxis::Horizontal,
                     ResizeRailGrabSide::Leading,
-                    self.resize_rail_drag_active(),
                 )
                 .on_hover(cx.listener(|this, hovered, _, cx| {
                     this.set_sidebar_divider_hovering(*hovered, cx);
@@ -2127,32 +2125,27 @@ impl GhostexGpuiApp {
     ) {
         self.handle_sidebar_drag_move(event, window, cx);
 
-        let hovering = self.sidebar_drag.is_some()
-            || self.sidebar_divider_contains_mouse_position(event, window);
+        let hovering =
+            self.sidebar_drag.is_some() || self.sidebar_divider_contains_mouse_position(event);
         self.set_sidebar_divider_hovering(hovering, cx);
     }
 
-    pub(crate) fn sidebar_divider_contains_mouse_position(
-        &self,
-        event: &MouseMoveEvent,
-        window: &Window,
-    ) -> bool {
-        self.sidebar_divider_contains_position(event.position, window)
+    pub(crate) fn sidebar_divider_contains_mouse_position(&self, event: &MouseMoveEvent) -> bool {
+        self.sidebar_divider_contains_position(event.position)
     }
 
-    pub(crate) fn sidebar_divider_contains_position(
-        &self,
-        position: gpui::Point<Pixels>,
-        window: &Window,
-    ) -> bool {
+    pub(crate) fn sidebar_divider_contains_position(&self, position: gpui::Point<Pixels>) -> bool {
         if !gpui_sidebar_chrome_visible(self.sidebar_collapsed) {
             return false;
         }
         let x = position.x.as_f32();
-        let y = position.y.as_f32();
         let (start_x, end_x) = gpui_sidebar_divider_x_bounds(self.sidebar_width);
 
-        y >= TITLEBAR_HEIGHT && x >= start_x && x <= end_x
+        // CDXC:Sidebar 2026-09-20 WHY:
+        // The divider used to start below the titlebar row. That row is gone, so the body row and
+        // its divider own the window from its top edge down; the header is a child of the
+        // workspace column to the divider's right and never overlaps this band.
+        x >= start_x && x <= end_x
     }
 
     pub(crate) fn handle_sidebar_divider_mouse_down(
@@ -2264,34 +2257,45 @@ impl GhostexGpuiApp {
         self.update_sidebar_reveal(false, false, cx);
     }
 
+    /// CDXC:Sidebar 2026-09-20 DECISION:
+    /// User (ruling 7B, screen 10): edge-hover floating is on all three platforms, not macOS only.
+    /// The gesture, its panel and its dismissal therefore live in `app/floating_reveal/`, which is
+    /// shared; only the host that owns the child window is per platform. This supersedes the
+    /// macOS-only reveal this function used to forward to.
     pub(crate) fn update_sidebar_reveal(
         &mut self,
         requested: bool,
         keep_under_pointer: bool,
         cx: &mut gpui::Context<Self>,
     ) {
-        #[cfg(target_os = "macos")]
-        self.update_native_sidebar_reveal(requested, keep_under_pointer, cx);
-        #[cfg(not(target_os = "macos"))]
-        let _ = (requested, keep_under_pointer, cx);
+        self.update_floating_reveal(requested, keep_under_pointer, cx);
     }
 
-    #[cfg(target_os = "macos")]
-    pub(crate) fn start_sidebar_hover_reveal_polling(&self, cx: &mut gpui::Context<Self>) {
+    /// The gesture's clock. Pointer-leave is the only thing no element can report (the panel covers
+    /// the strip that armed it), so one sweep owns the whole reveal. It tightens to a frame while a
+    /// panel is on screen, because the backends that animate the slide themselves step it here.
+    pub(crate) fn start_sidebar_hover_reveal_polling(
+        &self,
+        window: &gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let window = window.window_handle();
         cx.spawn(async move |this, cx| {
+            let mut interval = SIDEBAR_HOVER_REVEAL_IDLE_POLL;
             loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(60))
-                    .await;
-                if this
-                    .update(cx, |this, cx| {
-                        if this.sidebar_collapsed || this.companion_reveal.is_some() {
-                            this.update_sidebar_cef_surface_visibility(cx);
-                        }
-                    })
-                    .is_err()
-                {
-                    break;
+                cx.background_executor().timer(interval).await;
+                let result = window.update(cx, |_, window, cx| {
+                    this.update(cx, |this, cx| this.poll_floating_reveal(window, cx))
+                });
+                match result {
+                    Ok(Ok(panel_open)) => {
+                        interval = if panel_open {
+                            SIDEBAR_HOVER_REVEAL_ACTIVE_POLL
+                        } else {
+                            SIDEBAR_HOVER_REVEAL_IDLE_POLL
+                        };
+                    }
+                    _ => break,
                 }
             }
         })

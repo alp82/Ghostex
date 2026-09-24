@@ -115,6 +115,7 @@ impl GhostexGpuiApp {
                 | GpuiTitlebarPopupKind::Extensions
                 | GpuiTitlebarPopupKind::Git
                 | GpuiTitlebarPopupKind::Help
+                | GpuiTitlebarPopupKind::More
                 | GpuiTitlebarPopupKind::OpenTargets
         ) && content_height > popup_height;
         let content = self.build_gpui_titlebar_popup_content(
@@ -126,7 +127,8 @@ impl GhostexGpuiApp {
             window,
             cx,
         );
-        let display_id = window.display(cx).map(|display| display.id());
+        let display_id = crate::app::window::popup_frame::display_at(popup_bounds.center(), cx)
+            .or_else(|| window.display(cx).map(|display| display.id()));
         /*
         The dropdown is an exact, owned popup window that stays on the trigger
         window's display. macOS and Windows keep it non-activating so opening a
@@ -145,7 +147,12 @@ impl GhostexGpuiApp {
             is_resizable: false,
             is_minimizable: false,
             titlebar: None,
-            window_background: WindowBackgroundAppearance::Transparent,
+            // Under window glass the dropdown blurs what is behind it, rounded to its 8px panel.
+            window_background: if window_glass_active() {
+                WindowBackgroundAppearance::Blurred
+            } else {
+                WindowBackgroundAppearance::Transparent
+            },
             ..Default::default()
         };
         log_gpui_titlebar_popup_repro(
@@ -161,6 +168,7 @@ impl GhostexGpuiApp {
         let popup_window = match cx.open_window(options, {
             let content = content.clone();
             move |popup_window, cx| {
+                popup_window.set_background_corner_radius(px(8.0));
                 prepare_gpui_titlebar_popup_window_chrome(popup_window);
                 GpuiTitlebarPopupWindow::new(main_app, kind, content, popup_window, cx)
             }
@@ -300,6 +308,36 @@ impl GhostexGpuiApp {
         }
     }
 
+    /// CDXC:Git 2026-09-23 WHY:
+    /// The Git dropdown is a separate native window. Notifying the main window leaves its menu frozen at the loading snapshot until it is reopened.
+    pub(crate) fn refresh_open_git_popup(&self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if !self.titlebar_popup_menu_open(GpuiTitlebarPopupKind::Git) {
+            return;
+        }
+        let Some(popup) = self.titlebar_popup_window else {
+            return;
+        };
+        let content_height = self.titlebar_git_popup_content_height();
+        let bottom_limit = window.bounds().bottom() - px(8.0);
+        let _ = popup.update(cx, |popup, window, cx| {
+            let bounds = window.bounds();
+            let height = px(content_height.min(TITLEBAR_POPUP_MENU_MAX_HEIGHT))
+                .min((bottom_limit - bounds.top()).max(px(TITLEBAR_POPUP_MENU_ROW_HEIGHT)));
+            let width = (bounds.size.width.as_f32() - TITLEBAR_POPUP_MENU_BORDER_CHROME).max(0.0);
+            let max_height = (height.as_f32() - TITLEBAR_POPUP_MENU_BORDER_CHROME).max(0.0);
+            let menu = PopupMenu::build(window, cx, |menu, _, _| {
+                self.build_gpui_titlebar_git_popup_menu(
+                    menu,
+                    width,
+                    max_height,
+                    content_height > height.as_f32(),
+                )
+            });
+            window.resize(size(bounds.size.width, height));
+            popup.replace_menu(menu, window, cx);
+        });
+    }
+
     pub(crate) fn build_gpui_titlebar_popup_content(
         &self,
         kind: GpuiTitlebarPopupKind,
@@ -313,11 +351,18 @@ impl GhostexGpuiApp {
         let _profile = crate::profiling::span(crate::profiling::Metric::PopupBuild);
         match kind {
             GpuiTitlebarPopupKind::ContextMenu => {
-                GpuiTitlebarPopupContent::Menu(PopupMenu::build(window, cx, |menu, _, _| {
+                GpuiTitlebarPopupContent::Menu(PopupMenu::build(window, cx, |menu, window, cx| {
                     self.context_menu
                         .as_ref()
                         .expect("context menu supplied before opening")
-                        .build(menu, menu_width, menu_max_height, menu_scrollable)
+                        .build(
+                            menu,
+                            menu_width,
+                            menu_max_height,
+                            menu_scrollable,
+                            window,
+                            cx,
+                        )
                 }))
             }
             GpuiTitlebarPopupKind::BrowserActions(pane_id) => {
@@ -379,6 +424,16 @@ impl GhostexGpuiApp {
                     )
                 }))
             }
+            GpuiTitlebarPopupKind::More => {
+                GpuiTitlebarPopupContent::Menu(PopupMenu::build(window, cx, |menu, _, _| {
+                    self.build_gpui_titlebar_more_popup_menu(
+                        menu,
+                        menu_width,
+                        menu_max_height,
+                        menu_scrollable,
+                    )
+                }))
+            }
             GpuiTitlebarPopupKind::OpenTargets => {
                 GpuiTitlebarPopupContent::Menu(PopupMenu::build(window, cx, |menu, _, _| {
                     self.build_gpui_open_targets_popup_menu(
@@ -393,12 +448,6 @@ impl GhostexGpuiApp {
                 let snapshot = self.gpui_native_resources_snapshot(cx);
                 GpuiTitlebarPopupContent::Reading(
                     cx.new(|_| GpuiTitlebarReadingPanel::resources(main_app, snapshot)),
-                )
-            }
-            GpuiTitlebarPopupKind::Notifications => {
-                let feed = self.notification_feed_state.clone();
-                GpuiTitlebarPopupContent::Reading(
-                    cx.new(|_| GpuiTitlebarReadingPanel::notifications(main_app, feed)),
                 )
             }
             GpuiTitlebarPopupKind::Tips => {
@@ -420,6 +469,12 @@ impl GhostexGpuiApp {
                         self.titlebar_tips_sidebar_agent_ids.clone(),
                     )
                 }))
+            }
+            GpuiTitlebarPopupKind::Notifications => {
+                let feed = self.notification_feed_state.clone();
+                GpuiTitlebarPopupContent::Reading(
+                    cx.new(|_| GpuiTitlebarReadingPanel::notifications(main_app, feed)),
+                )
             }
             GpuiTitlebarPopupKind::Extensions => {
                 GpuiTitlebarPopupContent::Menu(PopupMenu::build(window, cx, |menu, _, _| {

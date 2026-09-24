@@ -1,5 +1,18 @@
-use super::extension_buttons::TitlebarBadgeButton;
 use crate::*;
+use gpui::FontWeight;
+use gpui::InteractiveElement as _;
+use gpui::IntoElement as _;
+use gpui::MouseButton;
+use gpui::MouseDownEvent;
+use gpui::ParentElement as _;
+use gpui::Styled as _;
+use gpui::div;
+use gpui::img;
+use gpui::prelude::FluentBuilder as _;
+use gpui::px;
+use gpui_component::ElementExt as _;
+use gpui_component::h_flex;
+use gpui_component::v_flex;
 use serde_json::{Value, json};
 use std::{
     sync::{Arc, OnceLock},
@@ -175,6 +188,44 @@ pub(crate) fn claude_headline_windows(windows: &[Value]) -> Vec<&Value> {
         .collect()
 }
 
+/// One account's meter: the provider glyph with the account label on it and the two
+/// tightest numbers beside it, without any of the chrome its host puts around it.
+pub(crate) struct GpuiAccountUsageMeter {
+    pub(crate) id: ExtensionId,
+    pub(crate) codex: bool,
+    pub(crate) indicator: Option<String>,
+    pub(crate) badge_lines: Vec<String>,
+}
+
+/// The badge text size beside a meter's glyph. A host that lines its meters up in columns
+/// needs it, and the renderer below, to agree on how wide a character cell is.
+pub(crate) const ACCOUNT_USAGE_BADGE_TEXT_SIZE: f32 = 9.5;
+
+/// The glyph box drawn beside the badge, and the gap between the two.
+pub(crate) const ACCOUNT_USAGE_BADGE_GLYPH_WIDTH: f32 = 19.2;
+pub(crate) const ACCOUNT_USAGE_BADGE_GAP: f32 = 4.0;
+
+/// The chrome the hosting surface wants around a meter. The meter renderer takes this
+/// rather than reading the titlebar constants, so one implementation serves every host.
+pub(crate) struct GpuiAccountUsageMeterHost {
+    pub(crate) element_id_prefix: &'static str,
+    pub(crate) anchor_key_prefix: &'static str,
+    pub(crate) height: f32,
+    pub(crate) padding_x: f32,
+    pub(crate) corner_radius: f32,
+    /// The meter's resting fill. Hosts that want the meters to read as cards pass a
+    /// visible one; a transparent value leaves the meter on the host's own background.
+    pub(crate) background: gpui::Hsla,
+    pub(crate) hover_background: gpui::Hsla,
+    /// The fill for the meter whose usage popup is open. It must stay distinct from the
+    /// host's own hovered background rather than being swallowed by it.
+    pub(crate) open_background: gpui::Hsla,
+    /// Whether the meter fills the cell it is given instead of hugging its content. The
+    /// meter centres its content either way, so a filled cell centres it in the column.
+    pub(crate) fill_width: bool,
+    pub(crate) scale: f32,
+}
+
 impl GhostexGpuiApp {
     pub(crate) fn sync_titlebar_account_privacy(&self, cx: &mut gpui::Context<Self>) {
         let Some(GpuiTitlebarPopupKind::AccountUsage(id)) =
@@ -316,15 +367,8 @@ impl GhostexGpuiApp {
         }
     }
 
-    /// CDXC:AgentProviders 2026-09-13 DECISION:
-    /// User wants darker Claude/Codex titlebar colors in light mode, superseding the original-color requirement there while retaining the dark palette.
-    /// Keep the account label centered over a 19.2px background icon, with a 9.9px label and 9.5px usage text in the chat indicator’s monospace font. Keep usage percentages and reset counts beside it.
-    /// Account buttons still precede extensions and open their usage popup.
-    pub(crate) fn render_titlebar_account_buttons(
-        &self,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> Vec<gpui::AnyElement> {
+    /// Every account the user asked to see, in the order gxserver publishes them.
+    pub(crate) fn account_usage_meters(&self) -> Vec<GpuiAccountUsageMeter> {
         self.titlebar_accounts
             .iter()
             .filter_map(|account| {
@@ -334,32 +378,185 @@ impl GhostexGpuiApp {
                     "" => text(account, "selector"),
                     value => value,
                 };
-                Some(
-                    self.render_titlebar_badge_button(
-                        TitlebarBadgeButton {
-                            id,
-                            title: format!(
-                                "{} Usage · {}",
-                                if codex { "Codex" } else { "Claude" },
-                                text(&popup_account(account), "displayName")
-                            ),
-                            icon_image: icon(codex),
-                            badge_lines: badge_lines(account),
-                            indicator_color: if codex {
-                                chrome_color(0x7db8fb, 0x285b8c)
-                            } else {
-                                chrome_color(0xa4a8af, 0x9c4328)
-                            },
-                            indicator: (!indicator.is_empty() && indicator != "-")
-                                .then(|| indicator.to_string()),
-                            account: true,
-                        },
-                        window,
-                        cx,
-                    ),
-                )
+                Some(GpuiAccountUsageMeter {
+                    id,
+                    codex,
+                    indicator: (!indicator.is_empty() && indicator != "-")
+                        .then(|| indicator.to_string()),
+                    badge_lines: badge_lines(account),
+                })
             })
             .collect()
+    }
+
+    /// CDXC:AgentProviders 2026-09-20 DECISION:
+    /// User: the account usage meters live at the bottom of the sidebar, not in the titlebar; this supersedes the 2026-09-13 rule that placed them before the extension buttons in the titlebar strip.
+    /// Their shape is unchanged: darker Claude/Codex colors in light mode, the account label centered over a 19.2px background icon, a 9.9px label and 9.5px usage text in the chat indicator's monospace font, and the usage percentages or reset counts beside it. A meter still opens its account's usage popup.
+    /// The host owns the geometry so the meter has one implementation wherever it is drawn.
+    pub(crate) fn render_account_usage_meter(
+        &self,
+        meter: &GpuiAccountUsageMeter,
+        host: &GpuiAccountUsageMeterHost,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        let account_id = meter.id;
+        let open = self.titlebar_popup_menu_open(GpuiTitlebarPopupKind::AccountUsage(account_id));
+        let anchor_state = window.use_keyed_state(
+            format!("{}-{}", host.anchor_key_prefix, account_id.as_str()),
+            cx,
+            |_, _| GpuiTitlebarPopupAnchorState::default(),
+        );
+        let anchor_bounds = anchor_state.read(cx).bounds;
+        let trigger_bounds = anchor_state
+            .read(cx)
+            .trigger_bounds_captured
+            .then_some(anchor_bounds);
+        let badge_lines = meter
+            .badge_lines
+            .iter()
+            .filter(|line| !line.trim().is_empty())
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>();
+        let show_badge = !badge_lines.is_empty();
+        let scale = host.scale;
+        let icon_image = icon(meter.codex);
+        let indicator = meter.indicator.clone();
+        let indicator_color = if meter.codex {
+            chrome_color(0x7db8fb, 0x285b8c)
+        } else {
+            chrome_color(0xa4a8af, 0x9c4328)
+        };
+        let hover_background = host.hover_background;
+        let open_background = host.open_background;
+
+        let glyph = |size: f32| {
+            let size = if indicator.is_some() {
+                ACCOUNT_USAGE_BADGE_GLYPH_WIDTH
+            } else {
+                size
+            } * scale;
+            div()
+                .relative()
+                .size(px(size))
+                .flex()
+                .items_center()
+                .justify_center()
+                .flex_shrink_0()
+                .child(
+                    img(icon_image.clone())
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size(px(size))
+                        .when(indicator.is_some(), |this| this.opacity(0.3)),
+                )
+                .when_some(indicator.clone(), |this, indicator| {
+                    this.child(
+                        div()
+                            .relative()
+                            .text_color(indicator_color)
+                            .text_size(px(9.9 * scale))
+                            .line_height(px(9.9 * scale))
+                            .font_family(ACCOUNT_INDICATOR_FONT_FAMILY)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_center()
+                            .child(indicator),
+                    )
+                })
+        };
+
+        div()
+            .id(format!(
+                "{}-{}",
+                host.element_id_prefix,
+                account_id.as_str()
+            ))
+            .when(!host.fill_width, |this| this.flex_shrink_0())
+            .when(host.fill_width, |this| {
+                this.w_full().min_w_0().overflow_hidden()
+            })
+            .relative()
+            .flex()
+            .h(px(host.height))
+            .px(px(host.padding_x))
+            .rounded(px(host.corner_radius))
+            .items_center()
+            .justify_center()
+            .cursor_default()
+            .bg(host.background)
+            .when(open, |this| this.bg(open_background))
+            .hover(move |this| {
+                if open {
+                    this.bg(open_background)
+                } else {
+                    this.bg(hover_background)
+                }
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
+                    window.prevent_default();
+                    let Some(trigger_bounds) = trigger_bounds else {
+                        window.request_animation_frame();
+                        return;
+                    };
+                    this.open_titlebar_account_usage(account_id, trigger_bounds, window, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    this.show_gpui_titlebar_account_menu(event.position, window, cx);
+                }),
+            )
+            /*
+            CDXC:AgentProviders 2026-09-20 WHY:
+            A press that lands on a meter opens that account's usage popup and then
+            swallows its click, so the sidebar's double-click-to-create-session cannot
+            fire on a meter. The mouse-down still bubbles, so the sidebar menu closes as
+            it does for every other sidebar click.
+            */
+            .on_click(cx.listener(|_, _: &gpui::ClickEvent, _, cx| cx.stop_propagation()))
+            // CDXC:AgentProviders 2026-09-21 DECISION: "please don't show tooltips for the account usage cards at the bottom of the gpui sidebar". A press opens the account's usage popup, which says everything the tooltip did.
+            .on_prepaint({
+                let anchor_state = anchor_state.clone();
+                move |bounds, window, cx| {
+                    let request_frame = anchor_state.update(cx, |state, _| {
+                        let changed = !state.trigger_bounds_captured || state.bounds != bounds;
+                        state.bounds = bounds;
+                        state.trigger_bounds_captured = true;
+                        changed
+                    });
+                    if request_frame {
+                        window.request_animation_frame();
+                    }
+                }
+            })
+            .map(|this| {
+                if show_badge {
+                    this.child(
+                        h_flex()
+                            .gap(px(ACCOUNT_USAGE_BADGE_GAP * scale))
+                            .child(glyph(14.0))
+                            .child(
+                                v_flex()
+                                    .text_size(px(ACCOUNT_USAGE_BADGE_TEXT_SIZE * scale))
+                                    .line_height(px(ACCOUNT_USAGE_BADGE_TEXT_SIZE * scale))
+                                    .font_family(ACCOUNT_INDICATOR_FONT_FAMILY)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(chrome_color(0xb9b9b9, 0x404040))
+                                    .children(badge_lines),
+                            ),
+                    )
+                } else {
+                    this.child(glyph(18.0))
+                }
+            })
+            .into_any_element()
     }
 
     /// CDXC:Titlebar 2026-09-12 DECISION:

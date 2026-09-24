@@ -291,6 +291,8 @@ export interface SessionChatQuestion {
   toolName?: string;
   /** omp's recommended option index: its ask dialog opens with the cursor on this row. */
   recommended?: number;
+  /** True when Claude draws this question beside option previews, where typed text is only a note on a picked option. */
+  previewLayout?: boolean;
   options: SessionChatQuestionOption[];
 }
 
@@ -496,7 +498,12 @@ not.
 export interface SessionChatTerminalNoticeAction {
   id: string;
   label: string;
-  kind: 'switchToTerminal' | 'sendKeys' | 'recoverCodexConversation';
+  /**
+   * `trustAndRemember` is the folder-trust card's second button: gxserver
+   * remembers the session's folders and answers this and every later trust
+   * prompt on them itself, whichever agent asks.
+   */
+  kind: 'switchToTerminal' | 'sendKeys' | 'recoverCodexConversation' | 'trustAndRemember';
   /** Raw bytes for `sendKeys`, written verbatim through answerSessionChatPrompt. */
   send?: string;
 }
@@ -1080,7 +1087,8 @@ export interface GxserverAnswerSessionChatPromptParams {
     | 'terminalDialog'
     | 'asyncQuestion'
     | 'dismissAsyncQuestion'
-    | 'recoverCodexConversation';
+    | 'recoverCodexConversation'
+    | 'trustAndRemember';
   conversationLock?: SessionChatConversationLock;
   questionId?: string;
   dialogId?: string;

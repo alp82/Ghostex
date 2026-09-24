@@ -21,9 +21,29 @@
   border-radius: 10px;
   margin-bottom: calc(0.375rem + 7px);
 }
-/* CDXC:SessionChat 2026-09-12 DECISION: User wants the whole chat diff component background to get slightly lighter on hover, replacing the line-count button's separate hover fill. The card uses the default cursor. */
-.ghostex-chat-file-changes:hover {
-  background: color-mix(in srgb, var(--muted-foreground) 8%, transparent);
+/* CDXC:SessionChat 2026-09-23 DECISION: User: "when i hover over this kind of card, you're making the only middle part change color, I want all of it to change color". A file's hover fill reaches the section's edges: its full width, half the gap to each neighbour, and the section's padding and rounded corners for the first and last file, so a single file lights the whole section. The fill is a pseudo-element under the card's content that also takes the pointer, so the lit area is the area a click toggles, and the layout does not move. Supersedes the 2026-09-22 fill that spread 6px past the card. The card keeps the default cursor. Mirrors apps/desktop/src/app/native_chat/file_change_card.rs. */
+.ghostex-chat-file-change-card.is-expandable {
+  --file-change-card-hover: color-mix(in srgb, #ffffff 60%, transparent);
+  isolation: isolate;
+}
+.ghostex-chat-file-change-card.is-expandable::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -0.375rem -10px;
+}
+.ghostex-chat-file-change-card.is-expandable:first-child::after {
+  top: -0.5rem;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+.ghostex-chat-file-change-card.is-expandable:last-child::after {
+  bottom: -0.5rem;
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+.ghostex-chat-file-change-card.is-expandable:hover::after {
+  background: var(--file-change-card-hover);
 }
 .ghostex-chat-file-changes:has(+ .ghostex-chat-file-changes),
 [data-slot='message-content'] > .ghostex-chat-file-changes:last-child,
@@ -31,16 +51,17 @@
   > .ghostex-chat-file-changes:last-child {
   margin-bottom: 0;
 }
+/* CDXC:Theming 2026-09-22 DECISION: User: the diff cards take from the theme colour too. Steps off the chat background and the muted tone that land on the old #141414 surface, #151515 code, #2b2b2e border and #747475 rail over the neutral dark chat; a tinted preset carries its hue. Mirrors apps/desktop/src/app/native_chat/file_change_card.rs. */
 [data-chat-theme='dark'] .ghostex-chat-file-changes {
-  --file-change-code-background: #151515;
-  --file-change-border: #2b2b2e;
-  --file-change-rail: #747475;
+  --file-change-code-background: color-mix(in srgb, #ffffff 3.5%, var(--background));
+  --file-change-border: color-mix(in srgb, var(--muted-foreground) 20%, transparent);
+  --file-change-rail: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
   --file-change-added: #94caaa;
   --file-change-removed: #e5a0a4;
-  background: #141414;
+  background: color-mix(in srgb, #ffffff 3%, var(--background));
 }
-[data-chat-theme='dark'] .ghostex-chat-file-changes:hover {
-  background: #1b1b1b;
+[data-chat-theme='dark'] .ghostex-chat-file-change-card.is-expandable {
+  --file-change-card-hover: color-mix(in srgb, var(--foreground) 5%, transparent);
 }
 .ghostex-chat-file-change-card {
   display: grid;
@@ -63,6 +84,9 @@
 }
 .ghostex-chat-file-change-card:last-child::before {
   bottom: 0;
+}
+.ghostex-chat-file-change-card.has-preview:not(.is-expanded)::before {
+  display: none;
 }
 .ghostex-chat-file-change-card button {
   border: 0;

@@ -1,5 +1,6 @@
 import { type SidebarThemeSetting } from '../session-grid-contract-core';
 import type { ContentThemeSetting } from '../appearance';
+import type { DarkThemePreset, LightThemePreset } from './titlebar-color';
 import { DEFAULT_COMMANDS_PANEL_HEIGHT_PX } from '../session-grid-contract-session';
 import { type SessionChatThemeSetting } from '../session-chat';
 import { type CompletionSoundPreference, type CompletionSoundSetting } from '../completion-sound';
@@ -9,6 +10,7 @@ import { type PetId } from '../pets';
 import { type SidebarSessionTagListItem } from '../session-tags';
 import { type SessionCardHoverButtonItem } from '../session-card-hover-actions';
 import type { ProjectViewTemplate } from './project-views';
+import type { ProjectWebsiteSettings } from './project-websites';
 import { type GhostexCustomView } from './custom-views';
 import { type GhostexViewScopes } from './view-scopes';
 import { type DiagnosticLoggingSettings } from './diagnostic-logging';
@@ -34,6 +36,43 @@ export type ChatFileOpenView = 'docs' | 'code';
 export type DefaultEditorCommand =
   'code' | 'code-insiders' | 'zed' | 'zeditor' | 'cursor' | 'windsurf' | 'codium' | 'subl' | 'other';
 export type CommandsPanelSide = 'bottom' | 'right';
+export type WindowGlassMode = 'auto' | 'frosted' | 'opaque';
+export type WindowGlassSource = 'wallpaper' | 'desktopAndWindows' | 'customImage';
+export type WindowGlassImagePlacement = 'static' | 'desktop';
+export type PanelAnimationSpeed = 'off' | 'slow' | 'normal' | 'fast';
+export const MIN_WINDOW_GLASS_SIDEBAR_OPACITY_PERCENT = 40;
+export const MAX_WINDOW_GLASS_SIDEBAR_OPACITY_PERCENT = 100;
+export const MIN_WINDOW_GLASS_WORK_AREA_TINT_PERCENT = 0;
+export const MAX_WINDOW_GLASS_WORK_AREA_TINT_PERCENT = 100;
+export const DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_DARK_PERCENT = 80;
+export const DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_LIGHT_PERCENT = 88;
+export const DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_DARK_PERCENT = 88;
+export const DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_LIGHT_PERCENT = 93;
+
+export function clampWindowGlassSidebarOpacityPercent(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.round(
+    Math.min(MAX_WINDOW_GLASS_SIDEBAR_OPACITY_PERCENT, Math.max(MIN_WINDOW_GLASS_SIDEBAR_OPACITY_PERCENT, value))
+  );
+}
+
+export function clampWindowGlassWorkAreaTintPercent(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.round(
+    Math.min(MAX_WINDOW_GLASS_WORK_AREA_TINT_PERCENT, Math.max(MIN_WINDOW_GLASS_WORK_AREA_TINT_PERCENT, value))
+  );
+}
+
+/**
+ * The work area's own tint for a user who set the retired extra-layer slider
+ * (`windowGlassMainOpacity*`), which lay over the sidebar tint: the coverage the two layers
+ * added up to, so the work area looks the same after the tints were made independent.
+ */
+export function migrateWindowGlassWorkAreaTintPercent(sidebarPercent: number, extraPercent: number): number {
+  const sidebar = Math.min(100, Math.max(0, sidebarPercent)) / 100;
+  const extra = Math.min(100, Math.max(0, extraPercent)) / 100;
+  return Math.round((1 - (1 - sidebar) * (1 - extra)) * 100);
+}
 export type SidebarSpaceSwitchBehavior = 'restore' | 'keep';
 export type SidebarVisibilityMemory = 'shared' | 'perView';
 export const MIN_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS = 0;
@@ -109,18 +148,18 @@ export function clampSidebarTooltipDelayMs(value: number): number {
 export type PreferredAgentInterface = 'terminal' | 'chat';
 export type SidebarSettingsPresetId = 'codex' | 'minimal' | 'detailed' | 'recommended';
 export type PromptEditorBackend = 'inherit' | 'monaco';
+/**
+ * CDXC:SessionChat 2026-09-22 WHY:
+ * Temporary. The chat's rules exist twice while the brain moves from the TypeScript bundle running
+ * in QuickJS to the Rust core in `packages/gx-chat-core`, and this picks which one a chat view
+ * creates. It is a developer switch on the Debugging page, not a product choice, and it goes away
+ * with the TypeScript brain once the desktop app runs on `rust` alone.
+ */
+export type ChatBrain = 'quickjs' | 'rust';
 export type SessionTitleGenerationAgent = 'codex' | 'cursor' | 'claude' | 'grok' | 'pi' | 'antigravity' | 'custom';
 export type AppShotsHotkey = 'both-command' | 'both-shift' | 'both-option' | 'double-left-shift' | 'double-left-option';
 export type KeepAwakeDurationMinutes = 0 | 120 | 300;
 export type AutoSleepIdleMinutes = 0 | 5 | 10 | 15 | 30 | 60 | 120 | 300;
-/**
- * CDXC:Theming 2026-08-24:
- * The Codex-style redesign paints its accent text (Automate "Active", unread
- * counts, and upcoming modal accents) from a single user-configurable color.
- * The default is a lighter sky tone than the original hardcoded #38bdf8 so
- * accent text and Settings advanced-row arrows stay readable on dark chrome.
- */
-export const DEFAULT_ACCENT_COLOR = '#86d3f8';
 export const DEFAULT_TERMINAL_PANE_HORIZONTAL_PADDING_PX = 16;
 export const DEFAULT_TERMINAL_PANE_PADDING_PX = 0;
 export const MIN_TERMINAL_PANE_PADDING_PX = 0;
@@ -307,6 +346,12 @@ export type ghostexSettings = {
   kanbanViewTabHidden: boolean;
   automateViewTabHidden: boolean;
   docsViewTabHidden: boolean;
+  terminalViewTabHidden: boolean;
+  storybookViewTabHidden: boolean;
+  linearViewTabHidden: boolean;
+  jiraViewTabHidden: boolean;
+  githubViewTabHidden: boolean;
+  projectWebsiteViews: ProjectWebsiteSettings;
   /**
    * Quick-access switches affect only the matching right-side titlebar button.
    * The menus and commands remain available through their other entry points.
@@ -414,6 +459,8 @@ export type ghostexSettings = {
    */
   analyticsEnabled: boolean;
   debuggingMode: boolean;
+  /** Which chat brain a chat view creates. See {@link ChatBrain}; `quickjs` is the shipped one. */
+  chatBrain: ChatBrain;
   /**
    * CDXC:Diagnostics 2026-06-27-22:07:
    * Debugging Mode no longer acts as the broad disk-logging switch. Routine
@@ -521,8 +568,14 @@ export type ghostexSettings = {
    * view the user never chose.
    */
   preferredAgentInterfaceOverrides: Readonly<Record<string, PreferredAgentInterface>>;
-  /** Duration for sidebar section, group, and project disclosure animations. */
+  /** Duration for sidebar section, group, and project disclosure animations, and for the floating sidebar's slide. */
   sidebarCollapseAnimationDurationMs: number;
+  /**
+   * CDXC:Workarea 2026-09-23 SEE-ALSO: how fast the sidebar, the side panel, the Agents Panel and
+   * the command pane slide open and shut; the user's decision and the durations live in
+   * `apps/desktop/src/app/panel_motion.rs`. macOS Reduce Motion always snaps.
+   */
+  panelAnimationSpeed: PanelAnimationSpeed;
   /** Delay before sidebar hover tooltips appear. */
   sidebarTooltipDelayMs: number;
   /**
@@ -572,6 +625,12 @@ export type ghostexSettings = {
    * The companion and the Commands pane always follow the kind of view (Agents versus the wide views: Browser, Code, Docs, Kanban, Automate, extensions).
    * Whether the sessions sidebar also follows the view is this advanced dropdown; the default keeps one sidebar state everywhere while the per-view model is evaluated.
    * This supersedes the 2026-09-09 decision to remember the sidebar, companion and Commands pane per project and view.
+   *
+   * CDXC:Workarea 2026-09-20 WHY:
+   * The companion clause has no object any more: the sessions column replaced it and is never
+   * hidden. The two layouts survive with their meaning re-read rather than changed — "Agents" is a
+   * window with no view open, "wide" a window with a view panel beside the sessions — which keeps
+   * the decision's own rule intact, because a project switch still cannot move the sidebar.
    */
   sidebarVisibilityMemory: SidebarVisibilityMemory;
   /**
@@ -587,8 +646,6 @@ export type ghostexSettings = {
   sidebarTheme: SidebarThemeSetting;
   /** Follow the app theme, or override chat with Light, Dark, or System. */
   sessionChatTheme: SessionChatThemeSetting;
-  /** Desktop renderer feature flag, applied when the app starts. */
-  sessionChatUseGpui: boolean;
   /** CSS font-family used by chat messages and the prompt composer. */
   sessionChatFontFamily: string;
   /** Default zoom percentage for the desktop chat interface. */
@@ -611,8 +668,10 @@ export type ghostexSettings = {
    * User: file edits default to a single collapsed row; Chat settings can opt into seven-line previews.
    */
   sessionChatFileEditPreviews: boolean;
-  /** See the CDXC:SessionChat 2026-09-19 decision in session-chat-presentation/model-picker.ts. */
-  sessionChatModelPicksSessionOnly: boolean;
+  /** CDXC:SessionChat 2026-09-23 DECISION:
+   * User: add a setting that stops the GPUI chat box from animating up and down. While on, scrolling the transcript never collapses the desktop chat box. It shipped on by default while the collapse bounced near the end of the transcript; once that bounce was fixed the user asked for auto collapse to be enabled by default, so the setting now defaults to off.
+   */
+  sessionChatKeepComposerExpanded: boolean;
   /**
    * CDXC:Theming 2026-06-15-11:24:
    * Custom chrome colors are scoped to the sidebar and native titlebar only.
@@ -648,10 +707,21 @@ export type ghostexSettings = {
   customSidebarTitlebarBackgroundDarknessPercent: number;
   customSidebarTitlebarBackgroundColor: string;
   /**
-   * CDXC:Theming 2026-08-24:
-   * Hex accent color published to every React surface as --ghostex-accent.
+   * CDXC:Theming 2026-09-22 DECISION:
+   * User: add contrast and tint for light mode like dark mode, and show each pair only when its new
+   * Light theme / Dark theme dropdown is set to Custom; the dropdowns otherwise offer preset themes.
+   * The dark preset field defaults to Gray, but a saved settings file without it that already carries
+   * non-default contrast or tint values migrates to Custom so the chrome it produced does not change.
+   * The two background color fields hold the effective (preset or custom) chrome for each appearance.
    */
-  accentColor: string;
+  darkThemePreset: DarkThemePreset;
+  lightThemePreset: LightThemePreset;
+  /** CDXC:Theming 2026-09-23 SEE-ALSO: `readThemeContrastPoints` in titlebar-color.ts and `theme_contrast_points` in apps/desktop/src/app/helpers/titlebar.rs. */
+  themeSidebarContrast: number;
+  themeWorkAreaContrast: number;
+  customSidebarTitlebarLightBackgroundTintColor: string;
+  customSidebarTitlebarLightBackgroundLightnessPercent: number;
+  customSidebarTitlebarLightBackgroundColor: string;
   terminalCursorStyle: TerminalCursorStyle;
   terminalCursorStyleBlink: boolean;
   /**
@@ -727,6 +797,35 @@ export type ghostexSettings = {
   workspaceActivePaneBorderColor: string;
   workspaceBackgroundColor: string;
   /**
+   * CDXC:Theming 2026-09-23 SEE-ALSO:
+   * The desktop resolves and paints this in apps/desktop/src/app/helpers/window_glass.rs, which holds the user's decision on what Automatic means.
+   */
+  windowGlass: WindowGlassMode;
+  /**
+   * CDXC:Theming 2026-09-23 SEE-ALSO:
+   * What the glass blurs: only the desktop wallpaper, or everything behind the window. window_glass.rs holds the user's decision and the GPUI macOS window paints it.
+   */
+  windowGlassSource: WindowGlassSource;
+  /**
+   * CDXC:Theming 2026-09-23 SEE-ALSO:
+   * Absolute paths of the pictures Custom image glass shows in dark and light mode (empty: none chosen, the live blur shows); window_glass.rs holds the user's decision and the GPUI macOS window paints them.
+   */
+  windowGlassImageDark: string;
+  windowGlassImageLight: string;
+  /**
+   * CDXC:Theming 2026-09-23 SEE-ALSO:
+   * Whether the Wallpaper only or Custom image picture covers the window and moves with it (static) or stays still against the screen (desktop); window_glass.rs holds the user's decision and the GPUI macOS window places it.
+   */
+  windowGlassImagePlacement: WindowGlassImagePlacement;
+  /**
+   * CDXC:Theming 2026-09-23 SEE-ALSO:
+   * Percent of the desktop each area's own glass tint hides, per appearance: the sidebar and the work area are independent layers, so either can be the darker one. window_glass.rs holds the user's decision and paints them; normalize.ts migrates the retired `windowGlassMainOpacity*` extra layer.
+   */
+  windowGlassSidebarOpacityDark: number;
+  windowGlassWorkAreaTintDark: number;
+  windowGlassSidebarOpacityLight: number;
+  windowGlassWorkAreaTintLight: number;
+  /**
    * CDXC:SessionSleep 2026-06-13-01:44:
    * Sleeping native pane tabs should select their original split pane without
    * starting Ghostty immediately. Keep click-to-wake enabled by default so
@@ -734,19 +833,14 @@ export type ghostexSettings = {
    * pane body.
    */
   clickToWakeSleepingSessions: boolean;
-  /**
-   * CDXC:Workarea 2026-09-04 DECISION:
-   * User: hide the tabs bar above the agents pane when the screen is not split; split panes always show it.
-   * Off by default; the setup wizard offers it right below Terminal Width.
-   */
-  showAgentsPaneTabBarWhenUnsplit: boolean;
   customViews: GhostexCustomView[];
   customViewTemplates: ProjectViewTemplate[];
   /**
-   * CDXC:Extensions 2026-09-18 DECISION:
-   * User: built-in views and extensions get the same "Available in" picker as custom views, so each one can be
-   * limited to selected projects or selected spaces. Keyed by `officialViewScopeKey` / `extensionViewScopeKey`;
-   * a view with no entry is available everywhere.
+   * CDXC:Extensions 2026-09-20 DECISION:
+   * User (ruling 3A): each built-in view and extension carries a default of shown or hidden plus per-project and
+   * per-space overrides, resolved project then space then default, so a view can be hidden in one project without
+   * listing every other one. Supersedes the 2026-09-18 "Available in" allow-list. Keyed by `officialViewScopeKey` /
+   * `extensionViewScopeKey`; a view with no entry is shown everywhere.
    */
   viewScopes: GhostexViewScopes;
   titlebarViewOrder: string[];

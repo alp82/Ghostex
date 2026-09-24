@@ -1,13 +1,5 @@
 import { formatSidebarHotkeyLabel } from '@/packages/core-ui/hotkey-label';
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-  type CSSProperties,
-} from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import { getDefaultSidebarAgentById } from '@/packages/shared/sidebar-agents';
 import { AGENT_LOGOS } from '../agent-logos';
@@ -32,10 +24,7 @@ import {
   modelPickerChooseModel,
   modelPickerChooseEffort,
   modelPickerNextEffortIndex,
-  modelPickerPrimaryScope,
   modelPickerSupportsSessionScope,
-  modelPicksSessionOnly,
-  subscribeModelPicksSessionOnly,
   MODEL_PICKER_DEFAULT_SCOPE_ONLY_REASON,
   type ModelPickerRequest,
   type ModelPickerSelection,
@@ -52,7 +41,7 @@ import type { SessionChatModelSelectionScope } from '@/packages/shared/session-c
  * Keep the concept's rounded tiles, individual model artwork, connecting axes, arrow cues and animated glow, using OpenAI #0069cb and Claude #e85c35.
  * Option+P opens even during a turn and pressing the opening hotkey again cancels; arrows or H/J/K/L preview model and effort, Enter saves, and Escape cancels.
  * Model navigation stops at both ends; axis words are omitted, Sol is a sun, Luna uses the supplied crescent-and-stars artwork, and Sonnet's old quill artwork is replaced.
- * User: hide the effort below the model on wide panes; at 700px or less, show it there and hide the horizontal effort cards.
+ * User: hide the effort below the model on wide panes; at 920px or less (raised from 700px on 2026-09-21 because the two-axis layout shrank too small in narrow session columns), show it there and hide the horizontal effort cards.
  * Narrow panes retain clickable effort arrows beside the selected model; trackpad gestures navigate both axes.
  * User: when height is limited, hide the models above and below the selection, just as narrow panes hide the effort rail.
  * The selected model stays centered with clickable up/down arrows; controls stay at the bottom, and idle cards and background stay subtly animated.
@@ -95,10 +84,10 @@ export function SessionChatModelPicker({
   const effortIndex = request.efforts.findIndex((effort) => effort.value === selection.effort);
   const agent = getDefaultSidebarAgentById(request.provider)!;
   const sessionScope = modelPickerSupportsSessionScope(request.provider);
-  const sessionOnlyPicks = useSyncExternalStore(subscribeModelPicksSessionOnly, modelPicksSessionOnly);
-  const defaultScope = modelPickerPrimaryScope(request.provider, sessionOnlyPicks);
-  const sessionKey = defaultScope === 'session' ? 'Enter' : 'EnterAlternate';
-  const defaultKey = defaultScope === 'default' ? 'Enter' : 'EnterAlternate';
+  // Enter saves the agent's default, Shift+Enter applies to this session alone; see modelPickScope.
+  const defaultScope: SessionChatModelSelectionScope = 'default';
+  const sessionKey: PickerControl = 'EnterAlternate';
+  const defaultKey: PickerControl = 'Enter';
   const {
     narrow,
     viewportHeight,
@@ -145,7 +134,8 @@ export function SessionChatModelPicker({
       setClosing(true);
       timer.current = setTimeout(
         () => (save ? onSave(choice, scope) : onClose()),
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 190
+        // A cancel closes at once (native-model-picker.ts `finish`); only a save animates out.
+        !save || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 190
       );
     };
     // The terminal host must receive durable acceptance before its native window can close.
@@ -195,8 +185,7 @@ export function SessionChatModelPicker({
     if (control === 'ArrowLeft') moveEffort(-1);
     if (control === 'ArrowRight') moveEffort(1);
     if (control === 'Enter') finish(true);
-    if (control === 'EnterAlternate' && sessionScope)
-      finish(true, selection, defaultScope === 'session' ? 'default' : 'session');
+    if (control === 'EnterAlternate' && sessionScope) finish(true, selection, 'session');
     if (control === 'Escape') finish(false);
   };
   useModelPickerWheelNavigation(popup, navigate);
@@ -400,9 +389,9 @@ export function SessionChatModelPicker({
                       {entry.version && <span className='model-picker-model-version'>{entry.version}</span>}
                       {entry.label}
                     </span>
-                    {narrow && offset === 0 && (
+                    {narrow && offset === 0 && request.efforts[effortIndex] && (
                       <span className='model-picker-current-effort' key={selection.effort}>
-                        {request.efforts[effortIndex]?.label ?? 'No effort setting'}
+                        {request.efforts[effortIndex].label}
                       </span>
                     )}
                   </button>
@@ -467,7 +456,7 @@ export function SessionChatModelPicker({
                 </>
               )}
               <span className='model-picker-sr-only' role='status' aria-live='polite'>
-                {model.label}, {request.efforts[effortIndex]?.label ?? 'No effort setting'}
+                {[model.label, request.efforts[effortIndex]?.label].filter(Boolean).join(', ')}
               </span>
             </div>
           </div>
@@ -527,7 +516,7 @@ export function SessionChatModelPicker({
                 aria-describedby={sessionScope ? undefined : 'model-picker-scope-reason'}
                 onClick={() => finish(true, selection, 'session')}
               >
-                <kbd>{sessionKey === 'Enter' ? '↵' : '⇧↵'}</kbd>
+                <kbd>⇧↵</kbd>
                 <span>Use in this session</span>
               </button>
               <button
@@ -536,7 +525,7 @@ export function SessionChatModelPicker({
                 disabled={closing || committing}
                 onClick={() => finish(true, selection, 'default')}
               >
-                <kbd>{defaultKey === 'Enter' ? '↵' : '⇧↵'}</kbd>
+                <kbd>↵</kbd>
                 <span>Set as default</span>
               </button>
               {sessionScope ? null : (

@@ -17,6 +17,8 @@ mod component_store;
 mod ghostty_kit;
 mod ghostty_vt;
 mod hotkey_label;
+#[cfg(target_os = "linux")]
+mod linux_updater;
 mod navigation_history;
 mod notification_feed;
 mod plugins_modal;
@@ -31,8 +33,10 @@ mod terminal_gpui_engine;
 mod terminal_model;
 mod terminal_native_view;
 mod terminal_osc_title;
+mod terminal_scrollbar_reveal;
 mod terminal_surface_host;
 mod terminal_surface_lifecycle;
+mod terminal_wheel;
 mod windows_terminal_backend;
 #[cfg(target_os = "windows")]
 mod windows_updater;
@@ -162,10 +166,14 @@ pub(crate) use crate::app::model::*;
 // the sibling modules that hold `Entity<GhostexGpuiApp>`, and the FFI bridge.
 pub(crate) use crate::app::core::*;
 // CDXC:Extensions 2026-09-18 SEE-ALSO:
-// The per-view "Available in" scope keys are read from workarea.rs and the titlebar modules.
+// The per-view scope keys are read from workarea.rs and the titlebar modules.
 pub(crate) use crate::app::view_scopes::*;
 
 fn main() {
+    #[cfg(windows)]
+    if gpui_run_windows_remote_ssh_askpass() {
+        return;
+    }
     if std::env::var_os("GHOSTEX_CHAT_PREVIEW_STATE").is_some() {
         chat_preview::run();
         return;
@@ -244,6 +252,8 @@ fn main() {
     #[cfg(target_os = "macos")]
     application.on_open_urls(queue_gpui_os_integration_urls);
     application.run(move |cx| {
+        #[cfg(target_os = "windows")]
+        cef::register_windows_shutdown(cx);
         gpui_component::init(cx);
         apply_gpui_component_theme(cx);
         #[cfg(target_os = "macos")]
@@ -275,6 +285,12 @@ fn main() {
                     "ctrl-h"
                 },
                 OpenBrowserHistory,
+                Some(BROWSER_KEY_CONTEXT),
+            ),
+            KeyBinding::new("f5", ReloadFocusedBrowser, Some(BROWSER_KEY_CONTEXT)),
+            gpui_key_binding_from_shared_hotkey(
+                "cmd+r",
+                ReloadFocusedBrowser,
                 Some(BROWSER_KEY_CONTEXT),
             ),
             gpui_key_binding_from_shared_hotkey("cmd+v", PasteIntoFocusedTerminal, None),
@@ -311,7 +327,7 @@ fn main() {
             ),
             gpui_key_binding_from_shared_hotkey("cmd+w", CloseFocusedSurface, None),
             gpui_key_binding_from_shared_hotkey("cmd+b", ToggleGpuiSidebarCollapsed, None),
-            gpui_key_binding_from_shared_hotkey("cmd+alt+b", ToggleProjectEditorCompanion, None),
+            gpui_key_binding_from_shared_hotkey("cmd+alt+b", ToggleViewPanel, None),
             KeyBinding::new(SLEEP_FOCUSED_SESSION_DEFAULT_KEY, SleepFocusedSession, None),
             gpui_key_binding_from_shared_hotkey("cmd+t", NewTerminalTab, None),
             gpui_key_binding_from_shared_hotkey("cmd+d", SplitFocusedTerminalRight, None),
@@ -339,6 +355,14 @@ fn main() {
             ]);
             bindings
         };
+        // CDXC:Clipboard 2026-09-23 DECISION:
+        // User: Ctrl+Shift+V on Windows and Linux terminals uses the same local clipboard paste action, while configured hotkeys keep precedence. Sending raw Ctrl+V instead makes remote PowerShell paste the remote computer's clipboard.
+        #[cfg(not(target_os = "macos"))]
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-shift-v",
+            PasteIntoFocusedTerminal,
+            Some(terminal_element::TERMINAL_KEY_CONTEXT),
+        )]);
         cx.bind_keys(shell_key_bindings);
         // The user's configured hotkey table binds after the base defaults so
         // configured chords win conflicts. Ids dispatch through the shared
@@ -357,6 +381,7 @@ fn main() {
         };
         let options = WindowOptions {
             window_bounds: Some(window_bounds),
+            window_background: window_glass_background_appearance(),
             display_id,
             window_min_size: Some(size(
                 px(GPUI_WINDOW_FRAME_MIN_WIDTH),
@@ -375,11 +400,23 @@ fn main() {
             */
             #[cfg(target_os = "linux")]
             window_decorations: Some(gpui::WindowDecorations::Client),
+            /*
+            CDXC:Titlebar 2026-09-20 WHY:
+            The lights are placed against whatever row owns the window's top-left corner, and that
+            row is no longer the 28px titlebar this offset was measured for. It is the sidebar's
+            35px Search row while the sidebar is docked and the 36px work area header while it is
+            collapsed, and both centre their own contents near y = 18. At the old y = 8 the lights
+            sat three and a half pixels above everything beside them in both states; 11.5 puts a
+            12px light on that same centreline.
+            */
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Ghostex".into()),
                 appears_transparent: true,
-                traffic_light_position: Some(gpui::point(px(11.0), px(8.0))),
+                traffic_light_position: Some(gpui::point(px(11.0), px(11.5))),
             }),
+            // See `window_drag_region`: the top band holds draggable tabs, so the app, not AppKit,
+            // decides which drags there move the window.
+            app_owns_titlebar_drag: true,
             ..Default::default()
         };
 
@@ -525,7 +562,10 @@ fn main() {
                     .detach();
                 });
                 cx.new(|cx| {
-                    let root = Root::new(view, window, cx).bg(workspace_background_color());
+                    // Transparent rather than unset, which would paint the theme's opaque
+                    // background: the app view's root paints the window's fill and follows window
+                    // glass, which this style (set once, here) could not.
+                    let root = Root::new(view, window, cx).bg(gpui::transparent_black());
                     /*
                     Ghostex owns an exact, non-overlapping Linux resize frame
                     inside its main view. Disable gpui-component's generic

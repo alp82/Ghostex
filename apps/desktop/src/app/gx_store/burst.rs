@@ -306,11 +306,20 @@ impl GhostexGpuiApp {
         let Some(told) = local_focus.last_tell.clone() else {
             return;
         };
-        // While a remote session (or another row the store does not hold) has focus, telling the
-        // runtime the last local selection again would pull its focus back to it.
+        // While a remote session (or a row the store does not hold) has focus, telling the runtime
+        // the last local selection again would pull its focus back to it.
+        let remote_focus = self
+            .gx_store
+            .core
+            .focus()
+            .focused_session
+            .as_ref()
+            .is_some_and(|session| !session.machine.is_local());
+        let local_focus = &mut self.gx_store.local_focus;
         if local_focus.confirmed_stamp >= told.stamp
             || local_focus.pending_tell.is_some()
-            || local_focus.foreign_focus
+            || local_focus.drawn_focus.store_rows_unfocused()
+            || remote_focus
         {
             return;
         }
@@ -475,10 +484,6 @@ impl GhostexGpuiApp {
             .any(|pane_id| {
                 self.agents_workspace.active_session_in_pane(pane_id) == Some(shell_session_id)
             })
-            || self
-                .current_project_editor_companion_terminal_body_mount_slots()
-                .iter()
-                .any(|slot_id| slot_id.session_id == shell_session_id)
     }
 
     /// One line per next or previous tab step while the `native.terminal.focus` scenario is on:

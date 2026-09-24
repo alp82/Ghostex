@@ -23,6 +23,7 @@ use crate::app::consts::*;
 use crate::app::element::*;
 use crate::app::helpers::*;
 use crate::app::model::*;
+use crate::app::render::sleeping_card::{sleeping_card, view_card_button, view_card_frame};
 use crate::*;
 
 impl GhostexGpuiApp {
@@ -32,22 +33,27 @@ impl GhostexGpuiApp {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        // CDXC:Workarea 2026-09-20 WHY:
+        // An extension view that loses availability mid-frame closes the panel; the Agents column
+        // beside it is already rendering, so there is nothing to draw in its place here.
         if matches!(mode, TitlebarMode::Extension(_)) && !self.titlebar_mode_available(mode) {
             let _ = self.set_active_mode(TitlebarMode::Agents, window, cx);
-            return self.render_agents_workspace(window, cx);
+            return gpui::div().into_any_element();
         }
         if mode.is_project_editor_mode() && !self.project_editor_shell.is_mode_awake(mode) {
             return self.render_project_editor_sleeping_placeholder(mode, cx);
         }
 
         match mode {
-            TitlebarMode::Agents => self.render_agents_workspace(window, cx),
+            // The Agents workspace is never the view panel's occupant: it is the column beside it.
+            TitlebarMode::Agents => gpui::div().into_any_element(),
             TitlebarMode::Browser => self.render_browser_workspace(window, cx),
+            TitlebarMode::Terminal => self.render_terminal_view_surface(cx),
             TitlebarMode::Source => self.render_source_workarea_surface(cx),
-            TitlebarMode::Kanban => self.render_kanban_workarea_surface(cx),
-            TitlebarMode::Automate => self.render_automate_workarea_surface(cx),
+            TitlebarMode::Kanban => self.render_kanban_workarea_surface(window, cx),
+            TitlebarMode::Automate => self.render_automate_workarea_surface(window, cx),
             TitlebarMode::Manage => self.render_manage_workarea_surface(cx),
-            TitlebarMode::Extension(id) => self.render_extension_workarea_surface(id, cx),
+            TitlebarMode::Extension(id) => self.render_extension_workarea_surface(id, window, cx),
         }
     }
 
@@ -67,7 +73,14 @@ impl GhostexGpuiApp {
             .project_workarea_runtime_cef_surfaces
             .get(&slot_key)
             .is_none_or(|owned| owned.page_ready());
-        div()
+        /*
+        CDXC:Theming 2026-09-23 DECISION:
+        User: "please stop making any of the views have this 6px margin from all sides when we're in glass mode we don't need it". Under window glass these pages, which cannot be see-through, fill the view panel edge to edge like the opaque window. Supersedes the same day's inset solid card.
+
+        CDXC:Theming 2026-09-23 WHY:
+        A windowed CEF page cannot be made transparent (DevTools background override and clearing its layers were both tried) and cannot be rounded either: corner radius and a mask layer on the page's native views, all the way down to Chromium's own, left its corners square. Do not retry those.
+        */
+        let card = div()
             .id(format!(
                 "ghostex-gpui-project-workarea-runtime-cef-surface-{}",
                 slot_key.privacy_label()
@@ -98,8 +111,8 @@ impl GhostexGpuiApp {
                         .inset_0()
                         .child(self.render_view_skeleton(mode)),
                 )
-            })
-            .into_any_element()
+            });
+        card.into_any_element()
     }
 
     pub(crate) fn source_workarea_placeholder_signature(
@@ -219,44 +232,31 @@ impl GhostexGpuiApp {
         self.render_project_editor_placeholder(signature, cx)
     }
 
+    /// Kanban is the native GPUI board in app/native_kanban/ (see the DECISION on
+    /// `render_native_kanban`); the CEF Kanban slot is no longer created on desktop. Contexts with
+    /// no Kanban keep the static placeholder.
     pub(crate) fn render_kanban_workarea_surface(
-        &self,
+        &mut self,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        /*
-        CDXC:Workarea 2026-06-24-10:12:
-        Kanban now checks the permanent app-owned CEF surface map first. When a real Kanban runtime URL has already produced an owned CefSurface and the gate permits replacement, render returns that normal-layout CEF child; otherwise the placeholder remains because real navigable URL authority is absent.
-
-        CDXC:Workarea 2026-06-28-17:09:
-        Kanban render no longer builds source-proof CEF mount objects. The placeholder changes only when the direct bundled runtime URL gate plus an owned normal-layout CefSurface already exist for the current explicit project.
-
-        CDXC:Workarea 2026-06-29-00:02:
-        Kanban has no readiness store in the render path. If the direct URL/owned-CEF gate cannot produce a surface, render the static Kanban placeholder and let the active awake runtime edge try creation.
-        */
-        let slot_key = ProjectWorkareaCefSurfaceSlotKey::Kanban;
-        if let Some(surface) = self.project_workarea_runtime_cef_surface_for_render(slot_key) {
-            return self.render_project_workarea_runtime_cef_surface(slot_key, surface, cx);
+        if let Some(board) = self.render_native_kanban(window, cx) {
+            return board;
         }
         let signature = ProjectEditorPlaceholderSignature::for_mode(TitlebarMode::Kanban)
             .expect("Kanban placeholder signature must exist");
         self.render_project_editor_placeholder(signature, cx)
     }
 
+    /// Automate is the native GPUI page in app/native_automate/ (see the DECISION on its
+    /// `Render`); the CEF Automate slot is no longer created on desktop. Projectless contexts and
+    /// missing Automate identity still show the static placeholder.
     pub(crate) fn render_automate_workarea_surface(
-        &self,
+        &mut self,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        /*
-        CDXC:Automations 2026-07-04-23:18:
-        Automate uses the bundled Kanban/tasks page as a first-party CEF workarea with `surface=automations`, matching macOS. It may replace the placeholder only through the same direct runtime URL plus owned CEF surface gate as Kanban; Quick/projectless contexts and missing Automate identity stay on the static placeholder.
-        */
-        let slot_key = ProjectWorkareaCefSurfaceSlotKey::Automate;
-        if let Some(surface) = self.project_workarea_runtime_cef_surface_for_render(slot_key) {
-            return self.render_project_workarea_runtime_cef_surface(slot_key, surface, cx);
-        }
-        let signature = ProjectEditorPlaceholderSignature::for_mode(TitlebarMode::Automate)
-            .expect("Automate placeholder signature must exist");
-        self.render_project_editor_placeholder(signature, cx)
+        self.render_native_automate_surface(window, cx)
     }
 
     pub(crate) fn render_manage_workarea_surface(
@@ -283,10 +283,14 @@ impl GhostexGpuiApp {
     }
 
     pub(crate) fn render_extension_workarea_surface(
-        &self,
+        &mut self,
         id: ExtensionId,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        if self.website_home_setup_visible(TitlebarMode::Extension(id)) {
+            return self.render_website_home_setup(id, window, cx);
+        }
         let slot_key = ProjectWorkareaCefSurfaceSlotKey::Extension(id);
         if let Some(surface) = self.project_workarea_runtime_cef_surface_for_render(slot_key) {
             return self.render_project_workarea_runtime_cef_surface(slot_key, surface, cx);
@@ -315,15 +319,14 @@ impl GhostexGpuiApp {
             .h_full()
             .items_center()
             .justify_center()
-            .bg(if mode == TitlebarMode::Source {
+            .bg(glass_clear(if mode == TitlebarMode::Source {
                 source_view_background_color()
+            } else if CHROME_LIGHT_APPEARANCE.load(std::sync::atomic::Ordering::Relaxed) {
+                rgb(0xffffff).into()
             } else {
-                if CHROME_LIGHT_APPEARANCE.load(std::sync::atomic::Ordering::Relaxed) {
-                    rgb(0xffffff).into()
-                } else {
-                    workspace_background_color()
-                }
-            })
+                workspace_background_color()
+            }))
+            .p(px(16.0))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
@@ -333,33 +336,22 @@ impl GhostexGpuiApp {
                     cx.notify();
                 }),
             )
-            .child(
-                v_flex()
-                    .max_w(px(430.0))
-                    .min_w_0()
-                    .items_center()
-                    .justify_center()
-                    .px(px(24.0))
-                    .text_center()
-                    .child(
-                        div()
-                            .text_center()
-                            .text_size(px(12.5))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(chrome_color(0xe5e8ec, 0x111111).opacity(0.64))
-                            .child(signature.title),
-                    )
-                    .child(
-                        div()
-                            .mt(px(5.0))
-                            .max_w(px(430.0))
-                            .text_center()
-                            .text_size(px(12.0))
-                            .line_height(px(17.0))
-                            .text_color(chrome_color(0xe5e8ec, 0x111111).opacity(0.64))
-                            .child(signature.message),
+            .child(if mode == TitlebarMode::Browser {
+                self.render_browser_sleeping_card()
+            } else {
+                sleeping_card(
+                    Some(
+                        titlebar_svg_icon(
+                            mode.tab_icon(),
+                            crate::app::render::sleeping_card::SLEEPING_CARD_ICON_SIZE,
+                            chrome_ink().opacity(0.8).into(),
+                        )
+                        .into_any_element(),
                     ),
-            )
+                    mode.tab_label(),
+                    true,
+                )
+            })
             .into_any_element()
     }
 
@@ -386,7 +378,7 @@ impl GhostexGpuiApp {
             return self.render_view_skeleton(mode);
         }
         let mut action_row = h_flex()
-            .mt(px(16.0))
+            .mt(px(20.0))
             .items_center()
             .justify_center()
             .gap(px(8.0));
@@ -416,28 +408,12 @@ impl GhostexGpuiApp {
                 }
             };
             action_row = action_row.child(
-                div()
+                view_card_button(label)
                     .id(id)
-                    .flex()
-                    .h(px(29.0))
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(5.0))
-                    .border_1()
-                    .border_color(rgb(0xffffff).opacity(0.18))
-                    .bg(
-                        if action == ProjectEditorPlaceholderAction::InstallSourceComponent {
-                            rgb(0xffffff).opacity(0.14)
-                        } else {
-                            rgb(0xffffff).opacity(0.08)
-                        },
+                    .when(
+                        action == ProjectEditorPlaceholderAction::InstallSourceComponent,
+                        |this| this.bg(chrome_ink().opacity(0.14)),
                     )
-                    .px(px(12.0))
-                    .text_size(px(12.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(0xffffff).opacity(0.9))
-                    .cursor_pointer()
-                    .hover(|this| this.bg(rgb(0xffffff).opacity(0.18)))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
@@ -486,8 +462,7 @@ impl GhostexGpuiApp {
                                 }
                             }
                         }),
-                    )
-                    .child(label),
+                    ),
             );
         }
         v_flex()
@@ -502,15 +477,13 @@ impl GhostexGpuiApp {
             .h_full()
             .items_center()
             .justify_center()
-            .bg(if mode == TitlebarMode::Source {
+            .bg(glass_clear(if mode == TitlebarMode::Source {
                 source_view_background_color()
+            } else if CHROME_LIGHT_APPEARANCE.load(std::sync::atomic::Ordering::Relaxed) {
+                rgb(0xffffff).into()
             } else {
-                if CHROME_LIGHT_APPEARANCE.load(std::sync::atomic::Ordering::Relaxed) {
-                    rgb(0xffffff).into()
-                } else {
-                    workspace_background_color()
-                }
-            })
+                workspace_background_color()
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
@@ -520,21 +493,29 @@ impl GhostexGpuiApp {
                     cx.notify();
                 }),
             )
+            .p(px(16.0))
+            /*
+            CDXC:Theming 2026-09-23 DECISION:
+            User: a view's startup and status screens ("Preparing Storybook…" with Stop and Command output, errors, setup prompts) appear in a centred card in the Resume card's style: the view's icon, its title and message, and the card's soft buttons.
+            */
             .child(
-                v_flex()
-                    .max_w(px(430.0))
-                    .min_w_0()
-                    .items_center()
-                    .justify_center()
-                    .px(px(24.0))
+                view_card_frame()
+                    .when(project_view, |this| this.w(px(430.0)))
                     .text_center()
+                    .child(titlebar_svg_icon(
+                        mode.tab_icon(),
+                        34.0,
+                        chrome_ink().opacity(0.8).into(),
+                    ))
                     .when_some(title, |this, title| {
                         this.child(
                             div()
+                                .mt(px(8.0))
                                 .text_center()
-                                .text_size(px(12.5))
+                                .text_size(px(15.0))
+                                .line_height(px(21.0))
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(chrome_color(0xe5e8ec, 0x111111).opacity(0.64))
+                                .text_color(chrome_ink().opacity(0.9))
                                 .child(title),
                         )
                     })
@@ -545,13 +526,13 @@ impl GhostexGpuiApp {
                                 .when(project_view, |this| {
                                     this.max_h(px(300.0)).overflow_y_scroll()
                                 })
-                                .when(has_title, |this| this.mt(px(5.0)))
-                                .max_w(px(430.0))
+                                .mt(px(if has_title { 6.0 } else { 10.0 }))
+                                .max_w_full()
                                 .text_center()
                                 .when(project_view, |this| this.text_left())
-                                .text_size(px(12.0))
-                                .line_height(px(17.0))
-                                .text_color(chrome_color(0xe5e8ec, 0x111111).opacity(0.64))
+                                .text_size(px(12.5))
+                                .line_height(px(18.0))
+                                .text_color(chrome_ink().opacity(0.55))
                                 .child(message),
                         )
                     })

@@ -14,8 +14,6 @@ impl GhostexGpuiApp {
                 FirstResponderTarget::CefSurface(
                     FirstResponderCefSurface::BrowserTab(_)
                         | FirstResponderCefSurface::ProjectWorkarea(_)
-                        | FirstResponderCefSurface::ProjectEditorCompanion
-                        | FirstResponderCefSurface::SessionChat(_)
                 )
             ) {
                 return;

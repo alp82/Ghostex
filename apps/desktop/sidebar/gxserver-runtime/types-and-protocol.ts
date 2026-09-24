@@ -31,6 +31,7 @@ import type {
   SidebarSessionGroup,
   SidebarToExtensionMessage,
 } from '@/packages/shared/session-grid-contract';
+import type { ModelPickerProvider } from '@/packages/shared/session-chat-presentation/model-picker';
 import type { SidebarGitAction, SidebarGitChangedFile, SidebarGitState } from '@/packages/shared/sidebar-git';
 
 export type GpuiGxserverBootstrap = {
@@ -169,7 +170,6 @@ export type GhostexGpuiSidebarBridge = {
    * sidebar rows are keyed by is derived here, in the same place that builds
    * those rows, so Rust never has to know the sidebar's id format.
    */
-  onRevealBrowserTab?: (payload: unknown) => void;
   gxserverBootstrap?: GpuiGxserverBootstrap;
   onCommandPaletteRunSidebarCommand?: (payload: unknown) => void;
   onCommandPaletteSessionFocus?: (payload: unknown) => void;
@@ -186,6 +186,14 @@ export type GhostexGpuiSidebarBridge = {
   onResourcesSnapshotResult?: (payload: unknown) => void;
   onProjectBoardConversationRequest?: (payload: unknown) => void;
   onRuntimeSettingsChanged?: (runtimeSettings: GpuiSidebarRuntimeSettingsSnapshot) => void;
+  /**
+   * CDXC:Sidebar 2026-09-21 WHY:
+   * The Rust store's direct route for a sidebar command this runtime still owns (focus, session
+   * groups, worktrees, git, remote machines, transcripts). It replaces the hop through the sidebar
+   * page's `onNativeSidebarCommand`, which is being deleted with that page; anything Rust sends
+   * before this is installed is parked on `pendingSidebarCommands` and drained here.
+   */
+  onSidebarCommand?: (payload: unknown) => void;
   onSidebarHostMessage?: (message: GpuiSidebarHostMessage) => void;
   /**
    * CDXC:SavedPrompts 2026-08-24:
@@ -233,6 +241,7 @@ export type GhostexGpuiSidebarBridge = {
   pendingNativeAppShots?: unknown[];
   pendingOsIntegrationCommands?: unknown[];
   pendingResourcesSnapshotResults?: unknown[];
+  pendingSidebarCommands?: unknown[];
   pendingProjectBoardConversationRequests?: unknown[];
   pendingStashedPromptSessionJumps?: unknown[];
   pendingStatusPetActivations?: unknown[];
@@ -578,6 +587,8 @@ export type GpuiPendingRemoteGxserverRequest = {
 
 export type GpuiGxserverCreatedSessionResult = {
   session?: {
+    /** The created row's agent, so a restore can resolve its Default Agent View before anything is woken. */
+    agentId?: string;
     projectId?: string;
     sessionId?: string;
   };
@@ -635,6 +646,15 @@ export type GpuiExportTranscriptRequestContext = {
   /** Identifies this exact dialog open across close/reopen races. */
   requestId: string;
   sessionId: string;
+  /** Set when the chat model picker opened the dialog by picking another agent's model. */
+  handoffTarget?: GpuiHandoffModelTarget;
+};
+
+/** The model the chat model picker chose for the follow-up session, and the agent family that offers it. */
+export type GpuiHandoffModelTarget = {
+  provider: ModelPickerProvider;
+  model: string;
+  effort: string;
 };
 
 export type GpuiExportedTranscriptResult = {
@@ -648,6 +668,7 @@ export type GpuiExportedTranscriptResult = {
   requestId: string;
   /** Absent for the local daemon; set for a remote machine's own daemon. */
   machineId?: string;
+  handoffTarget?: GpuiHandoffModelTarget;
 };
 
 export type GpuiProjectDiffStatsRefreshTarget =
@@ -807,6 +828,13 @@ export type GpuiWorkspaceTerminalRuntimeActionPayload =
       agentId: string;
       projectId: string;
       sessionId: string;
+    }
+  | {
+      /** The chat model picker chose a model that belongs to another agent than the session's. */
+      action: 'handoffToModel';
+      projectId: string;
+      sessionId: string;
+      target: GpuiHandoffModelTarget;
     }
   | { action: 'sleepAllDaemonSessions' }
   | { action: 'sleepInactiveSessions' };

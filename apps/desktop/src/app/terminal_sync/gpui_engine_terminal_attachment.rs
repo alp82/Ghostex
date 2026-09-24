@@ -13,35 +13,90 @@ use crate::app::helpers::*;
 use crate::app::model::*;
 use crate::*;
 
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct PickTerminalAttachmentKind {
+    pub(crate) target: GpuiTerminalAttachmentTarget,
+    pub(crate) runtime_session_id: AgentsTerminalRuntimeSessionId,
+    pub(crate) directories_only: bool,
+}
+
 impl GhostexGpuiApp {
     pub(crate) fn gpui_terminal_attachment_target_for_engine_target(
         &self,
         target: GpuiEngineTerminalEventTarget,
     ) -> Option<GpuiTerminalAttachmentTarget> {
-        let GpuiEngineTerminalEventTarget::Agents(session_id) = target else {
-            return Some(GpuiTerminalAttachmentTarget::Terminal(target));
-        };
-        let Some(slot_id) = self
-            .current_project_editor_companion_terminal_body_mount_slots()
-            .into_iter()
-            .find(|slot_id| slot_id.session_id == session_id)
-        else {
-            if self.active_mode.is_project_editor_mode() {
-                return None;
-            }
-            return Some(GpuiTerminalAttachmentTarget::Terminal(target));
-        };
-        let session_key = self.project_editor_companion_terminal_key_for_slot(slot_id)?;
-        Some(GpuiTerminalAttachmentTarget::ProjectEditorCompanion {
-            slot_id,
-            session_key,
-        })
+        Some(GpuiTerminalAttachmentTarget::Terminal(target))
     }
 
     pub(crate) fn request_gpui_engine_terminal_attachment_paths(
         &mut self,
         target: GpuiTerminalAttachmentTarget,
         runtime_session_id: AgentsTerminalRuntimeSessionId,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if cfg!(target_os = "linux") {
+            cx.spawn(async move |this, cx| {
+                let _ = this.update_in(cx, |_, window, cx| {
+                    crate::app::context_menu::GpuiContextMenu::new()
+                        .menu(
+                            "Images or files…",
+                            Box::new(PickTerminalAttachmentKind {
+                                target: target.clone(),
+                                runtime_session_id,
+                                directories_only: false,
+                            }),
+                        )
+                        .menu(
+                            "Folders…",
+                            Box::new(PickTerminalAttachmentKind {
+                                target,
+                                runtime_session_id,
+                                directories_only: true,
+                            }),
+                        )
+                        .show_for_app(cx.entity(), window.mouse_position(), window, cx);
+                });
+            })
+            .detach();
+            return;
+        }
+        self.request_gpui_engine_terminal_attachment_paths_for_kind(
+            target,
+            runtime_session_id,
+            None,
+            cx,
+        );
+    }
+
+    /// CDXC:PlatformSupport 2026-09-23 WHY:
+    /// XDG file chooser portals have mutually exclusive file and directory modes. Linux attachment menus choose the mode before opening the portal; passing both flags hides every file in KDE's folder chooser.
+    pub(crate) fn attachment_path_prompt_options(
+        multiple: bool,
+        directories_only: Option<bool>,
+    ) -> gpui::PathPromptOptions {
+        let directories_only =
+            directories_only.or_else(|| cfg!(target_os = "linux").then_some(false));
+        gpui::PathPromptOptions {
+            files: directories_only != Some(true),
+            directories: directories_only != Some(false),
+            multiple,
+            prompt: Some(
+                match directories_only {
+                    Some(true) => "Attach Folders",
+                    Some(false) => "Attach Images or Files",
+                    None => "Attach an Image, File, or Folder",
+                }
+                .into(),
+            ),
+        }
+    }
+
+    pub(crate) fn request_gpui_engine_terminal_attachment_paths_for_kind(
+        &mut self,
+        target: GpuiTerminalAttachmentTarget,
+        runtime_session_id: AgentsTerminalRuntimeSessionId,
+        directories_only: Option<bool>,
         cx: &mut gpui::Context<Self>,
     ) {
         let Some((origin_view_id, lease)) = (match target.engine_target() {
@@ -54,12 +109,10 @@ impl GhostexGpuiApp {
         .map(|record| (record.view.entity_id(), record.pin_viewer())) else {
             return;
         };
-        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: false,
-            prompt: Some("Attach File or Folder".into()),
-        });
+        let receiver = cx.prompt_for_paths(Self::attachment_path_prompt_options(
+            false,
+            directories_only,
+        ));
         cx.spawn(async move |this, cx| {
             let _lease = lease;
             let Ok(Ok(Some(paths))) = receiver.await else {
@@ -99,20 +152,13 @@ impl GhostexGpuiApp {
             GpuiTerminalAttachmentTarget::Terminal(GpuiEngineTerminalEventTarget::Agents(
                 session_id,
             )) => self
-                .remote_attach_sessions
-                .iter()
-                .find_map(|(key, mapped_session_id)| {
-                    (mapped_session_id == session_id).then(|| key.remote_machine_id.clone())
-                }),
-            GpuiTerminalAttachmentTarget::ProjectEditorCompanion {
-                session_key: GpuiWorkspaceTerminalSessionKey::Remote(remote_key),
-                ..
-            } => Some(remote_key.remote_machine_id.clone()),
-            GpuiTerminalAttachmentTarget::Terminal(GpuiEngineTerminalEventTarget::Command(_))
-            | GpuiTerminalAttachmentTarget::ProjectEditorCompanion {
-                session_key: GpuiWorkspaceTerminalSessionKey::Local(_),
-                ..
-            } => None,
+                .agents_chat_remote_key_for_session(*session_id)
+                .map(|key| key.remote_machine_id),
+            GpuiTerminalAttachmentTarget::Terminal(GpuiEngineTerminalEventTarget::Command(
+                session_id,
+            )) => self
+                .command_remote_action_session_for_command_tab(*session_id)
+                .map(|reference| reference.remote_machine_id.clone()),
         };
         let Some(remote_machine_id) = remote_machine_id else {
             match gpui_local_terminal_attachment_reference(path.as_path()) {
@@ -235,14 +281,6 @@ impl GhostexGpuiApp {
         }
         match target {
             GpuiTerminalAttachmentTarget::Terminal(_) => true,
-            GpuiTerminalAttachmentTarget::ProjectEditorCompanion {
-                slot_id,
-                session_key,
-            } => {
-                self.project_editor_companion_terminal_key_for_slot(*slot_id)
-                    .as_ref()
-                    == Some(session_key)
-            }
         }
     }
 
@@ -298,8 +336,7 @@ impl GhostexGpuiApp {
     ) -> Result<(), String> {
         match side_effect {
             ManageFilesBridgeSideEffect::CopyFullPath(path) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(path));
-                gpui_play_copy_sound();
+                gpui_copy_to_clipboard(ClipboardItem::new_string(path), cx);
                 Ok(())
             }
             ManageFilesBridgeSideEffect::RevealInFinder(path) => gpui_reveal_path_in_finder(&path),
@@ -320,11 +357,6 @@ impl GhostexGpuiApp {
 
     pub(crate) fn manage_session_context_target_session_id(&self) -> Option<TerminalSessionId> {
         let mut candidates = Vec::new();
-        if let Some(key) = self.project_editor_companion_active_terminal_key()
-            && let Some(session_id) = self.shell_session_for_workspace_terminal_key(&key)
-        {
-            candidates.push(session_id);
-        }
         if let Some(session_id) = self.focused_agents_or_companion_shell_session_id() {
             candidates.push(session_id);
         }
@@ -373,19 +405,11 @@ impl GhostexGpuiApp {
         {
             return false;
         }
-        let companion_focused = matches!(
-            self.focused_terminal_text_mount_target(),
-            Some(FocusedTerminalTextMountTarget::ProjectEditorCompanion(slot_id))
-                if slot_id.session_id == shell_session_id
-        );
         let pane_id = self.agents_workspace.pane_id_for_session(shell_session_id);
-        if !companion_focused {
+        {
             let Some(pane_id) = pane_id else {
                 return false;
             };
-            if reveal {
-                self.change_active_mode_with_pane_state(TitlebarMode::Agents, cx);
-            }
             self.agents_workspace.select_tab(pane_id, shell_session_id);
             if reveal {
                 self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
@@ -404,11 +428,7 @@ impl GhostexGpuiApp {
         }
         #[cfg(target_os = "macos")]
         {
-            let inserted = if companion_focused {
-                self.send_text_bytes_to_focused_project_editor_companion_terminal_surface(
-                    prompt.as_bytes(),
-                )
-            } else if let Some(pane_id) = pane_id {
+            let inserted = if let Some(pane_id) = pane_id {
                 let slot_id = AgentsTerminalBodyMountSlotId {
                     pane_id,
                     session_id: shell_session_id,
@@ -469,21 +489,14 @@ impl GhostexGpuiApp {
             }
             return self.insert_prompt_into_session_chat(shell_session_id, content, cx);
         }
-        // A session focused in a project-editor companion pane receives the
-        // paste in place; switching the app into the Agents view just to
-        // reveal a tab the user is already looking at would lose their editor
-        // context.
-        let companion_focused = matches!(
-            self.focused_terminal_text_mount_target(),
-            Some(FocusedTerminalTextMountTarget::ProjectEditorCompanion(slot_id))
-                if slot_id.session_id == shell_session_id
-        );
+        // CDXC:Workarea 2026-09-20 WHY:
+        // The paste reveals the session in the Agents column, which is on screen beside whatever the
+        // view panel shows, so it no longer has to leave the user's view to do it.
         let pane_id = self.agents_workspace.pane_id_for_session(shell_session_id);
-        if !companion_focused {
+        {
             let Some(pane_id) = pane_id else {
                 return false;
             };
-            self.change_active_mode_with_pane_state(TitlebarMode::Agents, cx);
             self.agents_workspace.select_tab(pane_id, shell_session_id);
             self.focus_shell_target(ShellFocusTarget::AgentsPane(pane_id), cx);
             self.scroll_workspace_pane_active_tab(pane_id);
@@ -499,18 +512,16 @@ impl GhostexGpuiApp {
             return true;
         }
         #[cfg(target_os = "macos")]
-        if !companion_focused {
-            if let Some(pane_id) = pane_id {
-                let slot_id = AgentsTerminalBodyMountSlotId {
-                    pane_id,
-                    session_id: shell_session_id,
-                };
-                if self.agents_terminal_ghostty_surface_matches(slot_id)
-                    && self.send_text_bytes_to_focused_agents_terminal_surface(content.as_bytes())
-                {
-                    cx.notify();
-                    return true;
-                }
+        if let Some(pane_id) = pane_id {
+            let slot_id = AgentsTerminalBodyMountSlotId {
+                pane_id,
+                session_id: shell_session_id,
+            };
+            if self.agents_terminal_ghostty_surface_matches(slot_id)
+                && self.send_text_bytes_to_focused_agents_terminal_surface(content.as_bytes())
+            {
+                cx.notify();
+                return true;
             }
         }
         false
@@ -652,6 +663,6 @@ impl GhostexGpuiApp {
         CDXC:Workarea 2026-07-03:
         Workspace/Agents tab drags treat mounted Agents terminals like a mode switch away from Agents: Running host reconciliation, parked-owner reattach, and ready-startup handoff promotion all wait until the drag ends. This hides the native Ghostty child views for the whole drag so the GPUI drag ghost and pane-body drop-edge bands stay visible, while parked owners keep every runtime surface alive for hide/show-only restore on drop or cancel. Startup candidates, launch plans, and hidden startup hosts intentionally keep running during a drag; only promotion to a visible Running host is deferred.
         */
-        self.active_mode == TitlebarMode::Agents && !self.workspace_tab_drag_active
+        self.agents_workspace_visible() && !self.workspace_tab_drag_active
     }
 }

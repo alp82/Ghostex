@@ -10,6 +10,7 @@ use gpui::{
     AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement,
     StatefulInteractiveElement, Styled, div, img, px,
 };
+use gpui_component::tooltip::{ManagedTooltipExt as _, ManagedTooltipPlacement};
 use gpui_component::{ElementExt as _, h_flex};
 use serde_json::{Value, json};
 use std::{cell::Cell, rc::Rc};
@@ -34,6 +35,17 @@ impl GhostexGpuiApp {
         let menu = group.menu.clone();
         let scale = appearance.scale;
         let hovered = self.native_sidebar.hovered_group.as_ref() == Some(&id);
+        let tooltip_span = self
+            .native_sidebar
+            .group_bounds
+            .get(&id)
+            .map(|header| super::tooltips::SidebarTooltipSpan {
+                left: header.left().as_f32(),
+                right: header.right().as_f32(),
+            })
+            .unwrap_or_else(|| {
+                super::tooltips::SidebarTooltipSpan::sidebar(self.sidebar_width, scale)
+            });
         let icon_image = group
             .project_context
             .as_ref()
@@ -82,19 +94,24 @@ impl GhostexGpuiApp {
                 .id(format!("native-project-title-{id}"))
                 .flex_1()
                 .min_w_0()
-                .text_ellipsis()
+                .h_full()
+                .flex()
+                .items_center()
                 .font_weight(gpui::FontWeight::LIGHT)
-                .child(group.title.clone())
+                .child(div().min_w_0().text_ellipsis().child(group.title.clone()))
                 .when_some(tooltip, |title, tooltip| {
                     title.when(
                         self.native_sidebar.pointer_inside
                             && self.native_sidebar.menu.is_none()
                             && !cx.has_active_drag(),
                         |row| {
-                            row.tooltip_show_delay(appearance.tooltip_delay).tooltip(
+                            row.managed_discrete_tooltip_with_placement(
+                                tooltip_span.placement(),
+                                appearance.tooltip_delay,
                                 move |window, cx| {
                                     super::tooltips::sidebar_tooltip(
                                         tooltip.clone(),
+                                        tooltip_span,
                                         scale,
                                         window,
                                         cx,
@@ -106,7 +123,7 @@ impl GhostexGpuiApp {
                 })
                 .into_any_element()
         };
-        let mut actions = group.header_actions.clone();
+        let mut actions = (*group.header_actions).clone();
         if group.show_list_toggle {
             actions.insert(0, json!({ "label": if group.expanded { "Compact" } else { "Full" }, "icon": if group.expanded { "chevron-up" } else { "chevron-down" }, "command": { "type": "toggleList", "groupId": group.storage_id } }));
         }
@@ -114,6 +131,9 @@ impl GhostexGpuiApp {
         // User: the project header row has the same insets, side padding, rounding, and hover fill as a session card.
         h_flex()
             .id(format!("native-sidebar-project-{id}"))
+            .role(gpui::Role::TreeItem)
+            .aria_label(group.title.clone())
+            .aria_expanded(!group.collapsed)
             .relative()
             .h(px(30.0 * scale))
             .mx(px(3.0 * scale))
@@ -124,11 +144,18 @@ impl GhostexGpuiApp {
             .cursor_default()
             .when(group.is_stale, |row| row.opacity(0.55))
             .hover(|row| row.bg(appearance.session_hover))
+            .child(self.native_sidebar.header_hover.probe(hover_id))
             // CDXC:Projects 2026-09-19 DECISION:
             // User: clicking the chevron left of the project header expands/collapses the project, same as clicking the header.
             .child(
                 div()
                     .id(format!("native-project-chevron-{id}"))
+                    .role(gpui::Role::Button)
+                    .aria_label(if group.collapsed {
+                        "Expand project"
+                    } else {
+                        "Collapse project"
+                    })
                     .absolute()
                     .left(px(-18.0 * scale))
                     .top(px(7.0 * scale))
@@ -198,9 +225,16 @@ impl GhostexGpuiApp {
             .when(hovered, |row| {
                 row.child(
                     h_flex()
+                        .id(format!("native-project-actions-{id}"))
                         .h_full()
                         .gap(px(2.0 * scale))
                         .flex_shrink_0()
+                        // Same as the session card's buttons (hover_actions.rs): reaching them closes the title's tooltip.
+                        .on_hover(|hovered, window, cx| {
+                            if *hovered {
+                                gpui_component::Root::hide_tooltip(window, cx);
+                            }
+                        })
                         .children(actions.into_iter().enumerate().map(|(index, item)| {
                             let label = item["label"].as_str().unwrap_or("").to_owned();
                             let command = item.get("command").cloned();
@@ -228,6 +262,8 @@ impl GhostexGpuiApp {
                             };
                             div()
                                 .id(format!("native-project-action-{id}-{index}"))
+                                .role(gpui::Role::Button)
+                                .aria_label(label.clone())
                                 .h(px(22.0 * scale))
                                 .w(px(match split {
                                     Some("start") => 24.0,
@@ -257,7 +293,10 @@ impl GhostexGpuiApp {
                                         && self.native_sidebar.menu.is_none()
                                         && !cx.has_active_drag(),
                                     |row| {
-                                        row.tooltip_show_delay(appearance.tooltip_delay).tooltip(
+                                        // CDXC:Sidebar 2026-09-23 DECISION: User: header button tooltips "appear below and aligned to the left not to the right (so they stay within the bounds of the sidebar)". The bubble's right edge lines up with the button and it grows leftward; the session card's buttons (hover_actions.rs) do the same.
+                                        row.managed_discrete_tooltip_with_placement(
+                                            ManagedTooltipPlacement::BelowLeft,
+                                            appearance.tooltip_delay,
                                             move |window, cx| {
                                                 titlebar_tooltip(label.clone(), window, cx)
                                             },
@@ -289,14 +328,6 @@ impl GhostexGpuiApp {
                         })),
                 )
             })
-            .on_hover(cx.listener(move |app, hovered, _, cx| {
-                if *hovered {
-                    app.native_sidebar.hovered_group = Some(hover_id.clone());
-                } else if app.native_sidebar.hovered_group.as_ref() == Some(&hover_id) {
-                    app.native_sidebar.hovered_group = None;
-                }
-                cx.notify();
-            }))
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 cx.stop_propagation();
                 Self::show_native_sidebar_menu(&menu, event.position, scale, window, cx);

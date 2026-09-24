@@ -41,7 +41,7 @@ const SELECT_AGENT_PLACEHOLDER: &str = "Select agent";
 const EXPORT_HINT: &str = "The file is saved in the Ghostex exports folder.";
 const INCLUDE: &str = "Include";
 const SAVED_AS_MARKDOWN: &str = "Saved as Markdown";
-const OPEN_FILE_LOCATION: &str = "Open File/Folder Location";
+const OPEN_FILE_LOCATION: &str = "Open Location";
 const EXPORT_FAILED: &str = "The transcript export failed.";
 
 /// What the user wants to do with the written file.
@@ -155,9 +155,13 @@ pub(crate) enum ExportTranscriptStage {
 /// before sending any command other than `RunExport`.
 pub(crate) enum ExportTranscriptModalCommand {
     RunExport(ExportTranscriptIncludeOptions),
-    StartConversation { agent_id: String },
+    StartConversation {
+        agent_id: String,
+    },
     Cancel,
     Reveal,
+    /// The exported file's path was just written to the clipboard; the host gives the copy feedback.
+    PathCopied,
 }
 
 pub(crate) type ExportTranscriptModalHost = Rc<dyn Fn(ExportTranscriptModalCommand, &mut App)>;
@@ -166,6 +170,8 @@ pub(crate) struct ExportTranscriptModalConfig {
     pub(crate) agents: Vec<ExportTranscriptAgent>,
     /// The exported session's own agent, preselected so "handoff to the same agent" is one click away.
     pub(crate) default_agent_id: Option<String>,
+    /// The agent the chat model picker is handing over to. It fills the user's own selection, which the finished export's agent cannot outrank the way it outranks `default_agent_id`.
+    pub(crate) target_agent_id: Option<String>,
     pub(crate) palette: ModalPalette,
     pub(crate) prefs_path: Option<PathBuf>,
     /// Overrides the remembered mode on open; the demo uses it to show one branch.
@@ -216,7 +222,7 @@ impl GpuiExportTranscriptModalWindow {
                 .or(prefs.mode)
                 .unwrap_or(ExportTranscriptMode::Handoff),
             include: prefs.include,
-            selected_agent_id: None,
+            selected_agent_id: config.target_agent_id,
             stage: ExportTranscriptStage::Options,
             handoff_requested: false,
             copied: false,
@@ -413,6 +419,7 @@ impl GpuiExportTranscriptModalWindow {
             return;
         };
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(path.clone()));
+        (self.host)(ExportTranscriptModalCommand::PathCopied, cx);
         self.copied = true;
         self.copied_generation = self.copied_generation.wrapping_add(1);
         let generation = self.copied_generation;

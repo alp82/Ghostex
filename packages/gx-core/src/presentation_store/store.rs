@@ -25,8 +25,10 @@ pub struct SideState {
     pub custom_session_tags: Option<CustomSessionTagsState>,
 }
 
-/// One side-state replacement, from a change frame.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One side-state replacement, from a change frame or from a local edit of a client-owned
+/// document. `Serialize`/`Deserialize` because `Intent` carries it and `Intent` crosses the
+/// boundary.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SideStateUpdate {
     WorkspaceGroups(WorkspaceSessionGroupsState),
     ProjectCollections(SidebarProjectCollectionsState),
@@ -82,6 +84,13 @@ impl MachinePresentation {
 
     pub fn loaded(&self) -> Option<&LoadedPresentation> {
         match &self.state {
+            PresentationState::Loaded(loaded) => Some(loaded),
+            PresentationState::NotLoaded => None,
+        }
+    }
+
+    pub(crate) fn loaded_mut(&mut self) -> Option<&mut LoadedPresentation> {
+        match &mut self.state {
             PresentationState::Loaded(loaded) => Some(loaded),
             PresentationState::NotLoaded => None,
         }
@@ -182,6 +191,23 @@ impl PresentationStore {
     /// The loaded state of a machine; `None` while it is not loaded.
     pub fn loaded(&self, machine: &MachineId) -> Option<&LoadedPresentation> {
         self.machines.get(machine)?.loaded()
+    }
+
+    /// The loaded state of a machine THIS RUN's stream delivered; `None` for one not loaded and
+    /// for one whose rows are the stored last-seen copy.
+    ///
+    /// CDXC:RemoteMachines 2026-09-21 WHY:
+    /// The difference exists for the planners that resolve a SET of rows and act on it. Drawing a
+    /// last-seen machine is the point of keeping the copy, and `is_stale` fades what it draws; but
+    /// the old runtime resolves those sets from `this.remotePresentations`, which holds only what a
+    /// stream delivered, NOT from `remoteLastSeenPresentations`, which is the map it draws from. So
+    /// a project's Sleep on an offline remote machine has always done nothing at all over there,
+    /// and a port that answered it from the last-seen rows would send one doomed request per row
+    /// down a tunnel that does not exist, each one a warning toast. (The `not loaded` refusal in
+    /// `sidebar_actions/bulk.rs` used to give the right answer here by accident, because the store
+    /// held nothing for such a machine until the copy was read back.)
+    pub fn loaded_live(&self, machine: &MachineId) -> Option<&LoadedPresentation> {
+        self.loaded(machine).filter(|loaded| !loaded.last_seen)
     }
 
     pub(super) fn machine_mut(&mut self, machine: &MachineId) -> &mut MachinePresentation {

@@ -49,7 +49,9 @@ const DEFAULT_TERMINAL_FONT_FAMILY: &str = "JetBrains Mono";
 const DEFAULT_TERMINAL_FONT_WEIGHT: f64 = 300.0;
 const NORMAL_TERMINAL_FONT_WEIGHT: f64 = 400.0;
 const DEFAULT_TERMINAL_GHOSTTY_THEME: &str = "GitHub Dark";
-const DEFAULT_TERMINAL_BACKGROUND_COLOR: &str = "#000000";
+/// Empty: the terminal background follows the theme (`workspaceBackgroundColor` in
+/// packages/shared/ghostex-settings/defaults.ts).
+const DEFAULT_TERMINAL_BACKGROUND_COLOR: &str = "";
 const DEFAULT_TERMINAL_BACKGROUND_IMAGE: &str = "";
 const DEFAULT_TERMINAL_BACKGROUND_IMAGE_OPACITY: f64 = 1.0;
 const DEFAULT_TERMINAL_BACKGROUND_IMAGE_FIT: &str = "cover";
@@ -78,7 +80,10 @@ const MIN_TERMINAL_VIEW_WIDTH_PERCENT: f64 = 50.0;
 const MAX_TERMINAL_VIEW_WIDTH_PERCENT: f64 = 100.0;
 const DEFAULT_CHAT_CONTENT_MAX_WIDTH_PX: f32 = 768.0;
 const DEFAULT_TERMINAL_WIDTH_APPLY_TO_COMMAND_PANE_TERMINALS: bool = false;
-const DEFAULT_SHOW_AGENTS_PANE_TAB_BAR_WHEN_UNSPLIT: bool = false;
+/// Mirrors `DEFAULT_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS` / `MAX_...` in
+/// `packages/shared/ghostex-settings/types.ts`.
+const DEFAULT_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS: f64 = 400.0;
+const MAX_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS: f64 = 1000.0;
 const MIN_TERMINAL_FONT_WEIGHT: f64 = 100.0;
 const MAX_TERMINAL_FONT_WEIGHT: f64 = 900.0;
 const MIN_TERMINAL_LINE_HEIGHT: f64 = 0.8;
@@ -187,6 +192,30 @@ pub enum SharedSettingsAutoSleepTarget {
     ProjectEditor,
 }
 
+/// Which chat brain a chat view creates.
+///
+/// CDXC:SessionChat 2026-09-22 WHY:
+/// Temporary. The chat's rules exist twice while the brain moves from the TypeScript bundle running
+/// in QuickJS (`packages/shared/session-chat-controller/`) to the Rust core
+/// (`packages/gx-chat-core/`, hosted by `src/app/gx_chat/`). `QuickJs` is the shipped brain and the
+/// default; `Rust` runs the new host instead and creates no QuickJS chat runtime. Both this enum
+/// and the `chatBrain` setting behind it are deleted with the TypeScript brain.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SharedChatBrain {
+    #[default]
+    QuickJs,
+    Rust,
+}
+
+impl SharedChatBrain {
+    pub fn from_settings_value(value: Option<&str>) -> Self {
+        match value {
+            Some("rust") => Self::Rust,
+            _ => Self::QuickJs,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SharedSidebarVisibilityMemory {
     Shared,
@@ -275,7 +304,7 @@ impl SharedTerminalConfirmCloseSurface {
 /*
 CDXC:Terminal 2026-07-04:
 The GPUI-composited terminal engine (libghostty-vt + TerminalElement) is the
-single terminal pipeline on every OS for Agents, command-pane, companion,
+single terminal pipeline on every OS for Agents, command-pane,
 restored, and newly launched terminals. The macOS GhosttyKit implementation
 remains compiled for now but is not selected at runtime. The composited engine
 consumes the shared terminal typography/scrollback/close-confirm settings on
@@ -579,6 +608,11 @@ impl SharedSidebarSettingsSnapshot {
         strict_bool_field(&self.object, "debuggingMode") == Some(true)
     }
 
+    /// Which brain a chat view's runtime is created with. See [`SharedChatBrain`].
+    pub fn chat_brain(&self) -> SharedChatBrain {
+        SharedChatBrain::from_settings_value(self.object.get("chatBrain").and_then(Value::as_str))
+    }
+
     /*
     CDXC:AgentLauncher 2026-08-01-16:00:
     Which built-in buttons the Agents tab strip draws. Hiding is opt-in per
@@ -722,6 +756,17 @@ impl SharedSidebarSettingsSnapshot {
         self.object
             .get("sidebarDefaultWidthPx")
             .and_then(json_value_to_f32)
+    }
+
+    /// The Collapse animation speed slider: sidebar disclosures and the floating sidebar's slide
+    /// (`app/floating_reveal`) both run for this long, clamped to the slider's own range.
+    pub fn sidebar_collapse_animation_duration_ms(&self) -> f32 {
+        read_finite_number_field(
+            &self.object,
+            "sidebarCollapseAnimationDurationMs",
+            DEFAULT_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS,
+        )
+        .clamp(0.0, MAX_SIDEBAR_COLLAPSE_ANIMATION_DURATION_MS) as f32
     }
 
     /// `None` when the keep-alive slider is at 0, which restores release-on-switch.
@@ -1046,11 +1091,6 @@ impl SharedSidebarSettingsSnapshot {
     pub fn terminal_width_applies_to_command_pane_terminals(&self) -> bool {
         strict_bool_field(&self.object, "terminalWidthApplyToCommandPaneTerminals")
             .unwrap_or(DEFAULT_TERMINAL_WIDTH_APPLY_TO_COMMAND_PANE_TERMINALS)
-    }
-
-    pub fn show_agents_pane_tab_bar_when_unsplit(&self) -> bool {
-        strict_bool_field(&self.object, "showAgentsPaneTabBarWhenUnsplit")
-            .unwrap_or(DEFAULT_SHOW_AGENTS_PANE_TAB_BAR_WHEN_UNSPLIT)
     }
 
     pub fn show_session_id_in_terminal_panes(&self) -> bool {
@@ -2183,8 +2223,13 @@ fn normalize_ghostty_theme(value: &str) -> String {
     }
 }
 
+/// `None` follows the theme: an empty value, or the retired default #010101 that every settings
+/// file carried (the same migration as `normalizeTerminalBackgroundSetting` in TS).
 fn normalize_terminal_background_rgb(value: &str) -> Option<[u8; 3]> {
     let value = value.trim();
+    if value.eq_ignore_ascii_case("#010101") {
+        return None;
+    }
     let hex = value.strip_prefix('#').unwrap_or(value);
     if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;

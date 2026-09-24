@@ -17,6 +17,7 @@ import type { GpuiSidebarRuntimeAttentionMethods } from './attention-tracking';
 import { gpuiSidebarRuntimeAttentionMethods } from './attention-tracking';
 import type { GpuiSidebarRuntimeAutoSleepMethods } from './auto-sleep';
 import { gpuiSidebarRuntimeAutoSleepMethods } from './auto-sleep';
+import { asGpuiSidebarCommand } from './sidebar-command-entry';
 import { GpuiGxserverClient } from './client';
 import type { GpuiSidebarRuntimeCloseAfterDoneMethods } from './close-after-done';
 import { gpuiSidebarRuntimeCloseAfterDoneMethods } from './close-after-done';
@@ -38,12 +39,7 @@ import {
   currentGpuiRuntimeSettings,
   hasSameGpuiRuntimeSettings,
 } from './helpers/bootstrap';
-import {
-  gpuiBrowserSidebarSessionId,
-  normalizeGpuiBrowserTabRevealRequest,
-  normalizeGpuiBrowserTabs,
-  normalizeGpuiDisplayedWorkspaceSessionIds,
-} from './helpers/browser-tabs';
+import { normalizeGpuiBrowserTabs, normalizeGpuiDisplayedWorkspaceSessionIds } from './helpers/browser-tabs';
 import { readStoredGpuiCloseAfterDoneSessionIds } from './helpers/close-after-done';
 import {
   createGpuiSidebarHudState,
@@ -109,7 +105,7 @@ import type {
   GpuiWorkspaceTerminalTitleChangedPayload,
 } from './types-and-protocol';
 import type { GpuiSidebarRuntimeWorkspaceGroupMethods } from './workspace-groups-sync';
-import { gpuiSidebarRuntimeWorkspaceGroupMethods } from './workspace-groups-sync';
+import { gpuiSidebarRuntimeWorkspaceGroupMethods, installGpuiWorkspaceGroupsHandBack } from './workspace-groups-sync';
 import type { GpuiSidebarRuntimeWorktreeMethods } from './worktrees';
 import { gpuiSidebarRuntimeWorktreeMethods } from './worktrees';
 import type { WebviewApi } from '@/packages/core-ui/webview-api';
@@ -229,6 +225,8 @@ CDXC:Projects 2026-06-24-22:51:
 Generated Chat folders must not render as individual GPUI project groups, and clicking a chat session must not publish that chat folder as the active project to Rust. Treat host Ghostex-home chat roots, including dev `.active/chats` homes, as projectless Chats containers before building active-project context, Settings project rows, or Git HUD state.
 */
 export function createGpuiSidebarRuntime(): {
+  applyWorkspaceGroupsFromHost: (state: unknown) => void;
+  persistWorkspaceGroups: () => void;
   messageSource: GpuiSidebarLocalMessageSource;
   start: () => void;
   startLocalGxserver: () => void;
@@ -236,6 +234,8 @@ export function createGpuiSidebarRuntime(): {
 } {
   const runtime = new GpuiSidebarRuntime();
   return {
+    applyWorkspaceGroupsFromHost: (state: unknown) => runtime.applyWorkspaceGroupsFromHost(state),
+    persistWorkspaceGroups: () => runtime.persistWorkspaceGroups(),
     messageSource: runtime.messageSource,
     start: () => runtime.start(),
     startLocalGxserver: () => runtime.startLocalGxserver(),
@@ -551,17 +551,7 @@ export class GpuiSidebarRuntime {
   didConnectSavedRemoteMachinesOnStartup = false;
   enabledRemoteMachineIdsForReconnect = new Set<string>();
   workspaceGroups: GpuiWorkspaceSessionGroupsState = createEmptyGpuiWorkspaceSessionGroupsState();
-  workspaceGroupsServerSyncTimeoutId: number | undefined;
-  workspaceGroupsServerSyncPending = false;
-  latestSidebarProjectCollectionsUpdate: GxserverSidebarProjectCollectionsState | undefined;
-  sidebarProjectCollectionsServerSyncTimeoutId: number | undefined;
-  sidebarProjectCollectionsServerSyncPending = false;
-  lastForwardedSidebarProjectCollectionsJson: string | undefined;
   lastForwardedRemoteSidebarProjectCollectionsJsonByMachineId = new Map<string, string>();
-  latestSidebarSpacesUpdate: GxserverSidebarSpacesState | undefined;
-  sidebarSpacesServerSyncTimeoutId: number | undefined;
-  sidebarSpacesServerSyncPending = false;
-  lastForwardedSidebarSpacesJson: string | undefined;
   lastForwardedRemoteSidebarSpacesJsonByMachineId = new Map<string, string>();
   latestCustomSessionTagsUpdate: GxserverCustomSessionTagsState | undefined;
   customSessionTagsServerSyncTimeoutId: number | undefined;
@@ -664,17 +654,6 @@ export class GpuiSidebarRuntime {
     };
     gpuiBridge.onBrowserTabsChanged = applyBrowserTabs;
     applyBrowserTabs(gpuiBridge.browserTabs);
-    gpuiBridge.onRevealBrowserTab = (payload) => {
-      const request = normalizeGpuiBrowserTabRevealRequest(payload);
-      if (!request) {
-        return;
-      }
-      this.messageSource.postMessage({
-        requestId: request.requestId,
-        sessionId: gpuiBrowserSidebarSessionId(request),
-        type: 'revealSidebarSession',
-      });
-    };
     gpuiBridge.onWorkspaceTerminalLifecycleRequest = (payload) => {
       /*
       CDXC:Workarea 2026-06-26-07:25:
@@ -772,6 +751,20 @@ export class GpuiSidebarRuntime {
     gpuiBridge.onWorkspaceSessionAttentionAcknowledge = (payload) => {
       this.handleGpuiWorkspaceSessionAttentionAcknowledge(payload);
     };
+    /*
+    CDXC:Sidebar 2026-09-21 WHY:
+    The desktop sidebar is the Rust store's, and the page that used to receive its commands and
+    forward them here is deleted. Everything the
+    store cannot perform itself, because this runtime still owns it (focus, session groups,
+    worktrees, git, remote machines, transcripts), arrives on this one entry instead and goes
+    straight to the same handler the page's forward ended in. One hop fewer, and nothing in the
+    route depends on a page being loaded.
+    */
+    gpuiBridge.onSidebarCommand = (payload) => {
+      const message = asGpuiSidebarCommand(payload);
+      if (message) void this.handleSidebarMessage(message);
+    };
+    installGpuiWorkspaceGroupsHandBack(this);
     gpuiBridge.onWorkspaceTerminalBell = (payload) => {
       void this.handleGpuiWorkspaceTerminalBell(payload);
     };
@@ -909,6 +902,13 @@ export class GpuiSidebarRuntime {
       : [];
     for (const payload of pendingWorkspaceSessionAttentionAcknowledgements) {
       this.handleGpuiWorkspaceSessionAttentionAcknowledge(payload);
+    }
+    const pendingSidebarCommands = Array.isArray(gpuiBridge.pendingSidebarCommands)
+      ? gpuiBridge.pendingSidebarCommands.splice(0)
+      : [];
+    for (const payload of pendingSidebarCommands) {
+      const message = asGpuiSidebarCommand(payload);
+      if (message) void this.handleSidebarMessage(message);
     }
     const pendingWorkspaceTerminalBells = Array.isArray(gpuiBridge.pendingWorkspaceTerminalBells)
       ? gpuiBridge.pendingWorkspaceTerminalBells.splice(0)
@@ -1422,19 +1422,23 @@ export class GpuiSidebarRuntime {
       case 'syncGroupOrder':
         await this.syncWorkspaceGroupOrder(message.groupIds);
         return;
+      /*
+      CDXC:Projects 2026-09-21 WHY:
+      REMOTE only. This computer's copies of both documents are written and pushed by Rust
+      (apps/desktop/src/app/gx_store/project_docs.rs), which is why the local arms and the
+      debounced write-through behind them were deleted on 2026-09-21: nothing has posted either
+      message without a `remoteMachineId` since M4d part 2 blocker 3, and a queue nothing fills
+      would be a second writer waiting to happen.
+      */
       case 'updateSidebarProjectCollections':
         if (message.remoteMachineId) {
           await this.updateRemoteSidebarProjectCollections(message.remoteMachineId, message.state);
-          return;
         }
-        this.queueSidebarProjectCollectionsServerSync(message.state);
         return;
       case 'updateSidebarSpaces':
         if (message.remoteMachineId) {
           await this.updateRemoteSidebarSpaces(message.remoteMachineId, message.state);
-          return;
         }
-        this.queueSidebarSpacesServerSync(message.state);
         return;
       case 'updateCustomSessionTags':
         if (message.remoteMachineId) {

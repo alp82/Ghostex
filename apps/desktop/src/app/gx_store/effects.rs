@@ -9,10 +9,17 @@ impl GxStoreHost {
     pub(super) fn run_effects(&mut self, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
-                Effect::ResubscribePresentation { reason, .. } => {
+                // Routed by machine: a remote machine's snapshot has to be asked of that
+                // machine's client, and asking the local one would resubscribe the wrong daemon
+                // while the machine that needs a snapshot waits for ever.
+                Effect::ResubscribePresentation { machine, reason } => {
                     self.counters.resubscribes_requested += 1;
                     self.diagnostics.resubscribe_requested(&reason);
-                    if let Some(client) = &self.client {
+                    let client = match machine.remote_id() {
+                        None => self.client.as_ref(),
+                        Some(machine_id) => self.remote.client(machine_id),
+                    };
+                    if let Some(client) = client {
                         client.request_resubscribe();
                     }
                 }
@@ -29,9 +36,13 @@ impl GxStoreHost {
                 }
                 // Kept newest per project and handed to the old runtime with the next tell: the
                 // record lives in its client storage (`projectLastSession`) until storage moves
-                // to Rust, and a second writer would leave its cache stale.
+                // to Rust, and a second writer would leave its cache stale. A remote session is
+                // remembered by the runtime itself when the tab selection moves its marks
+                // (`setRemotePresentationSessionFocus`), under ids a tell cannot carry.
                 Effect::RememberProjectSession { session, .. } => {
-                    self.local_focus.remember(session);
+                    if session.machine.is_local() {
+                        self.local_focus.remember(session);
+                    }
                 }
                 // M4 (sidebar from the store): read `/api/readSidebarHud` in the background.
                 Effect::RefetchSidebarHud { .. } => {}

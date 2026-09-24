@@ -8,6 +8,248 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <link>https://github.com/maddada/Ghostex/releases</link>
         <description>Sparkle appcast for Ghostex macOS releases.</description>
         <item>
+            <title>10.2.0</title>
+            <pubDate>Wed, 23 Sep 2026 11:09:13 +0000</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v10.2.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>100200</sparkle:version>
+            <sparkle:shortVersionString>10.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Ghostex 10.2.0
+
+## 10.2.0 - 2026-09-23
+
+**Ghostex 10.2.0 is out.** Window glass that shows your desktop, your wallpaper or a picture of your choice through the app, a new Theme page in Settings, panels that slide open and closed, a faster native Kanban board and Automate page, drag panes by their grip, and a round of Windows and Linux improvements.
+
+### ✨ Window glass
+- **See your desktop through Ghostex.** The sidebar, sessions, terminals and chat can show a blurred view of what is behind the window. Glass is on in dark mode by default; turn it on or off with Enable Transparency in Settings > Theme.
+- **Choose what the glass shows.** Desktop and windows shows everything behind Ghostex, Wallpaper only shows just your desktop picture, and Custom image blurs a picture you pick, with a separate picture for dark mode and light mode.
+- **One slider sets how much shows through.** Transparency strength on the Theme page tunes the whole window at once, and Advanced still lets you set the sidebar and work area tints apart.
+- **Menus, popups, toasts, tooltips and suggestions are frosted to match,** as are the scroll-to-bottom button, the floating sidebar and the chat skeleton shown while a session loads.
+- **Tune how much shows through.** Sidebar tint and Work area tint set each area on its own, in dark mode and in light mode, so either can be the darker one. Always glass keeps it on in light mode too.
+
+### 🎨 A Theme page in Settings
+- **Theme has its own page, right below General.** It starts with Appearance, a card for each dark and light theme showing the window in its colours, and Enable Transparency; Advanced holds colours, chat and terminal themes, glass and the app icon.
+- **Background contrast in five steps.** Pick Lowest to Highest on the Theme page, or set Sidebar contrast and Work area contrast apart under Advanced.
+- **Terminals follow your theme.** The terminal background matches the theme by default, and a colour you choose only paints behind the terminal text.
+- **Pick your look while getting started.** The last Get started panel offers the same Appearance, theme, contrast and transparency choices, and they apply right away.
+
+### 🗂 Panes, views and the board
+- **Panels slide open and closed.** The sidebar, side panel, Agents Panel and command pane slide in and out; set Panel animations to Off, Slow, Normal or Fast, and Reduce Motion always opens them instantly.
+- **Kanban and Automate are faster and match your theme.** Both are now drawn by Ghostex itself, so they open instantly, follow your theme colours and take the keyboard like the rest of the app.
+- **Move or close a pane from its grip.** While the screen is split, the focused pane has a small bar along its top: click it to close the pane (its sessions keep running) or merge all panes, or drag it onto another pane.
+- **Drop a session in the middle of a pane to show it there.** Dropping on a pane's edge still opens a new split.
+- **Sleeping panes show a slim pill** with the session's icon, title and Resume, instead of a large card.
+- **Opening a project or restarting Ghostex no longer wakes its sleeping sessions.** They show their Resume bar until you click the pane or press a key, while clicking a sidebar row still wakes them, thanks to @banozz.
+- **Cmd+Option+Arrow moves between session panes and Commands**, skipping the view panel.
+- **Middle-click an empty spot in a command pane's tab bar** to close all of its terminals at once.
+
+### 🧭 Sidebar
+- **Hide sidebar and Toggle Agents Panel sit at the top left of the sidebar on every computer,** and dragging the sidebar's top row moves the window.
+- **A narrow sidebar keeps its buttons.** When the top row runs out of room, Search and Notifications move into the sidebar menu.
+- **Switching Spaces fades the list** as it slides, from the Spaces row and from the menu alike.
+- **Double-click the top of the sidebar or the view tab strip to zoom the window,** like the header beside them.
+- **Hover the window's left edge to float a collapsed sidebar.** The hover zone is now invisible, so nothing is drawn over your work.
+
+### 💬 Chat
+- **Cursor chats get a status line and Context details.** Hover the status line and click the pen after its last item to choose what it shows, for Claude Code, Codex and Cursor.
+- **The chat box collapses while you scroll again by default,** and in a short pane, such as half of a stacked split, it stays collapsed until you click it.
+- **Paste images into question answers.**
+- **Sessions that are still loading show the chat box and status line right away,** and the chat box takes focus as soon as the agent picker closes.
+- **The account switch card uses the compact account tiles.**
+
+### 🪟 Windows and Linux
+- **Close, minimize and maximize stay at the top right on Windows,** even with the sidebar or a view open.
+- **Linux computers can connect to Windows computers over SSH,** and Linux keeps saved SSH passwords in the desktop keyring.
+- **Windows terminals keep their output, interrupts and sessions more reliably,** and file dialogs and popups open correctly.
+
+### 🩹 Fixes
+- **Answering Claude's questions from chat works again.** Multi-select answers with a typed note deliver the note and every pick, questions with previewed options no longer look answered while Claude still waits, and answered preview questions show the option you picked.
+- **Popups and dialogs open on the display the window is on,** instead of behind it on another monitor.
+- **Claude sends go through even when its chat box was partly erased on screen.**
+- **Waking a Claude session never resumes a conversation from another project.**
+- **A new agent started right after a restart appears straight away** instead of being replaced by a woken session.
+- **Custom Claude profiles and projects on different Windows drives are told apart correctly,** thanks to @banozz.
+]]></description>
+            <enclosure url="https://github.com/maddada/Ghostex/releases/download/v10.2.0/ghostex-10.2.0-arm64.dmg" length="119536468" type="application/octet-stream" sparkle:edSignature="NAgsK8laiISp6gFtWyRM3G2vVmgqpOaw27BOmroxLaIpeYO66nMmjO2o9oqV7C/1w6hFWfC26TSj73WsEcf/Bg=="/>
+        </item>
+        <item>
+            <title>10.1.0</title>
+            <pubDate>Tue, 22 Sep 2026 22:48:30 +0000</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v10.1.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>100100</sparkle:version>
+            <sparkle:shortVersionString>10.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Ghostex 10.1.0
+
+## 10.1.0 - 2026-09-23
+
+**Ghostex 10.1.0 is out.** Linear, Jira, GitHub, Storybook and Terminal views, light and dark theme presets, a Trust and Remember answer for folder trust prompts, drag a session onto a pane to split, account usage that peeks on hover, and the newest Claude, Codex, Cursor and Grok models.
+
+### 🧭 New views beside your sessions
+- **Linear and Jira open as views.** Pick one from the + menu, paste the workspace, team, or board address you want as its home, and Ghostex keeps it per project; worktrees follow their parent project until you give them their own. Middle-click or Cmd-click a link to open it in a background Browser tab.
+- **A GitHub view opens your repository with no setup.** It appears whenever the project has a GitHub origin, including in worktrees.
+- **Storybook is built in.** Projects with Storybook get a Storybook view (press S in the view picker) that builds and serves the component workshop without keeping a server running, with Rebuild Storybook and Annotate with Agentation.
+- **A Terminal view puts command terminals on the right.** It has its own tabs and splits, runs Actions, and keeps its terminals alive when you close it; the Commands pane under your sessions still works as before.
+- **The view picker shows real icons.** Installed extensions use their own icon and description, and website views show their mark.
+- **Sleeping browser tabs show what they hold.** The card shows the page's icon, title and site, and a Resume button wakes it.
+
+### 🎨 Theme presets
+- **Pick a preset for each appearance.** Dark theme offers Dark Gray, Black, Blue, Green, Red, Purple, or Custom, and Light theme offers Light Gray, White, Blue, Green, Pink, Orange, or Custom, under Settings > Appearance.
+- **The theme reaches more of the app.** The sidebar, window chrome, sidebar menus, chat background, and chat and file change cards all follow the chosen preset, and Custom keeps your own contrast and tint.
+
+### 🗂 The Agents Panel and sidebar
+- **The sessions column is now the Agents Panel.** Its toggle sits beside Hide sidebar, even while the sidebar is collapsed.
+- **Drag a session onto a pane to split.** Drop a sidebar row on the left, right, top or bottom edge of a terminal or chat pane to open it in a new split there.
+- **Account usage peeks on hover.** Hover the chart button in the sidebar's Commands row to float your starred accounts' meters over the list, and click the pin to keep them there.
+- **Sleep Inactive on the Space menu.** Right-click a Space icon to sleep only its sessions that are awake but neither working nor waiting on you.
+- **The floating sidebar and Agents Panel slide at your chosen speed.** They follow the sidebar's Collapse animation setting, and 0 turns the slide off.
+- **Quick Access opens a session in the floating panel** while chat is collapsed, and your configured hotkeys now work from the floating sessions panel.
+- **Sessions with background shells or monitors still running show as working.**
+
+### 💬 Chat
+- **Trust and Remember answers folder trust prompts for good.** Choose it on the trust card once and Ghostex answers that project's trust prompt by itself from then on, for every agent.
+- **Every copy says Copied!** A small bubble appears at the pointer whenever you copy something anywhere in the app.
+- **The chat box stays expanded while you scroll.** Turn off Settings > Chat > Keep chat box expanded while scrolling to get the collapsing box back.
+- **Switching a draft's agent keeps your model and effort.** The picked model and reasoning carry into the new agent's launch.
+- **Switching accounts is safer for Claude background sessions.** Ghostex stops the conversation and its remaining jobs, then resumes it on the selected account.
+- **The model picker explains itself.** Hover a row's eye to read what the model is for, unavailable buttons are dimmed and say Default or Off, Auto sits first, and a detected Fast mode shows as on.
+
+### 🤖 Newest models, without waiting for a release
+- **New models reach your open app within minutes.** The model list updates on its own, so a new model shows up and can be picked without installing a new Ghostex.
+- **Claude matches Claude Code's own picker.** Opus 5.5 is the Opus model with 1M context, Opus 5 leaves the list, and the quick picker shows every Claude model with its version.
+- **Codex gets GPT 6 Sol and GPT 6 Luna.** Older GPT 5.6 models move under Legacy, and titles and commit messages are now written with GPT 6 Luna.
+- **Grok 4.7 and Grok 4.7 Fast for Grok Build and Cursor.**
+
+### 🩹 Fixes
+- **Linux shows new versions in the Update window.** Open download page takes you to the release; install it the same way you installed Ghostex.
+- **Windows chat sends reach the terminal again,** and the prompt editor starts correctly on Windows.
+- **The transcript scrollbar no longer jumps while a reply streams.**
+- **A new usage limit shows even right after the old one cleared.**
+- **Worktree dialogs explain why a list failed,** and pick the right source project.
+- **Remote sessions attach more reliably,** retrying each session on its own.
+- **The GitHub button opens the right repository** as soon as a project loads.
+- **Agents Hub sync is easier to read.** It says how many agents are out of sync and lists each fix in plain words, with a To fix and In sync filter.
+- **Better screen reader support** for the sidebar, chat box, transcript and terminal.
+]]></description>
+            <enclosure url="https://github.com/maddada/Ghostex/releases/download/v10.1.0/ghostex-10.1.0-arm64.dmg" length="118495106" type="application/octet-stream" sparkle:edSignature="cpPchym034Z7jVriLreI61Qmvf6fJFR11R1snM2kvVPUrX4pO/reUjq/ifgmqO5fY0TV1GQvH1JYkAP5l/yKCA=="/>
+        </item>
+        <item>
+            <title>10.0.1</title>
+            <pubDate>Mon, 21 Sep 2026 21:20:34 +0000</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v10.0.1</sparkle:fullReleaseNotesLink>
+            <sparkle:version>100001</sparkle:version>
+            <sparkle:shortVersionString>10.0.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Ghostex 10.0.1
+
+## 10.0.1 - 2026-09-22
+
+**Ghostex 10.0.1 is out.** A new layout: the titlebar row is gone, views open as tabs beside your sessions instead of over them, and browser pages share the same tab strip. The sidebar now runs fully natively, the chat model picker gains favorites and one-click settings, and the accent color follows your background tint.
+
+### 🪟 Views open beside your sessions
+- **Your sessions stay on screen while you use a view.** Terminals and chats keep the left side, the view takes the right, and each project remembers where you left the divider; drag it to change the balance and double-click it to reset.
+- **Views are tabs, and a project can keep several open.** Open another from the + at the end of the tab strip, close a tab with its x or a middle click, drag tabs to reorder them, and right-click one to Pin tab. Each project brings its own tabs back when you return to it.
+- **Browser pages are tabs in the same strip.** Every open page shows its icon and title beside your views, Browser Tab at the top of the + menu opens a new one, and page icons are remembered across restarts.
+- **Pop a view out or give it the whole window.** Buttons at the end of the strip open the view in its own window, expand it over the sessions column (Cmd+Ctrl+E), or expand it fully and hide the sidebar too (Cmd+Ctrl+Shift+E).
+- **A slimmer header replaces the titlebar row.** It holds the project name, Start, Open and Commit, and a ⋯ menu with Ask Ghostex, Tips & Tricks, Resources, Dev servers, Extensions and Customize; Cmd+Option+B shows or hides the view panel.
+- **An Open a view picker when nothing is open.** It lists every view you can open in the project; press C, B, K, U or D for Code, Browser, Kanban, Automate or Docs.
+
+### 🦀 The sidebar is fully native
+- **Every sidebar action runs in the app itself.** Clicking, renaming, notes, forking, sleep and wake, pinning, snoozing, Spaces, Project Groups, and the Cmd+1 through 9 session hotkeys no longer go through a web page, so the list responds faster and stays in step with what you do.
+- **Remote computers draw in the same list.** A connected remote computer's projects and sessions sit alongside this computer's, and an offline one shows the sessions it had last time.
+- **Tooltips and menus fit better.** Row tooltips stay inside the sidebar and match their card's width, menus size to their labels, and the More menu no longer repeats Settings and Hotkeys.
+- **The collapsed sidebar's edge reveals what you point at.** Hover the window's left edge to float the sidebar back, or the sessions column when a view fills the window, and the revealed pane takes focus.
+- **Quick Access rows get an actions menu with hotkeys.** Open sessions show a blue status dot there.
+
+### 💬 Chat
+- **Star models to keep them at the top everywhere.** The model picker has a Favorites tab shared by every open session; click a model to set it for this session and as the default, or right-click to change only this session.
+- **Pick another agent's model to start a Handoff.** The Handoff dialog opens with that agent and model already chosen.
+- **Reasoning, context window and Fast mode are one-click buttons.** They sit along the bottom of the model picker.
+- **Option-click Send to compact and send.** The gesture is named on the button.
+- **Armed Delayed Send and Close After Done show on the composer.** Click one to open Delayed Actions.
+- **Resuming a Claude session reattaches to its background agent** when one is still running.
+- **Rewind and question answers are more reliable.** Rewind waits for Claude's input box before acting, pasted text shows as you typed it, and a file change card opens with one click anywhere on it.
+
+### 🎨 Look and feel
+- **The accent color follows your background tint.** The separate accent setting is gone; a neutral tint keeps the sky-blue accent.
+- **Clearer status colors.** Every working status uses the same orange, git diff counts read well in light and dark themes, and Spaces get a theme-aware Gray.
+- **The Quick Actions button shows the name of the last Action you ran.**
+- **The terminal scrollbar appears while you scroll,** and the scroll wheel moves the same distance as in Ghostty.
+- **Browser shortcuts.** Reload with F5 or Cmd+R (Ctrl+R on Windows and Linux), and Ctrl+F finds on the page on Windows and Linux.
+- **App dialogs open faster.** Each one loads only when you first open it.
+
+### 🩹 Fixes
+- **Windows fixes.** Account helpers and install commands resolve correctly, the installer checks that the new version really landed, header dropdowns no longer steal focus from the main window, and chat saves its state again.
+- **Restored custom-agent sessions keep their icon** and their chat view.
+- **New sessions start as top-level agent runs,** not as nested children of another session.
+- **Opening a prompt search result no longer stalls.** Pressing Enter on a result after browsing for a while used to rescan your whole history first; it now opens straight away.
+- **Menu labels no longer cut off early.** Items like Browser Tab show in full instead of "Browser…" in roomy menus.
+
+### ⚠️ Heads up
+- **The previous web chat view has been removed.** Desktop chat is native only, so the Use GPUI chat setting is gone.
+]]></description>
+            <enclosure url="https://github.com/maddada/Ghostex/releases/download/v10.0.1/ghostex-10.0.1-arm64.dmg" length="117238969" type="application/octet-stream" sparkle:edSignature="/kWUyCBS6ciUQgAgu1Us9aKgRFf1O0gyzE0ha8JsaUM9aWZsPLxUMyb5SduSnAbTWIeGgNq6sNP137L+Ku+UBw=="/>
+        </item>
+        <item>
+            <title>10.0.0</title>
+            <pubDate>Mon, 21 Sep 2026 20:14:07 +0000</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v10.0.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>100000</sparkle:version>
+            <sparkle:shortVersionString>10.0.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Ghostex 10.0.0
+
+## 10.0.0 - 2026-09-21
+
+**Ghostex 10.0.0 is out.** A new layout: the titlebar row is gone, views open as tabs beside your sessions instead of over them, and browser pages share the same tab strip. The sidebar now runs fully natively, the chat model picker gains favorites and one-click settings, and the accent color follows your background tint.
+
+### 🪟 Views open beside your sessions
+- **Your sessions stay on screen while you use a view.** Terminals and chats keep the left side, the view takes the right, and each project remembers where you left the divider; drag it to change the balance and double-click it to reset.
+- **Views are tabs, and a project can keep several open.** Open another from the + at the end of the tab strip, close a tab with its x or a middle click, drag tabs to reorder them, and right-click one to Pin tab. Each project brings its own tabs back when you return to it.
+- **Browser pages are tabs in the same strip.** Every open page shows its icon and title beside your views, Browser Tab at the top of the + menu opens a new one, and page icons are remembered across restarts.
+- **Pop a view out or give it the whole window.** Buttons at the end of the strip open the view in its own window, expand it over the sessions column (Cmd+Ctrl+E), or expand it fully and hide the sidebar too (Cmd+Ctrl+Shift+E).
+- **A slimmer header replaces the titlebar row.** It holds the project name, Start, Open and Commit, and a ⋯ menu with Ask Ghostex, Tips & Tricks, Resources, Dev servers, Extensions and Customize; Cmd+Option+B shows or hides the view panel.
+- **An Open a view picker when nothing is open.** It lists every view you can open in the project; press C, B, K, U or D for Code, Browser, Kanban, Automate or Docs.
+
+### 🦀 The sidebar is fully native
+- **Every sidebar action runs in the app itself.** Clicking, renaming, notes, forking, sleep and wake, pinning, snoozing, Spaces, Project Groups, and the Cmd+1 through 9 session hotkeys no longer go through a web page, so the list responds faster and stays in step with what you do.
+- **Remote computers draw in the same list.** A connected remote computer's projects and sessions sit alongside this computer's, and an offline one shows the sessions it had last time.
+- **Tooltips and menus fit better.** Row tooltips stay inside the sidebar and match their card's width, menus size to their labels, and the More menu no longer repeats Settings and Hotkeys.
+- **The collapsed sidebar's edge reveals what you point at.** Hover the window's left edge to float the sidebar back, or the sessions column when a view fills the window, and the revealed pane takes focus.
+- **Quick Access rows get an actions menu with hotkeys.** Open sessions show a blue status dot there.
+
+### 💬 Chat
+- **Star models to keep them at the top everywhere.** The model picker has a Favorites tab shared by every open session; click a model to set it for this session and as the default, or right-click to change only this session.
+- **Pick another agent's model to start a Handoff.** The Handoff dialog opens with that agent and model already chosen.
+- **Reasoning, context window and Fast mode are one-click buttons.** They sit along the bottom of the model picker.
+- **Option-click Send to compact and send.** The gesture is named on the button.
+- **Armed Delayed Send and Close After Done show on the composer.** Click one to open Delayed Actions.
+- **Resuming a Claude session reattaches to its background agent** when one is still running.
+- **Rewind and question answers are more reliable.** Rewind waits for Claude's input box before acting, pasted text shows as you typed it, and a file change card opens with one click anywhere on it.
+
+### 🎨 Look and feel
+- **The accent color follows your background tint.** The separate accent setting is gone; a neutral tint keeps the sky-blue accent.
+- **Clearer status colors.** Every working status uses the same orange, git diff counts read well in light and dark themes, and Spaces get a theme-aware Gray.
+- **The Quick Actions button shows the name of the last Action you ran.**
+- **The terminal scrollbar appears while you scroll,** and the scroll wheel moves the same distance as in Ghostty.
+- **Browser shortcuts.** Reload with F5 or Cmd+R (Ctrl+R on Windows and Linux), and Ctrl+F finds on the page on Windows and Linux.
+- **App dialogs open faster.** Each one loads only when you first open it.
+
+### 🩹 Fixes
+- **Windows fixes.** Account helpers and install commands resolve correctly, the installer checks that the new version really landed, header dropdowns no longer steal focus from the main window, and chat saves its state again.
+- **Restored custom-agent sessions keep their icon** and their chat view.
+- **New sessions start as top-level agent runs,** not as nested children of another session.
+
+### ⚠️ Heads up
+- **The previous web chat view has been removed.** Desktop chat is native only, so the Use GPUI chat setting is gone.
+]]></description>
+            <enclosure url="https://github.com/maddada/Ghostex/releases/download/v10.0.0/ghostex-10.0.0-arm64.dmg" length="117042753" type="application/octet-stream" sparkle:edSignature="mN+8uNgPijhup33blrXfz7Ur9LzOFAgfKVEda37EQUK6zlnuNArjTw36eq+IKDmSwjjAwT1lIzY4caOpbuvgAA=="/>
+        </item>
+        <item>
             <title>9.9.0</title>
             <pubDate>Sat, 19 Sep 2026 13:05:50 +0000</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v9.9.0</sparkle:fullReleaseNotesLink>
@@ -108,271 +350,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
             <enclosure url="https://github.com/maddada/Ghostex/releases/download/v9.8.5/ghostex-9.8.5-arm64.dmg" length="126460102" type="application/octet-stream" sparkle:edSignature="8RNjHu8YEGAA5T7T8i2uerH90/l7+dlMlmi/qctzNAWEwZ+PgcP8sS8Ure08O3LhpnbBpRmmcgNsOhNUSgCOBA=="/>
         </item>
         <item>
-            <title>9.8.0</title>
-            <pubDate>Wed, 16 Sep 2026 17:51:31 +0000</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v9.8.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>90800</sparkle:version>
-            <sparkle:shortVersionString>9.8.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Ghostex 9.8.0
-
-## 9.8.0 - 2026-09-16
-
-**Ghostex 9.8.0 is out.** Continue a Codex conversation that is open in another session, animated session sections with a separate dot for pending questions, one menu style across the app, Search by Prompt filters in the toolbar, and a reliable restart of the background server after an update.
-
-### 💬 Chat and agents
-- **Continue a Codex conversation that is open somewhere else.** When Codex says the conversation is in use by another session, choose Continue here (or press Cmd+Enter) and Ghostex closes the other Ghostex session, retries, and keeps your draft unsent until it succeeds.
-- **Rewind lands on the prompt you picked.** Claude slash commands now appear in the rewind list, so choosing a row no longer rewinds to a different prompt.
-- **Delayed Send waits for the agent to really finish.** A scheduled send no longer goes out while the agent is still writing its last turn.
-- **A session whose agent changed wakes with the right agent.** A session that started with one agent and was taken over by another now resumes with its current agent instead of the old command.
-- **Cursor conversations keep their place.** Late thinking steps from Cursor no longer shift where your next message is sent.
-
-### 🗂 A clearer sidebar
-- **Session sections open and close with an animation.** Status dots stay put while rows slide, and a session waiting on a question shows its own pink dot.
-- **Reveal Session is easy to spot.** After the section expands, the revealed session blinks with an outline, and the titlebar button uses a hollow circle.
-- **Closing a project keeps you in your Space.** Ghostex moves focus to an awake session in the next project of the same Space instead of leaving it.
-- **Light mode reads better.** The active session row and its hover buttons stand out more, and resize handles and agent tab drop targets use a softer gray.
-
-### 🎨 One look for menus and scrollbars
-- **Every menu shares one panel.** Dropdowns, context menus, and titlebar popups have the same rounded panel and shadow, and submenus open on click.
-- **Scrollbars are thin and match your theme everywhere.** Terminals, the code editor, chat, and the menu bar panel all use the same slim scrollbar that appears on hover.
-- **Long pick lists stay inside the window.** Delayed Send and other pickers scroll to the highlighted row instead of running off screen.
-
-### 🔍 Search by Prompt
-- **Agent and project filters sit in the toolbar.** They are dropdowns at the top right, and the list shows placeholders while your history loads.
-- **Open Search by Prompt from Previous Sessions.** A Search by Prompt button floats over the Sessions list.
-
-### 📝 Docs and views
-- **The annotation toolbar sits above your selection.** It moves below the text near the top of the page, and the X marks text for removal with a note.
-- **The Docs header shows Send or Copy with the annotation count.** It shrinks to an icon in narrow windows.
-- **Titlebar view menus offer Configure view and Wake again.** Configure view opens that custom view in Settings, and a sleeping web view can be woken from its menu.
-
-### 🩹 Fixes
-- **The background server starts on the first try after an update.** Ghostex waits for the old server to exit before starting the new one, so "gxserver failed to start" no longer appears until you reload, and the copyable diagnostics explain any start failure.
-]]></description>
-            <enclosure url="https://github.com/maddada/Ghostex/releases/download/v9.8.0/ghostex-9.8.0-arm64.dmg" length="126651401" type="application/octet-stream" sparkle:edSignature="ZchIbOrusHlJrCWTq3yPpFnQPe7y7lwjs6by5I9bKmipnn6vazy2XnnGXVUulw2oU7TQo5bPW+2y0wKoMP4+Bg=="/>
-        </item>
-        <item>
-            <title>9.7.0</title>
-            <pubDate>Wed, 16 Sep 2026 07:23:44 +0000</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v9.7.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>90700</sparkle:version>
-            <sparkle:shortVersionString>9.7.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Ghostex 9.7.0
-
-## 9.7.0 - 2026-09-16
-
-- New Features
-
-  - Compact before you send. Press Option+Enter on macOS or Alt+Enter on Windows and Linux in the chat box, or right-click Send and choose Compact & Send, and Ghostex sends `/compact` first and queues your written prompt to go out the moment compaction finishes. Cursor's `/summarize` and Grok Build's compaction now use the same flow, with the same compaction card above the input and the same hold on queued messages, so nothing is delivered mid-compaction.
-  - Open File/Folder Location is back, everywhere a path can be copied. Right-click a file reference or file-change path in chat, an image preview, a changed file in the Git row or the commit dialog, a project, or a Docs entry and reveal it in your computer's file manager. Image previews also say Copy Path or Copy URL depending on what the picture actually is.
-  - File references open in Code or Docs with one click from composer pills and transcript paths, using the same view preference in both places. Double-click a composer pill to edit its text, and a view that is switched off simply leaves the menu instead of offering a dead action.
-  - Delayed Send can wait for a specific date and time. Session Automations gains a Specific time choice beside After a delay on desktop, web, and mobile, using the local time of the device you set it on. The Postpone by submenu now also has Edit delayed send and Disable delayed send, and the web sidebar can cancel a pending send.
-  - Projects you add join the Space that is open at the time and appear at its top, whether you add them from the More menu, the Add Project button on an empty list or empty Space, or the empty sidebar area's right-click menu. Add a project while Other is selected to keep it out of every Space.
-  - Debugging is its own Settings page, above About. It starts with Show debug UI controls, and only with that on does it load the diagnostic logging scenarios, session debugging controls, Storage usage by feature with a way to clear disposable caches, and on-disk Ghostex folder sizes with Refresh and Open Folder. The storage inspector works from any open Ghostex page, not only the one that owns the data.
-  - Docs keeps the files you have not saved yet in an Open Files list beside the tree, under the same section label, so switching between them no longer risks losing work.
-  - Installing the Claude Code hooks keeps your Claude transcripts on disk instead of letting Claude delete them after 30 days. A retention value you set yourself is left exactly as it is.
-  - App dialogs are native windows built from one shared modal kit, so every dialog has the same controls, spacing, and theming, and the New Thread picker has been restyled to match it, with centered key-hint chips.
-
-- Major Improvements
-
-  - Ghostex speaks about your computer, not your Mac. Settings, notifications, remote machines, Computer Use, the first-launch guide, Agents Hub, the Docs file menu, the export dialog, and the terminal font presets no longer name Finder, the Keychain, Launch Services, Low Power Mode, or "This Mac", and describe the same things in words that fit macOS, Linux, and Windows.
-  - Every shortcut hint is written in your platform's notation. Tips, the model picker, Settings, the prompt editor, Find, Add Project, Docs, saved prompts, slash commands, and session notes all render the same chord the same way: compact glyphs on macOS, key names on Windows and Linux.
-  - Long conversations open faster. Completed turns before the latest prompt arrive already collapsed and expand on demand, a page hidden for a moment is kept instead of rebuilt, and switching sessions runs one reconcile instead of several.
-  - Changing the app, system, or terminal theme repaints every open terminal at once, including idle terminals and terminals in parked projects, and a light window no longer flashes the dark sidebar at startup.
-  - Status cards above the composer and in the transcript share one shell and one motion: compact headers, the whole header as the hover target, animated open and close, and Subagents wearing the same pending-tool card as everything else.
-  - The Windows prompt editor (Ctrl+G) ships inside Windows builds again and talks to the app over a named pipe, and its window no longer shows the generic Windows icon.
-  - The main pane in Code, Browser, Kanban, Automate, and Docs keeps a minimum width of 455px, and the sidebar respects that floor when you drag it.
-  - Hover the model or effort to see the Model & Effort Picker shortcut, and hover the context circle to read the agent's terminal status line.
-  - Clean RAM tells you what it did: a toast confirms that the diagnosis prompt is on your clipboard and asks you to paste it into an agent session.
-
-- Minor Improvements
-
-  - Get Started agent tiles wrap onto new rows instead of squeezing.
-  - The account switch submenu closes as soon as you pick an account, and the switch backdrop covers the whole chat pane until the new account is ready.
-  - Chat popups keep the chat theme, so a light chat inside a dark app shows a light menu; the scroll-to-bottom pill takes the composer's border, fill, and text color; and a disabled image menu item looks disabled.
-  - Generate Name comes before Rename in the rename dialogs.
-  - Context details stay usable in a narrow pane, with a real height cap and a one-row footer.
-  - The sidebar shows more loading bars while a large project inventory is still arriving.
-  - The collapsed composer leaves room beside More actions instead of crowding it.
-  - Unread notification text is darker in light mode, and session-list dots are visible there.
-  - Escape and single-key terminal controls act immediately in chat instead of waiting on your login profile.
-  - Workspace state is written off the UI thread, so clicking around no longer waits on a save.
-  - Annotate in the Browser toolbar now opens inside the frame that holds the page content, so a Storybook story or another framed preview can be annotated instead of only the chrome around it. It also shows up again on Ghostex's own development pages, where it used to disappear before appearing.
-  - Sidebar section headings (Pinned, Sessions, Drafts, Browser, Parked, Snoozed) carry an orange dot when a session there is working and a blue dot when one is done or waiting on you, counting rows hidden by collapse or Compact mode, plus a plain dot on the section holding the active session. Section labels are also a little larger.
-  - Every sidebar tooltip waits exactly as long as the delay you set in Settings, including project titles, session cards, fixed action buttons, the branch badge, and the question dot. Moving from one label to the next no longer skips the wait.
-
-- Stabilization
-
-  - A cancelled Claude message that was never accepted returns its text to the composer, Rewind to here does the same, and Escape can no longer let a cancelled send slip through after the text comes back.
-  - Maximized composers no longer show working, tasks, or subagents cards on top of the overlay.
-  - Claude completion notifications wait while Claude still reports background work running.
-  - Loading earlier history survives overlapping snapshots, and the pinned section keeps its drop gap when headings are collapsed.
-  - Grok's always-approve composer row is no longer mistaken for a permission card, and Cursor's compaction tool catalog stays out of the transcript.
-  - A file diff deep inside a Claude Bash result can no longer become a status card's heading.
-  - Worktrees whose registered parent is a bare repository now list their first linked checkout.
-  - Clicking the find bar, the address bar, or terminal search while the page has focus sends your keys to that field instead of the page.
-  - The Clean RAM button keeps its width while it says Copied.
-  - A macOS accessibility update no longer dismisses an open popup.
-  - Pairing a phone with Easy Connect works again with the current Easy Connect helper. The phone app now tunnels with the same tailcat version the computer serves, so update the phone app and scan the code on the computer again.
-  - A file opened into Docs from a chat link keeps working after a reload, and opening a Code link or another chat file no longer takes its access away. Two files with the same name in different folders also stay separate.
-]]></description>
-            <enclosure url="https://github.com/maddada/Ghostex/releases/download/v9.7.0/ghostex-9.7.0-arm64.dmg" length="125053696" type="application/octet-stream" sparkle:edSignature="NTwqmBJhL2DqIe6EovWDyRhXLj99HSr0FEp+Ph7i/MKg0/l+gNKnCH2U5phMduf5L9eCybiEbohQbmrdbSkZBg=="/>
-        </item>
-        <item>
-            <title>9.6.0</title>
-            <pubDate>Tue, 15 Sep 2026 10:29:20 +0000</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v9.6.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>90600</sparkle:version>
-            <sparkle:shortVersionString>9.6.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Ghostex 9.6.0
-
-## 9.6.0 - 2026-09-15
-
-- New Features
-
-  - Your phone and your Mac can now drive a Windows computer. Install Ghostex on Windows, turn on SSH, and add the Windows address with your Windows username; the connection uses whichever Windows Environment that machine is set to, either native PowerShell with Windows folders or your selected WSL distribution with Linux folders. Native PowerShell projects need Windows agent CLIs installed, and after changing the environment and restarting Windows Ghostex you reconnect the phone or desktop to pick it up.
-  - Install and update agent CLIs from Settings > Agents. Expand an agent row to install or update it, see its installed version and the command output, or open its install docs. Ghostex picks an updater for installations it recognizes and asks you which one to use when it cannot tell; mise is offered for the CLIs that support it and is the default when available. Commands run on the selected computer and keep running if you close Settings.
-  - Welcome to Ghostex greets you the first time the app runs. Five panels cover the agents already on your computer with one-click installs for Claude Code, Codex and Cursor Agent, which views to show, phone pairing and notifications, and your first project folder with its default agent. "I already know Ghostex" skips the rest, and you can reopen the whole thing from Tips > Setup or Quick Access > Commands > Setup.
-  - ZCode joins the agents Ghostex speaks natively, with chat messages, thinking, tool results, attachments and imported conversation history. Install its hooks in Settings > Agents to connect new conversations, and switch to Terminal for its setup, model menus and permission prompts. Campfire has been removed.
-  - Unsent sessions collect in a Drafts section. A new session leads Sessions for ten minutes; after that, one that still has unsent text and has never received a message drops into Drafts, below Pinned and collapsed by default. Pin a draft to move it to Pinned without sending, and sending its first message returns it to Sessions.
-  - Push a scheduled send later without rescheduling it. Right-click an agent with a timed Delayed Send, choose Postpone by, and add 10 minutes, 30 minutes, 1 hour, 2 hours or 5 hours to its existing send time. Session Automations can also wait for one specific agent on the same computer to stay idle for ten seconds before pressing Enter.
-  - Start a chat message with `!` to run a shell command inside a Claude Code or Codex session, for example `! pwd`, with the command and its output shown in the conversation.
-  - Question cards now use the real chat composer. Paste images to get numbered references and the same clickable thumbnails the composer shows, and anything you type is saved on your computer as you edit, so switching sessions or reopening Chat keeps your half-written answer with its question.
-  - Handoff and Export are one page with two clear choices. Handoff writes the file and starts the follow-up session in a single click, and Export swaps the options for the saved path when it is done.
-  - Annotate a Markdown file or an agent's reply and send the notes straight to an agent. Select text in Docs to comment or mark it Looks good, Clarify or Needs tests, then Send to deliver numbered feedback with line numbers into the session you last clicked, either its chat box or its terminal. Reply by Annotating, beside an agent reply, opens that reply in Docs for the same treatment, and Docs stays on screen while the feedback goes out.
-  - Long conversations open faster and stay browsable. Older history arrives with completed turns already collapsed so you can scroll through prompts and answers without wading through tool logs, and expanding a turn or its files loads that detail on demand.
-  - The buttons a session card shows on hover now also lead its right-click menu, in the card's own order, so the actions you chose are in both places. Close is the exception while it is on the card, and a new switch under General > Session Cards turns the whole behavior off.
-  - Ghostex is in the official Homebrew cask, so `brew install ghostex` works without adding a tap first.
-
-- Major Improvements
-
-  - The account switch card stays up until the new account is actually confirmed and the conversation is ready on it, then briefly says so or offers Retry switch when it fails. It shows both accounts with their usage percentages over a dimmed conversation, and uses a compact one-row-per-account layout on phones and narrow chat panes.
-  - Scrollbars look the same everywhere. A thin 5px track floats over the content, appears when you are near it, and reserves no gutter, across the sidebar, chat, dialogs, menus, Docs, Find, the terminal and the embedded Code editor.
-  - A brand new Claude chat shows its model and effort straight away instead of waiting up to thirty seconds for its history to resolve, and changing the effort no longer replays a model command that is already applied.
-  - The Install Hooks prompt is a friendly page with the agent's own logo and color and four cards explaining what hooks give you, rather than a bare warning.
-  - The phone reconnects on its own. With Auto reconnect on, it checks the connection when you return to the app or its network changes and brings interrupted agent terminals back; a red cloud or Reconnect starts a fresh connection when you want one.
-
-- Minor Improvements
-
-  - Hide companion sits immediately beside Hide sidebar in the titlebar and uses one clear chat-bubble icon whether the companion is showing or not.
-  - Open submenus stay open while the pointer crosses other menu rows, so you can move into them without rushing.
-  - Hex colors in messages, inline code and tables get a small rounded swatch beside the value on desktop, mobile and web, and copying still gives you the plain text.
-  - Cursor chats offer `/compact` alongside `/summarize`.
-  - Claude's default-effort pricing notice appears in chat with its original explanation and choices, so you can answer it without opening Terminal.
-  - The sessions sidebar stays on the left, and Cmd+B still collapses it.
-  - Sleeping sessions keep their normal title color with a dimmer last-active time, while awake sessions show a stronger one.
-  - Subagent transcripts have rounded corners and have dropped a header line that no longer said anything.
-  - Diff cards open against the session's own working directory, so their files resolve in worktrees and subfolders.
-  - A short copy sound can play whenever you copy from a terminal, a chat message, the chat composer, a copy button or a menu. It is off by default and lives under Settings > Notifications > Sounds.
-  - Native modal windows keep square corners that match the current theme.
-  - Forking a session names it after the original and saves that name through the agent's own rename, so it survives reopening the conversation.
-  - Light mode sidebars have darker session titles and timestamps and noticeably clearer icons.
-  - A prompt with no project shows a blank project label in Find instead of the words "No project".
-
-- Stabilization
-
-  - Codex questions asked mid-turn stay answerable after the turn ends.
-  - One dead remote tunnel can no longer stall reconnects to every other computer.
-  - Claude keeps its brand color on light notification tiles.
-  - Rewinding to a prompt that appears twice now lands on the one you picked.
-  - Sending from follow mode snaps to the bottom instead of flashing the Scroll to bottom button.
-  - The favorite star stays bright in light mode, and session hover actions stay put next to a running countdown.
-  - Companion width and the split control keep their size and color when the Browser takes focus, and the command pane's Expand no longer jumps when the pane minimizes.
-  - Local commands such as `/usage` no longer leave a pending bubble behind, and the chat composer's top fade clears once the text stops overflowing.
-  - Chat no longer gets stuck showing "Compacting" after a pasted terminal capture.
-  - Sessions started from a custom profile pick up confirmed renames instead of staying pending.
-  - A manually launched Codex opens in chat before its first hook arrives, and opening a file from chat works in projects reached through a symlink.
-  - Closing Ghostex no longer leaves an orphaned editor server holding its port.
-  - The workspace no longer flashes "Source is unavailable" or "No running terminal" while it restores at startup.
-  - Tips you have already read stay read when settings are saved from elsewhere.
-  - Session card title tooltips no longer pop up over the buttons inside the card or after the pointer has left the sidebar, and no tooltip opens on top of an open sidebar right-click menu.
-  - Tall dialogs are measured without losing their height cap, so their actions no longer get clipped on Windows.
-  - Terminal panes hand over leadership correctly for control keys, Alt combinations and plain arrow, Home and End presses.
-]]></description>
-            <enclosure url="https://github.com/maddada/Ghostex/releases/download/v9.6.0/ghostex-9.6.0-arm64.dmg" length="125763048" type="application/octet-stream" sparkle:edSignature="WTKdV217o7dAqpcKVS8spvl7SxriYLW2uOYA7n35f8lVaAd7AOVgOUNr5eU58xTFREldChMVutQk8FZwPSLqAg=="/>
-        </item>
-        <item>
-            <title>9.5.1</title>
-            <pubDate>Mon, 14 Sep 2026 06:03:51 +0000</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v9.5.1</sparkle:fullReleaseNotesLink>
-            <sparkle:version>90501</sparkle:version>
-            <sparkle:shortVersionString>9.5.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Ghostex 9.5.1
-
-## 9.5.1 - 2026-09-14
-
-- New Features
-
-  - Light mode, everywhere. Settings > General > Theme puts App theme first: Dark Gray, Light, or System, which follows your computer. The sidebar, titlebar and its popups, Settings, modals, Docs, Kanban, Automate, the Browser chrome, tooltips and native dialogs all follow it, and open windows change with the system instead of waiting for a restart. Chat and terminals follow the app theme by default and can each override it with Light, Dark or System. New installs start on System; a theme you already picked is kept, and the dark contrast and tint come back unchanged if you switch away and back. Terminal palettes come from the Ghostty themes already configured on your computer, including separate light and dark selections, and fall back to GitHub Light and GitHub Dark when nothing is configured.
-  - Windows can run without WSL. Settings > General > Terminal > Windows Environment now offers native PowerShell projects and Windows agent CLIs, and that is the default. Native sessions persist, survive closing the app or restarting gxserver, and get their own agent hooks and resume commands. Switching environments asks whether to restart now or later, and existing projects and sessions stay in the environment they started in. The Code view still needs WSL.
-  - Simple mode, in More actions or Settings > Chat, calms every chat at once: tool groups without a message collapse to a count, tool rows drop their command previews, and file edits collapse to "Edited 3 files". Expand any row for the usual detail.
-  - Chat remembers where you were. Cmd+P opens Recent Sessions to jump between chats across projects, and Cmd+Ctrl+[ and Cmd+Ctrl+] walk back and forward through the ones you visited. Coming back restores your reading position, which tool cards were expanded, the composer cursor, and the account badge, context usage and status line while their values refresh. Older messages load as you scroll back into the conversation.
-  - Your ZCode conversations show up in Quick Access next to Claude's and Codex's. Opening one resumes it in a terminal with `zcode --resume`, as long as the ZCode CLI is installed on that computer. Deleted, archived, running and subagent conversations are left out.
-  - Web Preview on the phone. From a connected computer's menu, type an address or a port like `3000`, or pick a listening port from the list, grouped into Web pages, Development tools, Services and Other ports, searchable by page title, process or port, with titles, HTTP status and favicons where the page answers. Localhost links from chat, terminals and browser actions open there instead of in the phone's browser.
-  - The mobile app picks Codex models and effort straight from the chat box, including before the first message of a new draft, and waits to apply them until the agent can take them. Long-press a session to park or unpark it, with a Parked section per project.
-  - Right-click a view's titlebar button (Code, Browser, Kanban, Automate, Docs) for Reload and Sleep. Reload refreshes that view, and Sleep unloads it while keeping its place; for Code it stops the editor server too. Selecting the view again wakes it.
-  - Default chat zoom, in Settings > Chat, scales the whole desktop chat interface from 70% to 200% in 5% steps: messages, controls and the prompt composer together.
-  - The composer gets out of the way: scrolling up collapses it, returning to the bottom expands it, and the same toolbar buttons stay visible either way.
-
-- Major Improvements
-
-  - Chat is much lighter on resources. Renderers are reused instead of rebuilt, conversations keep their state when you leave them, the transcript runtime is shared between chats, and account and status chrome survives a renderer being released. Switching between chats is quick even with many of them open.
-  - On macOS and Linux, Ghostex can let go of terminal viewers you are not looking at and reattach them when you come back. The agent keeps running the whole time; this never sleeps a session.
-  - The embedded Code view is on code-server 4.136.2 with a newer VS Code, with each web view's lifecycle now isolated so reloading or sleeping one does not disturb the others. Installed and WSL Node checks moved to Node 24.
-  - Codex questions asked mid-turn can be answered through the terminal editor, so an answer lands even while the agent keeps working.
-  - Compaction is clear in both agents: `/compact` shows a card above the input, with Claude's reported progress or a looping bar for Codex, and anything you send or queue during it waits quietly instead of warning about delivery.
-  - The live tool card at the bottom of chat shows the current work only until the same tool appears in the conversation, and clears when the turn ends, you stop the agent, or the agent asks for input. Finished searches and commands stay in that turn's work details.
-  - Assistant messages that called tools expand them underneath, from a click on the text or the chevron beside it, and keep their full text and formatting when collapsed.
-  - Parked sessions are always listed most recently active first, on desktop, mobile and web, even when your other sessions use manual ordering.
-
-- Minor Improvements
-
-  - As the chat narrows, toolbar buttons move into More actions one at a time (Summary mode, Session note, Stash prompt, Attach, Maximize, then Terminal View). If the context ring and effort still do not fit beside the model, they move together into a Model settings section at the top of More actions, and everything comes back as space opens up. Both open on a click instead of on hover.
-  - Starting a new agent from Code, Browser, Kanban, Automate or Docs keeps that view open instead of jumping to Agents. With two split companion panes, a sidebar click or a new session goes to the pane you last worked in.
-  - The chat status line appears as soon as its values are known, including the first time you open a chat, and wrapped rows stay centered with separators only between items on the same row.
-  - Agents Hub, Quick Access, Saved Prompts, Sessions, Add Worktree, Add a machine, Easy Connect, Browser History and the Automation editor share one tab strip: a rounded track with a raised selected tab, in both appearances.
-  - Background contrast, background tint and accent color are named "Dark theme ..." and live under Show Advanced, since they do not recolor light mode.
-  - Agent panes and chat companion sidepanes stop shrinking below 388px, and command pane tabs sit flush with the panel edge.
-  - The sidebar Search and Commands rows are shorter, giving the session list that space back, and Projects shows a loading skeleton until its first update arrives.
-  - Docs toolbars are compact and borderless, with annotation icons in darker shades of their highlight colors so they stay visible on a light page.
-  - Click the Subagents header to minimize the card to its header or open it again. It starts minimized in Simple mode, and your choice is remembered per session.
-  - The transcript scrollbar is a thin 5px overlay that fades out when you stop scrolling.
-  - Extra-high effort is labelled xHigh.
-  - Pi, OMP, Hermes and Antigravity keep single newlines in what you send.
-  - The working-and-waiting dot is pink now, and a session's Last Active label steps aside when it would overlap.
-  - Clicking another titlebar dropdown's button closes the open one and opens the new one in the same click.
-  - Selecting a session, focusing its terminal or pressing Escape now also marks its notification read, including one you had pushed to the back of the unread queue.
-  - Sign-in notices in chat offer Switch account beside Open terminal, like usage-limit notices already did.
-  - The Spaces editor and the Notifications popup are smaller, and the custom tag row puts its delete button first.
-  - Three new CLI commands back the mobile features: `ghostex park-session`, `ghostex select-session-chat-model`, and `ghostex ports --json --web`.
-  - Ghostex Help and Computer Use no longer invoke themselves implicitly; ask for them by name. The Beads Kanban titlebar tab is just Kanban.
-
-- Stabilization
-
-  - Queued Codex notices stay up until the send is actually delivered.
-  - Opening a session that already has a terminal tab reuses it without stealing focus.
-  - The Commands pane keeps what you typed in Action across a restore and an app restart.
-  - Windows: a sidebar divider no longer keeps its hover state after the pointer leaves, drafts survive switching between chat and terminal, and a stale native server is replaced without stopping the agents on it.
-  - A recycled TTY can no longer hand an OMP session the wrong identity.
-  - Codex composer detection tells a real input box from a menu or a setup screen, so sends do not go to the wrong place.
-  - The hooks permission prompt grows with its window instead of clipping.
-  - A draft recovery you dismissed stays dismissed.
-  - Returning to a chat can no longer leave a second composer behind.
-  - Light mode keeps its one-pixel Browser pane and sidebar lines, app modals open white from the first paint, the active session row is easier to pick out, and search boxes no longer take a black border when focused.
-  - Linux and Windows find the Ghostty config in the XDG config folder instead of only the macOS location.
-  - Light chat uses the shared Codex logo, and copying Context details between Claude and Codex is hidden for now while it is reworked.
-]]></description>
-            <enclosure url="https://github.com/maddada/Ghostex/releases/download/v9.5.1/ghostex-9.5.1-arm64.dmg" length="127275411" type="application/octet-stream" sparkle:edSignature="1O+nCiUekb+hEhZGr7zFt8Ula7pRhvSrMYaDM1RYuqMWZ3cjfWMKhJaFr+WwHAndX2b/Y5S4QN6MGklgEb0ICg=="/>
-        </item>
-        <item>
             <title>3.26.1</title>
             <pubDate>Mon, 01 Jun 2026 18:43:20 +0400</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/maddada/Ghostex/releases/tag/v3.26.1</sparkle:fullReleaseNotesLink>
@@ -384,6 +361,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: YayKpcf3KSvKK1Iv7T6OWv5433ewChFXad1vgxuCs5OLUHsXyCNIHWZqaDZedOJ8upZaSkUa7MqTYhK50lrrDg==
-length: 44504
+edSignature: pys80d+rVZKkmuy5zjBEXcMBDl5RpS/3sUTpLaMLwiFlAMisCDwp499DP62a0oH5oc7Osdu8y7rMP8ESbyzmBA==
+length: 35916
 -->

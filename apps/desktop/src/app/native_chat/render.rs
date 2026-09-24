@@ -1,24 +1,70 @@
 use super::keyboard::ComposerInputActions as _;
 use super::{appearance::ChatAppearance, state::NativeChatView};
+use gpui::StatefulInteractiveElement as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    Styled as _, Window, div, list, px,
+    Styled as _, Window, div, px,
 };
 use serde_json::json;
+
+impl NativeChatView {
+    /*
+    CDXC:SessionChat 2026-09-20 WHY:
+    The desktop shell lets this pane's transcript pass under the floating workarea header, and that
+    is only safe while the transcript really is the first thing in the pane. Everything this render
+    can put above it (the error banner, the "load earlier turns" button, the search bar, the fork
+    branch button, and the maximized window's bare background) is chrome the header would hide, so
+    the shell asks here first and keeps its old top edge instead. A new region above the transcript
+    belongs in this list. The fork button is in it even though it costs the transcript no row: it is
+    still drawn in the pane's top-right corner, which is exactly where the header would cover it.
+    */
+    pub(crate) fn renders_region_above_transcript(&self) -> bool {
+        if self.maximized_window.is_some() {
+            return true;
+        }
+        self.error.is_some()
+            || (self.snapshot["hasMore"] == true && self.list.item_count() == 0)
+            || self.snapshot["transcriptSearch"]["open"] == true
+            || self.snapshot["forkBranches"]["count"].as_u64().is_some()
+    }
+
+    /// True while the transcript shows its first row from its very top, so nothing sits above the
+    /// header to fade out.
+    /// Set by the app each frame from `agents_column_flows_under_workarea_header`; the first row is
+    /// remeasured when it changes so its top padding follows.
+    pub(crate) fn set_under_workarea_header(&mut self, under: bool, cx: &mut Context<Self>) {
+        if self.under_workarea_header == under {
+            return;
+        }
+        self.under_workarea_header = under;
+        if self.list.item_count() > 0 {
+            self.list.splice(0..1, 1);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn transcript_scrolled_to_top(&self) -> bool {
+        let top = self.list.logical_scroll_top();
+        top.item_ix == 0 && top.offset_in_item <= px(0.0)
+    }
+}
 
 impl Render for NativeChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         super::scroll_bottom::register(cx);
         super::search::register(cx);
         super::zoom::register(cx);
-        self.last_render = Some(std::time::Instant::now());
+        self.last_render = Some(web_time::Instant::now());
+        self.schedule_row_detail_sync(window, cx);
         self.main_window = Some(window.window_handle());
         if self.maximized_window.is_none() {
             self.ensure_input(window, cx);
         }
         self.sync_chat_zoom_default();
-        let p = ChatAppearance::current(&self.snapshot);
+        let p = ChatAppearance::current(&self.snapshot).on_window_glass(
+            crate::app::helpers::window_glass_active_for(self.main_window),
+        );
         let s = p.scale;
         self.sync_search_scroll();
         /*
@@ -26,7 +72,7 @@ impl Render for NativeChatView {
         React's maximized composer is a fixed overlay across the whole chat pane, so nothing of the
         conversation is left around it. The native one is a pane-sized child window over a
         translucent scrim, which leaves this pane painting underneath it: the transcript's rails,
-        minimap and fork strip showed through the margins. While it is up, the pane behind renders
+        minimap and fork button showed through the margins. While it is up, the pane behind renders
         its background only.
         */
         let maximized = self.maximized_window.is_some();
@@ -35,21 +81,51 @@ impl Render for NativeChatView {
         } else {
             self.render_search_bar(&p, window, cx)
         };
-        let fork_branch_strip = if maximized {
+        let glass = crate::app::helpers::window_glass_active_in(window);
+        let fork_branch_badge = if maximized {
             None
         } else {
-            self.render_fork_branch_strip(&p, cx)
+            self.render_fork_branch_badge(&p, glass, cx)
         };
         let state = self.snapshot.clone();
         let error = self.error.clone();
-        let transcript = list(
-            self.list.clone(),
-            cx.processor(|this, index, window, cx| this.transcript_row(index, window, cx)),
-        )
-        .flex_1()
-        .min_h_0()
-        .w_full();
-        let transcript = self.scrollable_transcript(transcript, cx);
+        self.transcript_inset = if maximized {
+            0.0
+        } else {
+            self.composer_frame(cx).transcript_inset
+        };
+        crate::app::helpers::indicator_animation::render_indicators_at_display_rate(cx.entity_id());
+        let transcript = self.render_transcript_host(window, cx);
+        let rows = self.list.item_count();
+        /*
+        CDXC:SessionFork 2026-09-21 WHY:
+        The fork button is placed against the conversation's own region, the transcript or the
+        empty-session welcome that replaces it, rather than against the pane: anchored to the pane
+        it would have covered the search bar and the "load earlier turns" row while those are up,
+        and anchored to the transcript alone a forked session with no rows yet would have lost its
+        switcher entirely.
+        */
+        let body = if maximized {
+            None
+        } else {
+            let content = transcript;
+            Some(
+                div()
+                    .id("chat-transcript")
+                    .role(gpui::Role::Document)
+                    .aria_label("Conversation")
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .w_full()
+                    .child(content)
+                    .children(fork_branch_badge)
+                    .into_any_element(),
+            )
+        };
         let composer = if self.maximized_window.is_none() {
             self.render_composer(&p, window, cx)
         } else {
@@ -61,7 +137,6 @@ impl Render for NativeChatView {
         let picker_chat = cx.weak_entity();
         let pane_windows_open = self.pane_windows_open();
         let suggestion_shadow = self.render_suggestion_shadow(&p);
-        let rows = self.list.item_count();
         let content_ready = self.error.is_none()
             && (rows > 0
                 || matches!(
@@ -74,9 +149,17 @@ impl Render for NativeChatView {
         let pane_focused = self.pane_focused;
         let composer_ready = self.composer_ready;
         let account_switch_card = self.render_account_switch_card(&p, cx);
+        // The transcript that places the floating controls' own windows is not drawn while
+        // maximized, and outside window glass they are drawn in the pane (scroll_bottom.rs,
+        // fork_branches.rs).
+        if maximized || !glass {
+            self.hide_frosted_overlays(cx);
+        }
         let subagent_viewer = self.render_subagent_viewer(&p, window, cx);
         div()
             .id("native-session-chat")
+            .role(gpui::Role::Group)
+            .aria_label("Session chat")
             .size_full()
             .min_w_0()
             .min_h_0()
@@ -87,11 +170,19 @@ impl Render for NativeChatView {
             .font_family(p.font.clone())
             .text_size(px(14.0 * s))
             .line_height(px(22.75 * s))
-            .bg(p.background)
-            .text_color(p.primary)
-            .capture_any_mouse_down(|_, window, _| {
-                super::focus::reclaim_keyboard_focus(window);
+            // Under window glass the transcript sits on the frosted column like the terminals do.
+            .bg(if crate::app::helpers::window_glass_active_in(window) {
+                gpui::transparent_black()
+            } else {
+                p.background
             })
+            .text_color(p.primary)
+            .capture_any_mouse_down(cx.listener(
+                |chat, event: &gpui::MouseDownEvent, window, cx| {
+                    super::focus::reclaim_keyboard_focus(window);
+                    chat.note_short_pane_composer_press(event.position, cx);
+                },
+            ))
             .capture_action(cx.listener(Self::scroll_bottom_action))
             .capture_action(cx.listener(Self::open_search_action))
             .capture_action(cx.listener(Self::chat_zoom_in_action))
@@ -143,14 +234,9 @@ impl Render for NativeChatView {
             )
             // The search bar is a sibling region above the list, never an overlay on it.
             .when_some(search_bar, |this, bar| this.child(bar))
-            // The fork branch switcher owns its own strip above the list, the same way.
-            .when_some(fork_branch_strip, |this, strip| this.child(strip))
-            .when(!maximized && self.list.item_count() == 0, |this| {
-                this.child(self.render_empty_transcript_region(&state, &p, cx))
-            })
-            .when(!maximized && self.list.item_count() > 0, |this| {
-                this.child(transcript)
-            })
+            // The transcript (or the welcome that stands in for an empty one), carrying the fork
+            // button in its own top-right corner.
+            .children(body)
             .child(composer)
             .children(suggestion_shadow)
             .child(

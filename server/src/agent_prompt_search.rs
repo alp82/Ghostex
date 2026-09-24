@@ -121,13 +121,35 @@ fn with_index<T>(
     force_refresh: bool,
     action: impl FnOnce(&mut CachedIndex) -> Result<T, PromptSearchError>,
 ) -> Result<T, PromptSearchError> {
+    with_index_policy(paths, force_refresh, true, action)
+}
+
+/// Run `action` against whatever index is warm, building one only when none exists.
+///
+/// CDXC:PromptSearch 2026-09-21 WHY:
+/// Opening a result acts on a row the warm index already served, addressed by a key that survives rebuilds. Letting that call rebuild an index older than `INDEX_MAX_AGE` put a full history scan between Enter and the modal closing whenever the user had browsed for more than 90 seconds.
+fn with_warm_index<T>(
+    paths: &crate::paths::GxserverPaths,
+    action: impl FnOnce(&mut CachedIndex) -> Result<T, PromptSearchError>,
+) -> Result<T, PromptSearchError> {
+    with_index_policy(paths, false, false, action)
+}
+
+fn with_index_policy<T>(
+    paths: &crate::paths::GxserverPaths,
+    force_refresh: bool,
+    rebuild_when_stale: bool,
+    action: impl FnOnce(&mut CachedIndex) -> Result<T, PromptSearchError>,
+) -> Result<T, PromptSearchError> {
     let mut guard = cache().lock().map_err(|_| PromptSearchError {
         code: "internalError",
         message: "The prompt index lock was poisoned.".to_string(),
     })?;
     let needs_build = match guard.as_ref() {
         None => true,
-        Some(cached) => force_refresh || cached.built_at.elapsed() > INDEX_MAX_AGE,
+        Some(cached) => {
+            force_refresh || (rebuild_when_stale && cached.built_at.elapsed() > INDEX_MAX_AGE)
+        }
     };
     if needs_build {
         let next_epoch = guard.as_ref().map(|cached| cached.epoch + 1).unwrap_or(1);
@@ -226,6 +248,7 @@ fn prompt_row_excerpt(text: &str, highlights: &[u16], limit: usize) -> (String, 
 pub fn search_agent_prompts(
     paths: &crate::paths::GxserverPaths,
     params: &Map<String, Value>,
+    open_sessions: &[PromptLaunchSession],
 ) -> Result<Value, PromptSearchError> {
     let query = params
         .get("query")
@@ -280,7 +303,8 @@ pub fn search_agent_prompts(
                     "text": text,
                     "textLength": rec.text.len(),
                     "truncated": truncated,
-                    "title": rec.display_title(),
+                    "title": open_session_title(open_sessions, rec)
+                        .unwrap_or_else(|| rec.display_title()),
                     "project": rec.project,
                     "projectName": rec.project_display_name(),
                     "sessionId": rec.session,
@@ -419,15 +443,62 @@ pub enum PromptLaunchPlan {
 /// A stored session row paired with the CLI family its launch agent resumes
 /// with (`claude` for a `custom-…` Claude configuration). The caller resolves
 /// the family because only it holds the project row that declares it.
+/// `named_title` is the session's Ghostex title once it has a real name, and
+/// `None` while it still shows the agent's placeholder title.
 #[derive(Debug, Clone)]
 pub struct PromptLaunchSession {
     pub session: Value,
     pub agent_family_id: Option<String>,
+    pub named_title: Option<String>,
 }
 
-/// True when a session row is a live owner of `agent_session_id`.
-/// Mirrors `isLive` in the CLI session projection: a running lifecycle or a
-/// provider that still exists.
+/// CDXC:PromptSearch 2026-09-21 WHY:
+/// A result whose conversation is open in the sidebar shows that session's Ghostex name, so the row reads the same as the sidebar row Enter focuses. Every other result keeps the title recorded in the agent's own transcript.
+fn open_session_title<'a>(
+    open_sessions: &'a [PromptLaunchSession],
+    rec: &ghostex_find::scan::Record,
+) -> Option<&'a str> {
+    if rec.session.is_empty() {
+        return None;
+    }
+    open_session_owner(open_sessions, &rec.session, rec.agent)?
+        .named_title
+        .as_deref()
+}
+
+/// The open session that owns a conversation, a running one ahead of a sleeping one.
+fn open_session_owner<'a>(
+    sessions: &'a [PromptLaunchSession],
+    agent_session_id: &str,
+    agent: Agent,
+) -> Option<&'a PromptLaunchSession> {
+    let mut owners = sessions
+        .iter()
+        .filter(|candidate| session_owns_agent_conversation(candidate, agent_session_id, agent));
+    let first = owners.next()?;
+    if session_lifecycle(first) == "running" {
+        return Some(first);
+    }
+    Some(
+        owners
+            .find(|candidate| session_lifecycle(candidate) == "running")
+            .unwrap_or(first),
+    )
+}
+
+fn session_lifecycle(candidate: &PromptLaunchSession) -> &str {
+    candidate
+        .session
+        .get("lifecycleState")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+/// True when a session row is an open owner of `agent_session_id`: a running
+/// or sleeping lifecycle, or a provider that still exists.
+///
+/// CDXC:PromptSearch 2026-09-21 WHY:
+/// A sleeping session is still a row in the sidebar, and focusing it wakes it. Counting only running sessions made Find start a second `--resume` session next to the sleeping one that already owned the conversation.
 ///
 /// CDXC:PromptSearch 2026-09-19 WHY:
 /// A session launched from a custom agent configuration stores that configuration's `custom-…` id as its agent, never the family the transcript belongs to, so the family resolved the way resume planning resolves it must count as a match too. Comparing the raw id alone made Find open a second `claude --resume` writer onto a conversation a running custom Claude session already owned.
@@ -455,7 +526,7 @@ fn session_owns_agent_conversation(
         .and_then(|state| state.get("lifecycleState"))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if lifecycle != "running" && provider_state != "exists" {
+    if !matches!(lifecycle, "running" | "sleeping") && provider_state != "exists" {
         return false;
     }
     let session_agent = session
@@ -478,7 +549,7 @@ fn session_owns_agent_conversation(
 pub fn resolve_agent_prompt_launch(
     paths: &crate::paths::GxserverPaths,
     params: &Map<String, Value>,
-    live_sessions: &[PromptLaunchSession],
+    read_conversation_sessions: impl FnOnce(&str) -> Result<Vec<PromptLaunchSession>, PromptSearchError>,
     accept_all_default: bool,
 ) -> Result<Value, PromptSearchError> {
     let action = params
@@ -504,7 +575,7 @@ pub fn resolve_agent_prompt_launch(
         None => None,
     };
 
-    with_index(paths, false, |cached| {
+    with_warm_index(paths, |cached| {
         let index = resolve_record_index(cached, params)?;
         let rec = cached.index.records[index].clone();
         let plan = match action {
@@ -515,11 +586,8 @@ pub fn resolve_agent_prompt_launch(
                         rec.agent.label()
                     )));
                 }
-                let owner = live_sessions
-                    .iter()
-                    .find(|candidate| {
-                        session_owns_agent_conversation(candidate, &rec.session, rec.agent)
-                    })
+                let conversation_sessions = read_conversation_sessions(&rec.session)?;
+                let owner = open_session_owner(&conversation_sessions, &rec.session, rec.agent)
                     .map(|candidate| &candidate.session);
                 match owner {
                     Some(session) => PromptLaunchPlan::Focus {
@@ -666,6 +734,7 @@ mod tests {
         PromptLaunchSession {
             session: session_row(agent_session_id, lifecycle, agent),
             agent_family_id: None,
+            named_title: None,
         }
     }
 

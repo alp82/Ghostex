@@ -3,7 +3,6 @@ use std::collections::HashSet;
 // RefCell backs cross-platform runtime state (window frame persistence), not
 // just the macOS-only shims that first introduced the import.
 
-use gpui::ClipboardItem;
 use gpui::Window;
 
 use crate::app::consts::*;
@@ -110,124 +109,7 @@ impl GhostexGpuiApp {
                 self.restart_and_apply_windows_update(cx);
             }
             "open" => {
-                let Some(modal) = message
-                    .get("modal")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(GpuiAppModalKind::from_modal_id)
-                else {
-                    return;
-                };
-                /*
-                CDXC:Git 2026-07-26:
-                The commit review dialog asks native for each changed file's
-                patch while it opens, and native answers with a `gitFileDiff`
-                open message. For an open commit modal that payload is inline
-                right-pane state, not a second dialog: the React host consumes
-                it without changing `activeModal`. GPUI runs one reusable
-                app-modal window, so routing it through the normal open path
-                retitled and replaced the commit window with the standalone
-                File Diff modal. Deliver it into the live window instead.
-                */
-                /*
-                CDXC:TranscriptExport 2026-08-20:
-                Capture the exported file's path from the dialog's own open
-                message so Reveal in Finder runs against Rust-held state. A
-                remote export never lands on this machine, so the sidebar
-                marks it `canReveal: false` and Rust holds nothing to reveal.
-                */
-                if modal == GpuiAppModalKind::ExportTranscriptResult {
-                    self.pending_export_transcript_reveal_path = message
-                        .get("canReveal")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false)
-                        .then(|| message.get("path").and_then(serde_json::Value::as_str))
-                        .flatten()
-                        .map(str::to_string);
-                }
-                if modal == GpuiAppModalKind::GitFileDiff
-                    && self.gpui_app_modal_current_modal(cx) == Some(GpuiAppModalKind::GitCommit)
-                {
-                    self.dispatch_open_gpui_app_modal_message(message, cx);
-                    return;
-                }
-                let has_live_command_session = gpui_app_modal_has_required_live_command_session(
-                    modal,
-                    &message,
-                    &self.command_pane,
-                );
-                if !has_live_command_session {
-                    let Some(external_session_id) =
-                        message.get("sessionId").and_then(serde_json::Value::as_str)
-                    else {
-                        return;
-                    };
-                    if !matches!(
-                        modal,
-                        GpuiAppModalKind::DelayedSend | GpuiAppModalKind::RenameSession
-                    ) || !gpui_app_modal_sidebar_session_id_allowed(external_session_id)
-                    {
-                        return;
-                    }
-                    if modal == GpuiAppModalKind::DelayedSend {
-                        // Activating the exact terminal prepares its mounted
-                        // send target, but presentation must not depend on it.
-                        let _ = self.focus_gpui_titlebar_resource_session(external_session_id, cx);
-                    }
-                }
-                let sidebar_state_message =
-                    self.gpui_app_modal_sidebar_state_message_for_open(modal, cx);
-                /*
-                CDXC:Spaces 2026-08-28:
-                A modal whose whole open payload is a known, flat set of string
-                fields is rebuilt from its own `open_message()` template plus the
-                allowlist below, so nothing else the sidebar page put on the
-                message can reach the modal host. Modals whose payload is a
-                structured draft (the worktree and diff dialogs) still forward
-                their message verbatim, because there is no flat field list to
-                enumerate for them.
-                */
-                let mut open_message = if let Some(allowed_fields) =
-                    gpui_app_modal_open_message_allowed_fields(modal)
-                {
-                    let mut open_message = modal.open_message();
-                    for field in allowed_fields {
-                        if let Some(value) = message.get(*field).and_then(serde_json::Value::as_str)
-                        {
-                            open_message[*field] = serde_json::json!(value);
-                        }
-                    }
-                    open_message
-                } else {
-                    message
-                };
-                if modal.requires_sidebar_state() {
-                    open_message["latestSidebarStateMessage"] = sidebar_state_message.clone();
-                }
-                if modal == GpuiAppModalKind::DelayedSend && !has_live_command_session {
-                    let external_session_id = open_message
-                        .get("sessionId")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string);
-                    if let Some(session_id) =
-                        external_session_id
-                            .as_deref()
-                            .and_then(|external_session_id| {
-                                self.gpui_titlebar_resource_shell_session_id(external_session_id)
-                            })
-                    {
-                        self.enrich_gpui_agents_delayed_send_open_message(
-                            &mut open_message,
-                            session_id,
-                        );
-                    }
-                }
-                self.open_gpui_app_modal_window(
-                    modal,
-                    open_message,
-                    sidebar_state_message,
-                    None,
-                    cx,
-                );
+                self.open_app_modal_from_bridge(message, cx);
             }
             "ready" | "presented" | "contentHeightMeasured" => {
                 if let Some(handle) = self.app_modal_window.clone() {
@@ -256,6 +138,9 @@ impl GhostexGpuiApp {
             }
             "pickTerminalBackgroundImageFile" => {
                 self.handle_gpui_pick_terminal_background_image_message(cx);
+            }
+            "pickWindowGlassImageFile" => {
+                self.handle_gpui_pick_window_glass_image_message(&message, cx);
             }
             "pickFirstLaunchProjectFolder" => {
                 self.handle_gpui_pick_first_launch_project_folder_message(cx);
@@ -310,13 +195,14 @@ impl GhostexGpuiApp {
                 self.handle_gpui_pick_repository_folder_message(cx);
             }
             "copySessionDetails" => {
+                // One function, because the sidebar's own copy actions reach the same clipboard
+                // write from Rust now without passing through this bridge
+                // (gx_store/sidebar_actions.rs).
                 if let Some(details_text) = message
                     .get("detailsText")
                     .and_then(serde_json::Value::as_str)
-                    .filter(|details_text| !details_text.trim().is_empty())
                 {
-                    cx.write_to_clipboard(ClipboardItem::new_string(details_text.to_string()));
-                    gpui_play_copy_sound();
+                    self.gpui_copy_session_details_text(details_text, cx);
                 }
             }
             "gpuiRemoteGxserverSidebarRequest" => {
@@ -341,35 +227,7 @@ impl GhostexGpuiApp {
                 self.complete_first_launch_setup();
                 self.close_gpui_app_modal_window_and_restore_command_focus(cx);
             }
-            "close" => {
-                if !self.remote_repository_clone_requests.is_empty() {
-                    /*
-                    CDXC:AddProject 2026-06-24-19:35:
-                    The shared Clone Repository modal clears its React dialog immediately after submit. While a GPUI remote clone is pending, keep the native app-modal host alive so the real daemon job can show cancel/final toasts; close the host only after the final toast dismisses instead of dropping visible progress.
-                    */
-                    return;
-                }
-                if self.app_modal_window.is_none() && self.close_native_app_modal_from_bridge(cx) {
-                    return;
-                }
-                let closing_modal_id = self.app_modal_window.clone().and_then(|handle| {
-                    handle
-                        .update(cx, |host, _window, _cx| host.current_modal.modal_id())
-                        .ok()
-                });
-                if matches!(
-                    closing_modal_id.as_deref(),
-                    Some("firstLaunchSetup") | Some("onboarding")
-                ) {
-                    return;
-                }
-                support_logs::append(
-                    support_logs::GpuiSupportLog::AppModal,
-                    "gpui.appModal.lifecycle",
-                    serde_json::json!({ "action": "close", "modal": closing_modal_id }),
-                );
-                self.close_gpui_app_modal_window_and_restore_command_focus(cx);
-            }
+            "close" => self.close_app_modal_from_bridge(cx),
             "toastDismissed" => {
                 if message.get("keepOpen").and_then(serde_json::Value::as_bool) == Some(true)
                     || !self.remote_repository_clone_requests.is_empty()
@@ -500,8 +358,8 @@ impl GhostexGpuiApp {
             "toast" => {
                 self.receive_gpui_app_toast_bridge_message(&message, cx);
             }
-            // CDXC:Clipboard 2026-09-15 SEE-ALSO: packages/core-ui/copy-sound.ts posts this from every React copy site; Rust owns the sound and its setting (gpui_play_copy_sound).
-            "playCopySound" => gpui_play_copy_sound(),
+            // CDXC:Clipboard 2026-09-15 SEE-ALSO: packages/core-ui/copy-sound.ts posts this from every React copy site; Rust owns the sound and its setting, and since 2026-09-22 the "Copied!" bubble too (gpui_copy_feedback).
+            "playCopySound" => gpui_copy_feedback(cx),
             /*
             CDXC:Settings 2026-07-29:
             The shared React modal host already reports its uncaught renderer
@@ -638,6 +496,18 @@ impl GhostexGpuiApp {
             "quitResourcesFromTitlebar" => {
                 self.receive_gpui_titlebar_resources_quit_message(&message, window, cx);
             }
+            // The old runtime edited the workspace session groups document. Since M5 piece 7c it
+            // writes neither client storage nor the daemon: this is the one writer, behind the
+            // pending-push guard (gx_store/workspace_groups.rs). A payload whose `state` is not an
+            // object is dropped rather than parsed, because an empty document REMOVES the key and a
+            // malformed message must never be the thing that deletes the user's groups.
+            ghostex_gx_core::WORKSPACE_GROUPS_HAND_OFF_MESSAGE_TYPE => {
+                let Some(state) = message.get("state").filter(|state| state.is_object()) else {
+                    return;
+                };
+                let state = state.clone();
+                self.gx_store_receive_workspace_groups_hand_off(&state, cx);
+            }
             "primaryAgentLauncherChanged" => {
                 self.sidebar_primary_agent_launcher_id = message["agentId"]
                     .as_str()
@@ -645,17 +515,9 @@ impl GhostexGpuiApp {
                     .filter(|agent_id| !agent_id.is_empty() && agent_id.len() <= 128)
                     .map(str::to_string);
             }
-            "startGxserverFromTitlebar" => {
-                self.show_gpui_gxserver_bootstrap_toast(
-                    "info",
-                    "Loading sessions",
-                    "Starting gxserver and loading projects.",
-                    true,
-                    cx,
-                );
-                self.start_gpui_local_gxserver_bootstrap(false, cx);
-                self.dispatch_gpui_titlebar_resources_project_state_update(cx);
-            }
+            // The sidebar's own Load Sessions row reaches the same three steps without this
+            // bridge since M5 (gx_store/sidebar_open.rs), so they are one function.
+            "startGxserverFromTitlebar" => self.start_local_gxserver_from_sidebar(cx),
             "accountSwitchProgress" => {
                 let (Some(project_id), Some(session_id)) =
                     (message["projectId"].as_str(), message["sessionId"].as_str())
@@ -1030,5 +892,154 @@ fn gpui_app_modal_open_message_allowed_fields(
             "spaceName",
         ]),
         _ => None,
+    }
+}
+
+impl GhostexGpuiApp {
+    /// What the bridge's `open` arm does: validate the modal, rebuild its open message from the
+    /// allowlist, attach the sidebar state, and OPEN THE WINDOW.
+    ///
+    /// CDXC:AppModal 2026-09-21 WHY:
+    /// Moved out of the `open` arm so the sidebar store opens a dialog through the same code the old runtime's `openAppModal` reaches, instead of through `dispatch_open_gpui_app_modal_message`, which only delivers a message INTO a window that already exists and returns silently when none does. The store's Rename, Note, More menu rows, Configure, Space editor, Add Worktree and History all called that one, so every one of them did nothing unless a dialog happened to be open already, while their gates (which compare the planned call, not the host that performs it) stayed clean.
+    pub(crate) fn open_app_modal_from_bridge(
+        &mut self,
+        message: serde_json::Value,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(modal) = message
+            .get("modal")
+            .and_then(serde_json::Value::as_str)
+            .and_then(GpuiAppModalKind::from_modal_id)
+        else {
+            return;
+        };
+        /*
+        CDXC:Git 2026-07-26:
+        The commit review dialog asks native for each changed file's
+        patch while it opens, and native answers with a `gitFileDiff`
+        open message. For an open commit modal that payload is inline
+        right-pane state, not a second dialog: the React host consumes
+        it without changing `activeModal`. GPUI runs one reusable
+        app-modal window, so routing it through the normal open path
+        retitled and replaced the commit window with the standalone
+        File Diff modal. Deliver it into the live window instead.
+        */
+        /*
+        CDXC:TranscriptExport 2026-08-20:
+        Capture the exported file's path from the dialog's own open
+        message so Reveal in Finder runs against Rust-held state. A
+        remote export never lands on this machine, so the sidebar
+        marks it `canReveal: false` and Rust holds nothing to reveal.
+        */
+        if modal == GpuiAppModalKind::ExportTranscriptResult {
+            self.pending_export_transcript_reveal_path = message
+                .get("canReveal")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+                .then(|| message.get("path").and_then(serde_json::Value::as_str))
+                .flatten()
+                .map(str::to_string);
+        }
+        if modal == GpuiAppModalKind::GitFileDiff
+            && self.gpui_app_modal_current_modal(cx) == Some(GpuiAppModalKind::GitCommit)
+        {
+            self.dispatch_open_gpui_app_modal_message(message, cx);
+            return;
+        }
+        let has_live_command_session =
+            gpui_app_modal_has_required_live_command_session(modal, &message, &self.command_pane);
+        if !has_live_command_session {
+            let Some(external_session_id) =
+                message.get("sessionId").and_then(serde_json::Value::as_str)
+            else {
+                return;
+            };
+            if !matches!(
+                modal,
+                GpuiAppModalKind::DelayedSend | GpuiAppModalKind::RenameSession
+            ) || !gpui_app_modal_sidebar_session_id_allowed(external_session_id)
+            {
+                return;
+            }
+            if modal == GpuiAppModalKind::DelayedSend {
+                // Activating the exact terminal prepares its mounted
+                // send target, but presentation must not depend on it.
+                let _ = self.focus_gpui_titlebar_resource_session(external_session_id, cx);
+            }
+        }
+        let sidebar_state_message = self.gpui_app_modal_sidebar_state_message_for_open(modal, cx);
+        /*
+        CDXC:Spaces 2026-08-28:
+        A modal whose whole open payload is a known, flat set of string
+        fields is rebuilt from its own `open_message()` template plus the
+        allowlist below, so nothing else the sidebar page put on the
+        message can reach the modal host. Modals whose payload is a
+        structured draft (the worktree and diff dialogs) still forward
+        their message verbatim, because there is no flat field list to
+        enumerate for them.
+        */
+        let mut open_message =
+            if let Some(allowed_fields) = gpui_app_modal_open_message_allowed_fields(modal) {
+                let mut open_message = modal.open_message();
+                for field in allowed_fields {
+                    if let Some(value) = message.get(*field).and_then(serde_json::Value::as_str) {
+                        open_message[*field] = serde_json::json!(value);
+                    }
+                }
+                open_message
+            } else {
+                message
+            };
+        if modal.requires_sidebar_state() {
+            open_message["latestSidebarStateMessage"] = sidebar_state_message.clone();
+        }
+        if modal == GpuiAppModalKind::DelayedSend && !has_live_command_session {
+            let external_session_id = open_message
+                .get("sessionId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            if let Some(session_id) =
+                external_session_id
+                    .as_deref()
+                    .and_then(|external_session_id| {
+                        self.gpui_titlebar_resource_shell_session_id(external_session_id)
+                    })
+            {
+                self.enrich_gpui_agents_delayed_send_open_message(&mut open_message, session_id);
+            }
+        }
+        self.open_gpui_app_modal_window(modal, open_message, sidebar_state_message, None, cx);
+    }
+    /// What `closeAppModal(...)` does. Moved out of the bridge's `close` arm so the sidebar's own
+    /// Rename and Note, which close the open dialog before they open theirs, run the SAME close
+    /// rather than a second copy of it (gx_store/sidebar_modals.rs).
+    pub(crate) fn close_app_modal_from_bridge(&mut self, cx: &mut gpui::Context<Self>) {
+        if !self.remote_repository_clone_requests.is_empty() {
+            /*
+            CDXC:AddProject 2026-06-24-19:35:
+            The shared Clone Repository modal clears its React dialog immediately after submit. While a GPUI remote clone is pending, keep the native app-modal host alive so the real daemon job can show cancel/final toasts; close the host only after the final toast dismisses instead of dropping visible progress.
+            */
+            return;
+        }
+        if self.app_modal_window.is_none() && self.close_native_app_modal_from_bridge(cx) {
+            return;
+        }
+        let closing_modal_id = self.app_modal_window.clone().and_then(|handle| {
+            handle
+                .update(cx, |host, _window, _cx| host.current_modal.modal_id())
+                .ok()
+        });
+        if matches!(
+            closing_modal_id.as_deref(),
+            Some("firstLaunchSetup") | Some("onboarding")
+        ) {
+            return;
+        }
+        support_logs::append(
+            support_logs::GpuiSupportLog::AppModal,
+            "gpui.appModal.lifecycle",
+            serde_json::json!({ "action": "close", "modal": closing_modal_id }),
+        );
+        self.close_gpui_app_modal_window_and_restore_command_focus(cx);
     }
 }

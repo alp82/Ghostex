@@ -50,24 +50,10 @@ impl NativeChatView {
             .to_string();
         body.push(
             div()
-                .flex()
-                .items_start()
-                .justify_between()
-                .gap(px(8.0 * s))
-                .child(
-                    div()
-                        .flex_1()
-                        .text_color(p.card_muted)
-                        .line_height(px(19.6 * s))
-                        .child(text(question, "question")),
-                )
-                .when(count > 1, |this| {
-                    this.child(div().flex_shrink_0().text_size(px(12.0 * s)).child(format!(
-                        "question {} of {}",
-                        index + 1,
-                        count
-                    )))
-                })
+                .min_w_0()
+                .text_color(p.card_muted)
+                .line_height(px(19.6 * s))
+                .child(text(question, "question"))
                 .into_any_element(),
         );
         if question["multiSelect"] == true {
@@ -91,7 +77,9 @@ impl NativeChatView {
             .flatten()
             .enumerate()
         {
-            let selected = text(&draft, "other").trim().is_empty()
+            // A multi-select note is sent beside the picks, so they stay visible while it is typed.
+            let selected = (question["multiSelect"] == true
+                || text(&draft, "other").trim().is_empty())
                 && draft["indices"].as_array().is_some_and(|indices| {
                     indices
                         .iter()
@@ -215,7 +203,9 @@ impl NativeChatView {
             .px(px(16.0 * s))
             .pt(px(12.0 * s))
             .pb(px(if collapsed { 12.0 } else { 6.0 } * s))
-            .hover(|style| style.bg(p.foreground.opacity(0.04)))
+            // The footer's buttons always follow, so only the top corners meet the card's rounding.
+            .rounded_t(px((12.0 * s - 1.0).max(0.0)))
+            .hover(|style| style.bg(super::cards::card_hover_fill(p)))
             .child(
                 gpui::svg()
                     .path("titlebar/help-circle.svg")
@@ -242,6 +232,19 @@ impl NativeChatView {
                         )
                     }),
             )
+            // CDXC:SessionChat 2026-09-21 DECISION: User: move the "question N of M" counter into the header next to the chevron, only while the card is expanded.
+            .when(count > 1 && !collapsed, |header| {
+                header.child(
+                    div()
+                        .flex_shrink_0()
+                        .h(px(22.75 * s))
+                        .flex()
+                        .items_center()
+                        .text_size(px(12.0 * s))
+                        .text_color(p.muted)
+                        .child(format!("question {} of {}", index + 1, count)),
+                )
+            })
             .child(
                 gpui::svg()
                     .path(if collapsed {

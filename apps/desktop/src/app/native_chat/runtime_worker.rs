@@ -1,4 +1,4 @@
-use ghostex_chat_runtime::ChatRuntime;
+use ghostex_chat_runtime::{ChatRuntime, ReplaySink};
 use serde_json::Value;
 use std::{
     sync::{
@@ -40,10 +40,41 @@ pub(crate) struct ChatRuntimeWorker {
     outputs: mpsc::Receiver<ChatRuntimeOutput>,
     /// True while the thread waits for work, so a synchronous query knows an answer is imminent.
     idle: Arc<AtomicBool>,
+    /// The Rust brain, when `chatBrain` is `rust`. It answers the same five calls, so nothing above
+    /// this file knows which brain it is driving.
+    ///
+    /// CDXC:SessionChat 2026-09-22 WHY:
+    /// Temporary. The chat's rules exist twice while the brain moves from the TypeScript bundle
+    /// running in QuickJS to `packages/gx-chat-core` (hosted by `src/app/gx_chat/`), and this is the
+    /// switch. With `quickjs`, the shipped default, none of the Rust host runs; with `rust`, no
+    /// QuickJS chat runtime is created for a chat view. Both this field and the setting behind it
+    /// are deleted with the TypeScript brain.
+    host: Option<crate::app::gx_chat::ChatHostHandle>,
 }
 
 impl ChatRuntimeWorker {
-    pub(crate) fn start(config: Value, wake: impl Fn() + Send + Sync + 'static) -> Self {
+    /// `recording` is the `native.chat.replay` file for this chat, or `None` when the scenario
+    /// is off (replay_recording.rs). It is opened on the runtime thread, so a recording that
+    /// cannot be made private stops the chat instead of leaking the conversation.
+    pub(crate) fn start(
+        config: Value,
+        recording: Option<std::path::PathBuf>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        // The switch, read once per chat view, which is what "at chat runtime creation" means.
+        // `rust` creates no QuickJS runtime at all: no thread, no 96 MiB heap, no bundle evaluation.
+        if crate::shared_settings::shared_sidebar_settings_snapshot().chat_brain()
+            == crate::shared_settings::SharedChatBrain::Rust
+        {
+            let (commands, _unused_commands) = mpsc::channel::<Command>();
+            let (_unused_outputs, outputs) = mpsc::channel();
+            return Self {
+                commands,
+                outputs,
+                idle: Arc::new(AtomicBool::new(false)),
+                host: Some(crate::app::gx_chat::ChatHostHandle::start(config, wake)),
+            };
+        }
         let (commands, command_rx) = mpsc::channel::<Command>();
         let (output_tx, outputs) = mpsc::channel();
         let idle = Arc::new(AtomicBool::new(false));
@@ -55,7 +86,15 @@ impl ChatRuntimeWorker {
                     let _ = output_tx.send(output);
                     wake();
                 };
-                let mut runtime = match ChatRuntime::new(&config) {
+                // The Rust chat core run beside this one when `native.chat.shadow` is on, fed the
+                // same seam lines the recorder writes (`super::shadow`). `None` when the scenario
+                // is off, and then nothing below it costs anything.
+                let shadow = super::shadow::ShadowHost::start_if_enabled();
+                let shadow_sink = shadow.clone().map(|shadow| -> ReplaySink {
+                    Box::new(move |line: &str| shadow.record(line))
+                });
+                let mut runtime = match ChatRuntime::new(&config, recording.as_deref(), shadow_sink)
+                {
                     Ok(runtime) => runtime,
                     Err(error) => {
                         post(ChatRuntimeOutput::Error(error.to_string()));
@@ -68,11 +107,17 @@ impl ChatRuntimeWorker {
                         .drain()
                     {
                         Ok(output) => {
+                            // The other half of every comparison: the document the live brain just
+                            // drained. Its own `take` record reaches the shadow one call later.
+                            if let Some(shadow) = shadow.as_ref() {
+                                shadow.document(&output);
+                            }
                             *next_wake = output["nextWakeMs"]
                                 .as_u64()
                                 .map(|ms| Instant::now() + Duration::from_millis(ms.max(1)));
                             let carries_change = output["itemsSplice"].is_object()
                                 || output["snapshot"].is_object()
+                                || output["rowDetails"].is_object()
                                 || output["requests"]
                                     .as_array()
                                     .is_some_and(|requests| !requests.is_empty());
@@ -134,16 +179,25 @@ impl ChatRuntimeWorker {
             commands,
             outputs,
             idle,
+            host: None,
         }
     }
 
     /// Queue a controller call; its output arrives through the wake callback.
     pub(crate) fn call(&self, method: &'static str, arguments: Vec<Value>) {
+        if let Some(host) = &self.host {
+            host.call(method, arguments);
+            return;
+        }
         let _ = self.commands.send(Command::Call { method, arguments });
     }
 
     /// Like `call` with one argument that is already JSON text; the runtime parses it itself.
     pub(crate) fn call_raw(&self, method: &'static str, raw: String) {
+        if let Some(host) = &self.host {
+            host.call_raw(method, raw);
+            return;
+        }
         let _ = self.commands.send(Command::CallRaw { method, raw });
     }
 
@@ -157,6 +211,9 @@ impl ChatRuntimeWorker {
         arguments: Vec<Value>,
         timeout: Duration,
     ) -> Option<Value> {
+        if let Some(host) = &self.host {
+            return host.query(method, arguments, timeout);
+        }
         if !self.idle.load(Ordering::Acquire) {
             return None;
         }
@@ -176,6 +233,9 @@ impl ChatRuntimeWorker {
         arguments: Vec<Value>,
         timeout: Duration,
     ) -> Option<Value> {
+        if let Some(host) = &self.host {
+            return host.query_for_gesture(method, arguments, timeout);
+        }
         let (reply, answer) = mpsc::channel();
         self.commands
             .send(Command::Query {
@@ -188,6 +248,20 @@ impl ChatRuntimeWorker {
     }
 
     pub(crate) fn take_outputs(&self) -> Vec<ChatRuntimeOutput> {
+        if let Some(host) = &self.host {
+            return host
+                .take_outputs()
+                .into_iter()
+                .map(|output| match output {
+                    crate::app::gx_chat::ChatHostOutput::Drained(value) => {
+                        ChatRuntimeOutput::Drained(value)
+                    }
+                    crate::app::gx_chat::ChatHostOutput::Error(error) => {
+                        ChatRuntimeOutput::Error(error)
+                    }
+                })
+                .collect();
+        }
         self.outputs.try_iter().collect()
     }
 }

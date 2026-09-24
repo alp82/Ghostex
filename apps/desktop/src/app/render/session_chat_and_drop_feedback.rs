@@ -20,9 +20,28 @@ use gpui_component::v_flex;
 use crate::app::consts::*;
 use crate::app::helpers::*;
 use crate::app::model::*;
+use crate::app::native_sidebar::drag::SidebarDrag;
 use crate::*;
 
 impl GhostexGpuiApp {
+    /// CDXC:SessionChat 2026-09-21 WHY:
+    /// The window root redraws for every sidebar scroll tick, store update and header change, and an uncached child view is rendered and laid out again on each of those draws: the visible transcript rows' markdown was measured again on frames where the chat had not changed, which is what made mouse wheel scrolling stall.
+    /// A cached view is reused until it is notified or its bounds change, so anything the chat reads from outside itself has to notify it; shared settings and the system appearance do so through `notify_native_chat_views`.
+    fn cached_native_chat(
+        view: gpui::Entity<crate::app::native_chat::state::NativeChatView>,
+    ) -> impl IntoElement {
+        gpui::AnyView::from(view).cached(gpui::StyleRefinement::default().size_full())
+    }
+
+    pub(crate) fn notify_native_chat_views(&mut self, cx: &mut gpui::Context<Self>) {
+        for view in self.native_chat_views.values() {
+            view.update(cx, |_, cx| cx.notify());
+        }
+        // The Kanban board and the Automate page are cached views drawn from the same settings.
+        self.native_kanban_notify_appearance(cx);
+        self.native_automate_notify_appearance(cx);
+    }
+
     pub(crate) fn render_agents_session_chat_body(
         &self,
         pane_id: WorkspacePaneId,
@@ -63,7 +82,7 @@ impl GhostexGpuiApp {
                     .min_w_0()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(view)
+                    .child(Self::cached_native_chat(view))
                     .into_any_element()
             }
             None => self.render_session_chat_surface_content(session_id),
@@ -91,22 +110,7 @@ impl GhostexGpuiApp {
                 .min_w_0()
                 .min_h_0()
                 .overflow_hidden()
-                .child(view.clone())
-                .into_any_element();
-        }
-        if let Some(surface) = self
-            .agents_chat_surfaces
-            .get(&session_id)
-            .filter(|_| switching.is_none())
-        {
-            return div()
-                .id(format!("react-chat-{}", session_id.0))
-                .relative()
-                .size_full()
-                .min_w_0()
-                .min_h_0()
-                .overflow_hidden()
-                .child(surface.clone())
+                .child(Self::cached_native_chat(view.clone()))
                 .into_any_element();
         }
         {
@@ -118,12 +122,10 @@ impl GhostexGpuiApp {
                     "Chat unavailable",
                     "Session Chat needs the local Ghostex server. Start it from the sidebar, then toggle Chat View again.",
                 )
-            } else if self.session_chat_use_gpui {
+            } else {
                 // A chat-mode tab whose native view does not exist yet: the session is still being
                 // created or mapped, so the pane shows the transcript skeleton, not a sentence.
                 return self.render_session_chat_skeleton();
-            } else {
-                ("Loading Chat...", "")
             };
             let hide_emails = shared_settings::shared_sidebar_settings_snapshot()
                 .object()
@@ -159,7 +161,7 @@ impl GhostexGpuiApp {
                 .min_h_0()
                 .items_center()
                 .justify_center()
-                .bg(gpui_session_chat_background_color())
+                .bg(glass_clear(gpui_session_chat_background_color()))
                 .child(
                     v_flex()
                         .max_w(px(WORKSPACE_STATE_PLACEHOLDER_MAX_WIDTH))
@@ -236,7 +238,7 @@ impl GhostexGpuiApp {
             .min_h_0()
             .w_full()
             .overflow_hidden()
-            .bg(gpui_session_chat_background_color())
+            .bg(glass_clear(gpui_session_chat_background_color()))
             /*
             CDXC:FocusRouting 2026-09-17 WHY:
             The native chat composer stops mouse-down propagation, so a bubble-phase listener here never sees a click on the composer itself.
@@ -261,14 +263,24 @@ impl GhostexGpuiApp {
                     this.update_command_tab_over_workspace_pane_drag_feedback(event, pane_id, cx);
                 },
             ))
+            .on_drag_move::<SidebarDrag>(cx.listener(
+                move |this, event: &gpui::DragMoveEvent<SidebarDrag>, _window, cx| {
+                    this.update_sidebar_session_pane_drag_feedback(event, pane_id, cx);
+                },
+            ))
             .can_drop(|value, _window, _cx| {
-                value.is::<DraggedWorkspaceTab>() || value.is::<DraggedCommandTab>()
+                value.is::<DraggedWorkspaceTab>()
+                    || value.is::<DraggedCommandTab>()
+                    || value.is::<SidebarDrag>()
             })
             .on_drop(
                 cx.listener(move |this, dragged: &DraggedWorkspaceTab, window, cx| {
                     this.handle_workspace_pane_body_drop(pane_id, dragged, window, cx);
                 }),
             )
+            .on_drop(cx.listener(move |this, dragged: &SidebarDrag, window, cx| {
+                this.handle_sidebar_session_pane_body_drop(pane_id, dragged, window, cx);
+            }))
             .on_drop(
                 cx.listener(move |this, dragged: &DraggedCommandTab, window, cx| {
                     this.handle_command_tab_workspace_pane_body_drop(pane_id, dragged, window, cx);

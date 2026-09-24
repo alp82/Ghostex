@@ -3,6 +3,7 @@ import Fuse from 'fuse.js';
 import { Command } from '@/packages/components/ui/command';
 import {
   APP_SHOTS_HOTKEY_OPTIONS,
+  CHAT_BRAIN_OPTIONS,
   DIAGNOSTIC_LOGGING_SCENARIOS,
   SESSION_TITLE_GENERATION_AGENT_OPTIONS,
 } from '../../shared/ghostex-settings';
@@ -274,6 +275,12 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
             ]),
           },
           {
+            key: 'chatBrain',
+            title: 'Chat brain',
+            subtitle: 'Which engine runs the chat. Leave this on QuickJS; the Rust engine is still in development.',
+            options: CHAT_BRAIN_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
+          },
+          {
             key: 'showSessionCommandCopyActions',
             title: 'Show command copy actions',
             subtitle: 'Show Copy resume and Copy attach command in session context menus.',
@@ -380,7 +387,7 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
             key: 'accounts',
             title: 'Accounts, usage stats and automatic continuation',
             subtitle:
-              'Current CLI login, Claude cswap, Codex xswap, titlebar, status lines, usage limits and resets, account indicators, switching, hide emails, privacy, error recovery and retry settings.',
+              'Current CLI login, Claude cswap, Codex xswap, sidebar usage strip, status lines, usage limits and resets, account indicators, switching, hide emails, privacy, error recovery and retry settings.',
           },
         ],
       },
@@ -408,12 +415,6 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
             key: 'customTitleCommand',
             subtitle: 'Run this command with the title prompt on stdin. It should print only the title.',
             title: 'Custom Title Command',
-          },
-          {
-            key: 'sessionChatModelPicksSessionOnly',
-            subtitle:
-              'Apply a model or effort picked in a chat to that session only, without changing the default for new sessions. Off saves every pick as the default. Claude only: other agents always save the default.',
-            title: 'Session-only model picks',
           },
           {
             key: 'acceptAll',
@@ -518,11 +519,11 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
         settings: [
           {
             key: 'titlebarViewOrder',
-            title: 'Arrange titlebar views',
-            subtitle: `Reorder built-in, extension, and custom views. ${formatSidebarHotkeyLabel('alt+1')} through ${formatSidebarHotkeyLabel('alt+9')} follow the visible order.`,
+            title: 'Arrange views',
+            subtitle: `Reorder built-in, extension, and custom views. New tabs open in this order, and ${formatSidebarHotkeyLabel('alt+1')} through ${formatSidebarHotkeyLabel('alt+9')} follow the tabs in the view panel.`,
           },
         ],
-        title: 'Titlebar views',
+        title: 'Views',
       },
       {
         id: 'official',
@@ -545,12 +546,12 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
         settings: [
           {
             key: 'accountTitlebarUsage',
-            title: 'Titlebar account usage',
+            title: 'Account usage in the sidebar',
             subtitle:
-              'Show or hide usage stats for saved Claude and Codex accounts in the desktop titlebar. Star accounts to pin their usage.',
+              'Show or hide usage stats for saved Claude and Codex accounts at the bottom of the desktop sidebar. Star accounts to pin their usage.',
           },
         ],
-        title: 'Titlebar account usage',
+        title: 'Account usage in the sidebar',
       },
       {
         id: 'store',

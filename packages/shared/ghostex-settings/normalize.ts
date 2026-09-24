@@ -1,4 +1,5 @@
 import { normalizeProjectViewTemplates } from './project-views';
+import { normalizeProjectWebsiteSettings } from './project-websites';
 import { normalizeContentThemeSetting } from '../appearance';
 import { clampAgentManagerZoomPercent, clampSidebarThemeSetting } from '../session-grid-contract-session';
 import { normalizeSessionChatTheme } from '../session-chat';
@@ -42,16 +43,27 @@ import { normalizeTerminalDevServerIgnoredPortRules } from './terminal-dev-serve
 import { normalizeSessionCardHoverButtons, type SessionCardHoverButtonItem } from '../session-card-hover-actions';
 import {
   clampSidebarTitlebarBackgroundDarknessPercent,
+  clampSidebarTitlebarLightBackgroundLightnessPercent,
   getSidebarTitlebarBackgroundDarknessForColor,
   getSidebarTitlebarBackgroundForDarkness,
   getSidebarTitlebarForegroundForBackground,
+  getSidebarTitlebarLightBackgroundForLightness,
+  normalizeDarkThemePreset,
+  normalizeLightThemePreset,
   normalizeSidebarTitlebarHexColor,
+  readThemeContrastPoints,
+  resolveDarkChromeControls,
+  resolveLightChromeControls,
 } from './titlebar-color';
 import {
   type AppShotsHotkey,
   type AutoSleepIdleMinutes,
   type ChatFileOpenView,
   type CommandsPanelSide,
+  type WindowGlassMode,
+  type WindowGlassSource,
+  type WindowGlassImagePlacement,
+  type PanelAnimationSpeed,
   type DefaultEditorCommand,
   type GhosttyConfirmCloseSurface,
   type GhosttyCopyOnSelect,
@@ -59,6 +71,7 @@ import {
   type KeepAwakeDurationMinutes,
   type PortlessProtocol,
   type PreferredAgentInterface,
+  type ChatBrain,
   type PromptEditorBackend,
   type SidebarSpaceSwitchBehavior,
   type SidebarVisibilityMemory,
@@ -77,6 +90,9 @@ import {
   clampProjectSwitchKeepAliveMinutes,
   clampSidebarTooltipDelayMs,
   clampTerminalPanePaddingPx,
+  clampWindowGlassSidebarOpacityPercent,
+  clampWindowGlassWorkAreaTintPercent,
+  migrateWindowGlassWorkAreaTintPercent,
   type ghostexSettings,
 } from './types';
 
@@ -154,19 +170,57 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     ),
     DEFAULT_ghostex_SETTINGS.customSidebarTitlebarBackgroundTintColor
   );
-  const customSidebarTitlebarBackgroundColor = getSidebarTitlebarBackgroundForDarkness(
-    customSidebarTitlebarBackgroundDarknessPercent,
-    customSidebarTitlebarBackgroundTintColor
-  );
   /**
-   * CDXC:Theming 2026-08-24:
-   * The accent color is a plain hex color like the sidebar/titlebar colors, so
-   * it uses the same six-digit hex normalization and falls back to the default
-   * sky tone when the stored value is not a usable color.
+   * CDXC:Theming 2026-09-22 WHY:
+   * A settings file saved before the preset dropdowns existed has no preset key. If its contrast or
+   * tint differs from the shipped default, the user tuned them, so the dark dropdown migrates to Custom
+   * and their chrome is unchanged; otherwise it lands on the Gray preset that resolves to the same color.
    */
-  const accentColor = normalizeSidebarTitlebarHexColor(
-    readString(source, 'accentColor', DEFAULT_ghostex_SETTINGS.accentColor),
-    DEFAULT_ghostex_SETTINGS.accentColor
+  const darkThemePreset =
+    normalizeDarkThemePreset(source.darkThemePreset) ??
+    (customSidebarTitlebarBackgroundDarknessPercent !==
+      DEFAULT_ghostex_SETTINGS.customSidebarTitlebarBackgroundDarknessPercent ||
+    customSidebarTitlebarBackgroundTintColor !== DEFAULT_ghostex_SETTINGS.customSidebarTitlebarBackgroundTintColor
+      ? 'custom'
+      : DEFAULT_ghostex_SETTINGS.darkThemePreset);
+  const themeSidebarContrast = readThemeContrastPoints(source, 'themeSidebarContrast');
+  const themeWorkAreaContrast = readThemeContrastPoints(source, 'themeWorkAreaContrast');
+  const darkChromeControls = resolveDarkChromeControls({
+    themeSidebarContrast,
+    darkThemePreset,
+    customSidebarTitlebarBackgroundDarknessPercent,
+    customSidebarTitlebarBackgroundTintColor,
+  });
+  const customSidebarTitlebarBackgroundColor = getSidebarTitlebarBackgroundForDarkness(
+    darkChromeControls.darknessPercent,
+    darkChromeControls.tintColor
+  );
+  const customSidebarTitlebarLightBackgroundLightnessPercent = clampSidebarTitlebarLightBackgroundLightnessPercent(
+    readNumber(
+      source,
+      'customSidebarTitlebarLightBackgroundLightnessPercent',
+      DEFAULT_ghostex_SETTINGS.customSidebarTitlebarLightBackgroundLightnessPercent
+    )
+  );
+  const customSidebarTitlebarLightBackgroundTintColor = normalizeSidebarTitlebarHexColor(
+    readString(
+      source,
+      'customSidebarTitlebarLightBackgroundTintColor',
+      DEFAULT_ghostex_SETTINGS.customSidebarTitlebarLightBackgroundTintColor
+    ),
+    DEFAULT_ghostex_SETTINGS.customSidebarTitlebarLightBackgroundTintColor
+  );
+  const lightThemePreset =
+    normalizeLightThemePreset(source.lightThemePreset) ?? DEFAULT_ghostex_SETTINGS.lightThemePreset;
+  const lightChromeControls = resolveLightChromeControls({
+    themeSidebarContrast,
+    lightThemePreset,
+    customSidebarTitlebarLightBackgroundLightnessPercent,
+    customSidebarTitlebarLightBackgroundTintColor,
+  });
+  const customSidebarTitlebarLightBackgroundColor = getSidebarTitlebarLightBackgroundForLightness(
+    lightChromeControls.lightnessPercent,
+    lightChromeControls.tintColor
   );
   return {
     actionCompletionSound: clampCompletionSoundSetting(
@@ -233,6 +287,16 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     kanbanViewTabHidden: readBoolean(source, 'kanbanViewTabHidden', DEFAULT_ghostex_SETTINGS.kanbanViewTabHidden),
     automateViewTabHidden: readBoolean(source, 'automateViewTabHidden', DEFAULT_ghostex_SETTINGS.automateViewTabHidden),
     docsViewTabHidden: readBoolean(source, 'docsViewTabHidden', DEFAULT_ghostex_SETTINGS.docsViewTabHidden),
+    terminalViewTabHidden: readBoolean(source, 'terminalViewTabHidden', DEFAULT_ghostex_SETTINGS.terminalViewTabHidden),
+    linearViewTabHidden: readBoolean(source, 'linearViewTabHidden', DEFAULT_ghostex_SETTINGS.linearViewTabHidden),
+    jiraViewTabHidden: readBoolean(source, 'jiraViewTabHidden', DEFAULT_ghostex_SETTINGS.jiraViewTabHidden),
+    githubViewTabHidden: readBoolean(source, 'githubViewTabHidden', DEFAULT_ghostex_SETTINGS.githubViewTabHidden),
+    projectWebsiteViews: normalizeProjectWebsiteSettings(source.projectWebsiteViews),
+    storybookViewTabHidden: readBoolean(
+      source,
+      'storybookViewTabHidden',
+      DEFAULT_ghostex_SETTINGS.storybookViewTabHidden
+    ),
     tipsAndTricksTitlebarButtonHidden: readBoolean(
       source,
       'tipsAndTricksTitlebarButtonHidden',
@@ -381,6 +445,7 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     ),
     analyticsEnabled: readBoolean(source, 'analyticsEnabled', DEFAULT_ghostex_SETTINGS.analyticsEnabled),
     debuggingMode: readBoolean(source, 'debuggingMode', DEFAULT_ghostex_SETTINGS.debuggingMode),
+    chatBrain: normalizeChatBrain(source),
     diagnosticLogging: normalizeDiagnosticLoggingSettings(source.diagnosticLogging),
     renameSessionOnDoubleClick: readBoolean(
       source,
@@ -599,6 +664,9 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
         DEFAULT_ghostex_SETTINGS.sidebarCollapseAnimationDurationMs
       )
     ),
+    panelAnimationSpeed: normalizePanelAnimationSpeed(
+      readString(source, 'panelAnimationSpeed', DEFAULT_ghostex_SETTINGS.panelAnimationSpeed)
+    ),
     sidebarTooltipDelayMs: clampSidebarTooltipDelayMs(
       readNumber(source, 'sidebarTooltipDelayMs', DEFAULT_ghostex_SETTINGS.sidebarTooltipDelayMs)
     ),
@@ -635,7 +703,6 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     ),
     sidebarTheme: clampSidebarThemeSetting(readString(source, 'sidebarTheme', DEFAULT_ghostex_SETTINGS.sidebarTheme)),
     sessionChatTheme: normalizeSessionChatTheme(source.sessionChatTheme),
-    sessionChatUseGpui: readBoolean(source, 'sessionChatUseGpui', DEFAULT_ghostex_SETTINGS.sessionChatUseGpui),
     sessionChatFontFamily: readString(
       source,
       'sessionChatFontFamily',
@@ -661,10 +728,10 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
       'sessionChatFileEditPreviews',
       DEFAULT_ghostex_SETTINGS.sessionChatFileEditPreviews
     ),
-    sessionChatModelPicksSessionOnly: readBoolean(
+    sessionChatKeepComposerExpanded: readBoolean(
       source,
-      'sessionChatModelPicksSessionOnly',
-      DEFAULT_ghostex_SETTINGS.sessionChatModelPicksSessionOnly
+      'sessionChatKeepComposerExpanded',
+      DEFAULT_ghostex_SETTINGS.sessionChatKeepComposerExpanded
     ),
     sessionChatVerboseMode: readBoolean(
       source,
@@ -678,7 +745,13 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     customSidebarTitlebarBackgroundTintColor,
     customSidebarTitlebarBackgroundDarknessPercent,
     customSidebarTitlebarBackgroundColor,
-    accentColor,
+    darkThemePreset,
+    lightThemePreset,
+    themeSidebarContrast,
+    themeWorkAreaContrast,
+    customSidebarTitlebarLightBackgroundTintColor,
+    customSidebarTitlebarLightBackgroundLightnessPercent,
+    customSidebarTitlebarLightBackgroundColor,
     terminalCursorStyle: normalizeTerminalCursorStyle(
       readString(source, 'terminalCursorStyle', DEFAULT_ghostex_SETTINGS.terminalCursorStyle)
     ),
@@ -887,6 +960,33 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
      */
     hotkeys: normalizeghostexHotkeySettings(source.hotkeys),
     showActivePaneOutline: readBoolean(source, 'showActivePaneOutline', DEFAULT_ghostex_SETTINGS.showActivePaneOutline),
+    windowGlass: normalizeWindowGlassMode(readString(source, 'windowGlass', DEFAULT_ghostex_SETTINGS.windowGlass)),
+    windowGlassSource: normalizeWindowGlassSource(
+      readString(source, 'windowGlassSource', DEFAULT_ghostex_SETTINGS.windowGlassSource)
+    ),
+    windowGlassImagePlacement: normalizeWindowGlassImagePlacement(
+      readString(source, 'windowGlassImagePlacement', DEFAULT_ghostex_SETTINGS.windowGlassImagePlacement)
+    ),
+    windowGlassImageDark: readString(
+      source,
+      'windowGlassImageDark',
+      DEFAULT_ghostex_SETTINGS.windowGlassImageDark
+    ).trim(),
+    windowGlassImageLight: readString(
+      source,
+      'windowGlassImageLight',
+      DEFAULT_ghostex_SETTINGS.windowGlassImageLight
+    ).trim(),
+    windowGlassSidebarOpacityDark: clampWindowGlassSidebarOpacityPercent(
+      readNumber(source, 'windowGlassSidebarOpacityDark', DEFAULT_ghostex_SETTINGS.windowGlassSidebarOpacityDark),
+      DEFAULT_ghostex_SETTINGS.windowGlassSidebarOpacityDark
+    ),
+    windowGlassWorkAreaTintDark: normalizeWindowGlassWorkAreaTint(source, 'Dark'),
+    windowGlassSidebarOpacityLight: clampWindowGlassSidebarOpacityPercent(
+      readNumber(source, 'windowGlassSidebarOpacityLight', DEFAULT_ghostex_SETTINGS.windowGlassSidebarOpacityLight),
+      DEFAULT_ghostex_SETTINGS.windowGlassSidebarOpacityLight
+    ),
+    windowGlassWorkAreaTintLight: normalizeWindowGlassWorkAreaTint(source, 'Light'),
     workspaceActivePaneBorderColor:
       readString(
         source,
@@ -894,23 +994,20 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
         DEFAULT_ghostex_SETTINGS.workspaceActivePaneBorderColor
       ).trim() || DEFAULT_ghostex_SETTINGS.workspaceActivePaneBorderColor,
     /**
-     * CDXC:Workarea 2026-04-28-06:08
-     * Users can choose the background visible behind terminal panes. Persist a
-     * normalized CSS color string so the React workspace and native AppKit
-     * workspace render the same color instead of hardcoding dark gray.
+     * CDXC:Theming 2026-09-23 DECISION:
+     * User: "wtf does terminal color have to do with workarea theme??? pls make this more intuitive pls". Terminal
+     * background only colours the terminal panes, never the work area, and it follows the theme by default: an empty
+     * value means follow the theme, a colour replaces the theme's colour behind terminal cells. The old default
+     * #010101, which every settings file carried, migrates to follow the theme. Supersedes the 2026-04-28 note that
+     * this colour was the workspace background.
      */
-    workspaceBackgroundColor:
-      readString(source, 'workspaceBackgroundColor', DEFAULT_ghostex_SETTINGS.workspaceBackgroundColor).trim() ||
-      DEFAULT_ghostex_SETTINGS.workspaceBackgroundColor,
+    workspaceBackgroundColor: normalizeTerminalBackgroundSetting(
+      readString(source, 'workspaceBackgroundColor', DEFAULT_ghostex_SETTINGS.workspaceBackgroundColor)
+    ),
     clickToWakeSleepingSessions: readBoolean(
       source,
       'clickToWakeSleepingSessions',
       DEFAULT_ghostex_SETTINGS.clickToWakeSleepingSessions
-    ),
-    showAgentsPaneTabBarWhenUnsplit: readBoolean(
-      source,
-      'showAgentsPaneTabBarWhenUnsplit',
-      DEFAULT_ghostex_SETTINGS.showAgentsPaneTabBarWhenUnsplit
     ),
     customViews: normalizeGhostexCustomViews(source.customViews),
     customViewTemplates: normalizeProjectViewTemplates(source.customViewTemplates),
@@ -1144,6 +1241,26 @@ function normalizeCommandsPanelSide(value: string | undefined): CommandsPanelSid
   return value === 'right' ? 'right' : DEFAULT_ghostex_SETTINGS.commandsPanelSide;
 }
 
+function normalizeWindowGlassMode(value: string | undefined): WindowGlassMode {
+  return value === 'frosted' || value === 'opaque' ? value : DEFAULT_ghostex_SETTINGS.windowGlass;
+}
+
+function normalizeWindowGlassSource(value: string | undefined): WindowGlassSource {
+  return value === 'wallpaper' || value === 'desktopAndWindows' || value === 'customImage'
+    ? value
+    : DEFAULT_ghostex_SETTINGS.windowGlassSource;
+}
+
+function normalizeWindowGlassImagePlacement(value: string | undefined): WindowGlassImagePlacement {
+  return value === 'static' || value === 'desktop' ? value : DEFAULT_ghostex_SETTINGS.windowGlassImagePlacement;
+}
+
+function normalizePanelAnimationSpeed(value: string | undefined): PanelAnimationSpeed {
+  return value === 'off' || value === 'slow' || value === 'normal' || value === 'fast'
+    ? value
+    : DEFAULT_ghostex_SETTINGS.panelAnimationSpeed;
+}
+
 function normalizeSidebarSpaceSwitchBehavior(value: string | undefined): SidebarSpaceSwitchBehavior {
   return value === 'restore' || value === 'keep' ? value : DEFAULT_ghostex_SETTINGS.sidebarSpaceSwitchBehavior;
 }
@@ -1223,6 +1340,14 @@ function normalizeCompletionSoundPreference(source: Record<string, unknown>) {
   );
 }
 
+function normalizeChatBrain(source: Record<string, unknown>): ChatBrain {
+  const brain = readString(source, 'chatBrain', '');
+  if (brain === 'quickjs' || brain === 'rust') {
+    return brain;
+  }
+  return DEFAULT_ghostex_SETTINGS.chatBrain;
+}
+
 function normalizePromptEditorBackend(source: Record<string, unknown>): PromptEditorBackend {
   const backend = readString(source, 'promptEditorBackend', '');
   if (backend === 'inherit' || backend === 'monaco') {
@@ -1278,4 +1403,33 @@ function normalizeTerminalBackgroundImageFit(value: string | undefined): Termina
 
 function normalizePortlessProtocol(value: string | undefined): PortlessProtocol {
   return value === 'http' || value === 'https' ? value : DEFAULT_ghostex_SETTINGS.portlessProtocol;
+}
+
+/**
+ * The work area's glass tint. Settings saved before the sidebar and work area tints were made
+ * independent hold `windowGlassMainOpacity*`, an extra layer over the sidebar tint; the combined
+ * coverage becomes the work area's own tint so its look carries over unchanged.
+ */
+function normalizeWindowGlassWorkAreaTint(source: Record<string, unknown>, appearance: 'Dark' | 'Light'): number {
+  const key = `windowGlassWorkAreaTint${appearance}` as const;
+  const fallback = DEFAULT_ghostex_SETTINGS[key];
+  if (typeof source[key] === 'number') {
+    return clampWindowGlassWorkAreaTintPercent(source[key], fallback);
+  }
+  const extra = source[`windowGlassMainOpacity${appearance}`];
+  if (typeof extra !== 'number' || !Number.isFinite(extra)) {
+    return fallback;
+  }
+  const sidebarKey = `windowGlassSidebarOpacity${appearance}` as const;
+  const sidebar = clampWindowGlassSidebarOpacityPercent(
+    readNumber(source, sidebarKey, DEFAULT_ghostex_SETTINGS[sidebarKey]),
+    DEFAULT_ghostex_SETTINGS[sidebarKey]
+  );
+  return clampWindowGlassWorkAreaTintPercent(migrateWindowGlassWorkAreaTintPercent(sidebar, extra), fallback);
+}
+
+/** `workspaceBackgroundColor`: '' follows the theme; the retired default #010101 reads as following the theme too. */
+function normalizeTerminalBackgroundSetting(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.toLowerCase() === '#010101' ? '' : trimmed;
 }
