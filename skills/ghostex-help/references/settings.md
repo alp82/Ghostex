@@ -41,7 +41,7 @@ How to use this file:
 - **Follow the active session's Space** `sidebarSpaceFollowActiveSession` (boolean, default false): Switch the selected Space to the one that owns a session you open from outside it, such as through Back/Forward or Search by Prompt. Requires Spaces.
 - **Keep the previous project live for** `projectSwitchKeepAliveMinutes` (number 0 to 60 default 10): After you switch to another project or Space, keep the terminals, chats, and view that were open in the previous project running for this many minutes so switching back is instant. 0 releases them right away.
 - **Sidebar visibility memory** `sidebarVisibilityMemory` (one of shared | perView; default shared) [advanced]: Keep one sidebar state everywhere, or remember it separately for Agents and for the wide views (Browser, Code, Docs, Kanban, Automate). Option labels: shared = Same in every view, perView = Remembered per view.
-- **Show project icons** `showProjectIcons` (boolean, default true) [advanced]: Show project artwork or a folder or worktree icon beside project names.
+- **Show project icons** `showProjectIcons` (boolean, default true) [advanced]: Show project artwork or a square with the project’s first letter beside project names.
 - **Hide agent icon until hover** `hideSessionAgentIconUntilHover` (boolean, default false) [advanced]: Hide session agent icons until a session row is hovered.
 - **Hide browser favicon until hover** `hideBrowserFaviconUntilHover` (boolean, default false) [advanced]: Hide browser page favicons until a session row is hovered.
 - **Hide last active time** `hideLastActiveTimeOnSessionCards` (boolean, default true) [advanced]: Hide Last Active timestamps from session-card title rows.
@@ -124,10 +124,10 @@ How to use this file:
 - **Cursor blink** `terminalCursorStyleBlink` (boolean, default true) [advanced]: Blink the terminal cursor.
 - **Click to Wake Sleeping Panes** `clickToWakeSleepingSessions` (boolean, default true) [advanced]: Select sleeping pane tabs without waking them until the empty pane is clicked.
 - **Show tabs bar when not split** `showAgentsPaneTabBarWhenUnsplit` (boolean, default false): Keep the tabs bar above the agents pane even when the screen is not split.
-- **Show quick model & effort picker for Claude and Codex in terminal view** `showQuickModelPickerInTerminal` (boolean, default true): Use the model picker shortcut (⌥P by default) in Claude and Codex terminal sessions. Turn off to use terminal bindings.
+- **Show quick model & effort picker for Claude and Codex in terminal view** `showQuickModelPickerInTerminal` (boolean, default true): Use the model picker shortcut (Alt+P by default) in Claude and Codex terminal sessions. Turn off to use terminal bindings.
 - **Show session id in terminal panes** `showSessionIdInTerminalPanes` (boolean, default false) [advanced]: Show the provider session id in the top-right corner of terminal panes.
 - **Show notification on terminal bell** `showNotificationOnTerminalBell` (boolean, default false): Treat terminal bell events as session attention.
-- **⌃G prompt editor** `promptEditorBackend` (one of monaco | inherit; default monaco) [advanced]: Choose which editor ⌃G uses when a terminal prompt asks for $EDITOR. Option labels: monaco = Ghostex editor, inherit = Use default from this machine.
+- **Ctrl+G prompt editor** `promptEditorBackend` (one of monaco | inherit; default monaco) [advanced]: Choose which editor Ctrl+G uses when a terminal prompt asks for $EDITOR. Option labels: monaco = Ghostex editor, inherit = Use default from this machine.
 - **Windows Environment** `windowsTerminalBackend` (one of powershell | wsl; default powershell): Windows only. PowerShell (default) runs native Windows projects and agents. WSL runs Linux projects. Changing environments prompts you to restart Ghostex. Option labels: powershell = PowerShell (Native), wsl = WSL (Linux).
 - **WSL distribution** `windowsWslDistribution` (text, default (empty)): Windows only. Exact distro name from `wsl.exe --list --verbose`; blank uses automatic WSL2 discovery.
 #### Terminal Behavior
@@ -137,7 +137,7 @@ How to use this file:
 - **Confirm close** `terminalConfirmCloseSurface` (one of true | always | false; default true) [advanced]: Confirm before closing terminal surfaces. Option labels: true = Smart confirmation, always = Always confirm, false = Do not confirm.
 - **Trim trailing spaces on copy** `terminalClipboardTrimTrailingSpaces` (boolean, default true) [advanced]: Trim trailing whitespace when copying terminal text.
 - **Paste protection** `terminalClipboardPasteProtection` (boolean, default true) [advanced]: Ask before pasting text Ghostty considers unsafe.
-- **Paste previewable images** `terminalPastePreviewableImages` (boolean, default true) [advanced]: Paste clipboard images as previewable Markdown links with ⌘V. Hold ⌘ over the linked path to preview it in the terminal, and see the same image preview in the ⌃G Rich Prompt Editor.
+- **Paste previewable images** `terminalPastePreviewableImages` (boolean, default true) [advanced]: Paste clipboard images as previewable Markdown links with Ctrl+V. Hold Ctrl over the linked path to preview it in the terminal, and see the same image preview in the Ctrl+G Rich Prompt Editor.
 - **Hide mouse while typing** `terminalMouseHideWhileTyping` (boolean, default false) [advanced]: Hide the pointer while typing in the terminal.
 - **Scrollbar** `terminalScrollbar` (one of system | never; default system) [advanced]: Control whether Ghostty shows its native scrollback scrollbar. Option labels: system = System, never = Never.
 #### Terminal Scrolling
@@ -185,7 +185,7 @@ How to use this file:
 ### App Shots (beta)
 
 - **App Shots** `appShotsEnabled` (boolean, default false): Enable App Shots: press the App Shots hotkey to capture a window screenshot into the prompt.
-- **App Shots hotkey** `appShotsHotkey` (one of both-command | both-shift | both-option | double-left-shift | double-left-option; default both-command): Which modifier chord captures an App Shot. Option labels: both-command = Both ⌘ keys, both-shift = Both ⇧ keys, both-option = Both ⌥ keys, double-left-shift = Double-tap Left ⇧, double-left-option = Double-tap Left ⌥.
+- **App Shots hotkey** `appShotsHotkey` (one of both-command | both-shift | both-option | double-left-shift | double-left-option; default both-command): Which modifier chord captures an App Shot. Option labels: both-command = Both Ctrl keys, both-shift = Both Shift keys, both-option = Both Alt keys, double-left-shift = Double-tap Left Shift, double-left-option = Double-tap Left Alt.
 - **App Shots metadata** `appShotsMetadataEnabled` (boolean, default false): Also paste window metadata with the App Shot image link.
 ### Settings window
 
@@ -277,7 +277,7 @@ How to use this file:
 
 ### Titlebar views
 
-- **Arrange titlebar views** `titlebarViewOrder` (structured value; change it in Settings, not with `ghostex settings set`): Reorder built-in, extension, and custom views. ⌥1 through ⌥9 follow the visible order.
+- **Arrange titlebar views** `titlebarViewOrder` (structured value; change it in Settings, not with `ghostex settings set`): Reorder built-in, extension, and custom views. Alt+1 through Alt+9 follow the visible order.
 - **Hide Code view** `codeViewTabHidden` (boolean, default false): Hide the Code view tab from the titlebar.
 - **Hide Browser view** `browserViewTabHidden` (boolean, default false): Hide the Browser view tab from the titlebar.
 - **Hide Kanban view** `kanbanViewTabHidden` (boolean, default false): Hide the Kanban view tab from the titlebar.

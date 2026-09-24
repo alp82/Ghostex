@@ -4293,7 +4293,7 @@
     {
       "key": "showProjectIcons",
       "title": "Show project icons",
-      "subtitle": "Show project artwork or a folder or worktree icon beside project names.",
+      "subtitle": "Show project artwork or a square with the project’s first letter beside project names.",
       "tab": "settings",
       "tabTitle": "General",
       "group": "sidebar",
@@ -5587,7 +5587,7 @@
     {
       "key": "showQuickModelPickerInTerminal",
       "title": "Show quick model & effort picker for Claude and Codex in terminal view",
-      "subtitle": "Use the model picker shortcut (⌥P by default) in Claude and Codex terminal sessions. Turn off to use terminal bindings.",
+      "subtitle": "Use the model picker shortcut (Alt+P by default) in Claude and Codex terminal sessions. Turn off to use terminal bindings.",
       "tab": "settings",
       "tabTitle": "General",
       "group": "terminal",
@@ -5629,8 +5629,8 @@
     },
     {
       "key": "promptEditorBackend",
-      "title": "⌃G prompt editor",
-      "subtitle": "Choose which editor ⌃G uses when a terminal prompt asks for $EDITOR.",
+      "title": "Ctrl+G prompt editor",
+      "subtitle": "Choose which editor Ctrl+G uses when a terminal prompt asks for $EDITOR.",
       "tab": "settings",
       "tabTitle": "General",
       "group": "terminal",
@@ -5796,7 +5796,7 @@
     {
       "key": "terminalPastePreviewableImages",
       "title": "Paste previewable images",
-      "subtitle": "Paste clipboard images as previewable Markdown links with ⌘V. Hold ⌘ over the linked path to preview it in the terminal, and see the same image preview in the ⌃G Rich Prompt Editor.",
+      "subtitle": "Paste clipboard images as previewable Markdown links with Ctrl+V. Hold Ctrl over the linked path to preview it in the terminal, and see the same image preview in the Ctrl+G Rich Prompt Editor.",
       "tab": "settings",
       "tabTitle": "General",
       "group": "terminal",
@@ -6787,23 +6787,23 @@
       "default": "both-command",
       "options": [
         {
-          "label": "Both ⌘ keys",
+          "label": "Both Ctrl keys",
           "value": "both-command"
         },
         {
-          "label": "Both ⇧ keys",
+          "label": "Both Shift keys",
           "value": "both-shift"
         },
         {
-          "label": "Both ⌥ keys",
+          "label": "Both Alt keys",
           "value": "both-option"
         },
         {
-          "label": "Double-tap Left ⇧",
+          "label": "Double-tap Left Shift",
           "value": "double-left-shift"
         },
         {
-          "label": "Double-tap Left ⌥",
+          "label": "Double-tap Left Alt",
           "value": "double-left-option"
         }
       ],
@@ -8060,23 +8060,23 @@
       "type": "ui",
       "options": [
         {
-          "label": "Both ⌘ keys",
+          "label": "Both Ctrl keys",
           "value": "both-command"
         },
         {
-          "label": "Both ⇧ keys",
+          "label": "Both Shift keys",
           "value": "both-shift"
         },
         {
-          "label": "Both ⌥ keys",
+          "label": "Both Alt keys",
           "value": "both-option"
         },
         {
-          "label": "Double-tap Left ⇧",
+          "label": "Double-tap Left Shift",
           "value": "double-left-shift"
         },
         {
-          "label": "Double-tap Left ⌥",
+          "label": "Double-tap Left Alt",
           "value": "double-left-option"
         }
       ],
@@ -8096,7 +8096,7 @@
     {
       "key": "titlebarViewOrder",
       "title": "Arrange titlebar views",
-      "subtitle": "Reorder built-in, extension, and custom views. ⌥1 through ⌥9 follow the visible order.",
+      "subtitle": "Reorder built-in, extension, and custom views. Alt+1 through Alt+9 follow the visible order.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "viewOrder",
