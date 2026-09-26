@@ -216,7 +216,8 @@ export type SettingsSidebarTagsAction = 'createTag';
 function getInitialSettingsModalTab(
   initialTab: SettingsModalTab,
   visibility: SettingsModalTabVisibilityOptions,
-  storedNavigation: SettingsModalNavigationState
+  storedNavigation: SettingsModalNavigationState,
+  showAdvancedSettings: boolean
 ): SettingsModalTab {
   /**
    * CDXC:Settings 2026-05-11-09:06
@@ -229,8 +230,14 @@ function getInitialSettingsModalTab(
    * from durable macOS settings storage after an app relaunch. Explicit entry
    * points still win so menu actions and deep links land on the requested page.
    */
+  const rememberedTab = initialTab === 'settings' ? getRememberedSettingsModalTab(storedNavigation) : undefined;
+  // A remembered Debugging page stays closed while Show Advanced hides it from the rail; `ghostex settings open --tab debugging` still opens it.
   const requestedTab =
-    initialTab !== 'settings' ? initialTab : (getRememberedSettingsModalTab(storedNavigation) ?? initialTab);
+    initialTab !== 'settings'
+      ? initialTab
+      : rememberedTab === 'debugging' && !showAdvancedSettings
+        ? initialTab
+        : (rememberedTab ?? initialTab);
   return resolveSettingsModalTabForVisibility(requestedTab, visibility);
 }
 
@@ -294,6 +301,9 @@ export type SettingsModalProps = {
   onInstallBrowserUseSkill?: () => void;
   onInstallComputerUseSkill?: () => void;
   onInstallCuaDriver?: () => void;
+  onReinstallCuaDriver?: () => void;
+  onUninstallCuaDriver?: () => void;
+  onCheckCuaDriverUpdate?: () => void;
   onInstallAgentsOrchestrationSkill?: () => void;
   onInstallManageBeadsSkill?: () => void;
   onInstallGenerateTitleSkill?: () => void;
@@ -384,6 +394,9 @@ export function SettingsModal({
   onInstallBrowserUseSkill,
   onInstallComputerUseSkill,
   onInstallCuaDriver,
+  onReinstallCuaDriver,
+  onUninstallCuaDriver,
+  onCheckCuaDriverUpdate,
   onInstallAgentsOrchestrationSkill,
   onInstallManageBeadsSkill,
   onInstallGenerateTitleSkill,
@@ -469,7 +482,8 @@ export function SettingsModal({
           showBetaFeatures: normalizedInitialSettings.showBetaFeatures,
         }),
       },
-      normalizedInitialSettings.settingsModalNavigation
+      normalizedInitialSettings.settingsModalNavigation,
+      normalizedInitialSettings.showAdvancedSettings
     )
   );
   const dialogContentRef = useRef<HTMLDivElement>(null);
@@ -636,7 +650,8 @@ export function SettingsModal({
     const nextTab = getInitialSettingsModalTab(
       initialTab,
       { showOSIntegrationSettingsTab },
-      (pendingSettingsRef.current ?? draft).settingsModalNavigation
+      (pendingSettingsRef.current ?? draft).settingsModalNavigation,
+      (pendingSettingsRef.current ?? draft).showAdvancedSettings
     );
     rememberActiveScrollPosition();
     rememberSettingsModalTab(nextTab);
@@ -645,8 +660,8 @@ export function SettingsModal({
   }, [initialTab, isOpen]);
 
   useEffect(() => {
-    if (isOpen && (initialAgentsSection || initialCustomViewId)) setSettingsSearchQuery('');
-  }, [isOpen, initialAgentsSection, initialCustomViewId]);
+    if (isOpen && (initialAgentsSection || initialCustomViewId || initialViewScopeKey)) setSettingsSearchQuery('');
+  }, [isOpen, initialAgentsSection, initialCustomViewId, initialViewScopeKey]);
 
   useEffect(() => {
     if (activeTab !== 'osIntegration' || showOSIntegrationSettingsTab) {
@@ -871,11 +886,21 @@ export function SettingsModal({
     setActiveMainSettingsSectionId,
     setActiveTab,
     settingsSearchQuery,
+    showAdvancedSettings,
     showOSIntegrationSettingsTab,
     visibleHotkeySectionNavigation,
     visibleHotkeySections,
     visibleMainSettingsSectionNavigation,
   });
+  const previousShowAdvancedSettingsRef = useRef(showAdvancedSettings);
+  useEffect(() => {
+    const wasShowingAdvancedSettings = previousShowAdvancedSettingsRef.current;
+    previousShowAdvancedSettingsRef.current = showAdvancedSettings;
+    // Turning Show Advanced off while Debugging is open leaves the page it just hid from the rail.
+    if (wasShowingAdvancedSettings && !showAdvancedSettings && activeTab === 'debugging' && !isSettingsSearching) {
+      setActiveTab('settings');
+    }
+  }, [showAdvancedSettings]);
 
   useSettingsModalEffects({
     activeTab,
@@ -922,7 +947,7 @@ export function SettingsModal({
     closeSettingsModal,
     persistSettingsModalNavigation,
     scheduleSettingsModalNavigationPersist,
-    updateDiagnosticLoggingScenario,
+    updateDiagnosticLoggingScenarios,
     updateDraft,
     updateDraftDebounced,
     updateShowAdvancedSettings,
@@ -944,8 +969,10 @@ export function SettingsModal({
     chooseAppIconFile,
     chooseTerminalBackgroundImageFile,
     chooseWindowGlassImageFile,
+    chooseWindowGlassVideoFile,
     nativeFilePickerAvailable,
     selectAppIcon,
+    windowGlassVideoError,
   } = useAppIconSettings({
     appIconPickerUnavailable,
     appIconState,
@@ -1340,6 +1367,15 @@ export function SettingsModal({
                                 {...getSettingModificationProps('panelAnimationSpeed')}
                                 onChange={(value) => updateDraft('panelAnimationSpeed', value)}
                                 value={draft.panelAnimationSpeed}
+                              />
+                            ) : null}
+                            {mainSettingVisible(settingsSearch.sidebar, 'closeSidePanelWithLastTab') ? (
+                              <ToggleField
+                                checked={draft.closeSidePanelWithLastTab}
+                                description='Close the side panel when you close its last tab, instead of showing the Open a view picker.'
+                                label='Close side panel with its last tab'
+                                {...getSettingModificationProps('closeSidePanelWithLastTab')}
+                                onChange={(checked) => updateDraft('closeSidePanelWithLastTab', checked)}
                               />
                             ) : null}
                             {mainSettingVisible(settingsSearch.sidebar, 'sidebarTooltipDelayMs') ? (
@@ -2140,8 +2176,8 @@ export function SettingsModal({
                             {mainSettingVisible(settingsSearch.terminal, 'showQuickModelPickerInTerminal') ? (
                               <ToggleField
                                 checked={draft.showQuickModelPickerInTerminal}
-                                label='Show quick model & effort picker for Claude and Codex in terminal view'
-                                description='Use the model picker shortcut in terminal view. Turn off to let the terminal handle that shortcut.'
+                                label='Model picker in terminal view'
+                                description='Show a model button in the terminal bar and open the model picker with its shortcut. Turn off to let the terminal handle that shortcut.'
                                 {...getSettingModificationProps('showQuickModelPickerInTerminal')}
                                 onChange={(checked) => updateDraft('showQuickModelPickerInTerminal', checked)}
                               />
@@ -2732,6 +2768,8 @@ export function SettingsModal({
                       appIconState={appIconState}
                       chooseAppIconFile={chooseAppIconFile}
                       chooseWindowGlassImageFile={chooseWindowGlassImageFile}
+                      chooseWindowGlassVideoFile={chooseWindowGlassVideoFile}
+                      windowGlassVideoError={windowGlassVideoError}
                       draft={draft}
                       getSettingModificationProps={getSettingModificationProps}
                       nativeFilePickerAvailable={nativeFilePickerAvailable}
@@ -2781,6 +2819,9 @@ export function SettingsModal({
                       onInstallBrowserUseSkill={onInstallBrowserUseSkill}
                       onInstallComputerUseSkill={onInstallComputerUseSkill}
                       onInstallCuaDriver={onInstallCuaDriver}
+                      onReinstallCuaDriver={onReinstallCuaDriver}
+                      onUninstallCuaDriver={onUninstallCuaDriver}
+                      onCheckCuaDriverUpdate={onCheckCuaDriverUpdate}
                       onInstallAgentsOrchestrationSkill={onInstallAgentsOrchestrationSkill}
                       onInstallManageBeadsSkill={onInstallManageBeadsSkill}
                       onInstallGenerateTitleSkill={onInstallGenerateTitleSkill}
@@ -2981,11 +3022,7 @@ export function SettingsModal({
                         searchEmptyState={settingsSearchEmptyState}
                         onChange={updateDraft}
                         getModificationProps={getSettingModificationProps}
-                        onChangeDiagnosticScenario={updateDiagnosticLoggingScenario}
-                        folderStats={ghostexFolderStats}
-                        folderStatsLoading={ghostexFolderStatsLoading}
-                        onRequestFolderStats={onRequestGhostexFolderStats}
-                        onOpenFolder={onOpenGhostexFolder}
+                        onChangeDiagnosticScenarios={updateDiagnosticLoggingScenarios}
                       />
                     ) : null}
                   </TabsContent>

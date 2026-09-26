@@ -7,9 +7,9 @@
 //! change gate.
 //!
 //! CDXC:SessionChat 2026-09-18 WHY:
-//! React reads the minimap's previews straight off the turns it already rendered, but the native
-//! rail gets them over the bridge, and a working session publishes a frame a second. The whole row
-//! list keeps its identity while nothing changed, so an unchanged rail ships no bytes.
+//! React read the minimap's previews straight off the turns it had already rendered, but the
+//! native rail gets them in the document, and a working session publishes a frame a second. The
+//! whole row list keeps its identity while nothing changed, so an unchanged rail ships no bytes.
 
 use serde_json::Value;
 
@@ -33,7 +33,7 @@ pub fn markers(state: &ChatState, _context: &ChatContext) -> Vec<MinimapMarker> 
 ///
 /// The same rule as [`project_minimap`], reading `ChatMessage` rather than raw JSON so the
 /// transcript pass does not have to serialize every turn to ask for its preview. This is the one
-/// the core calls; the JSON form stays for the parity fixtures.
+/// the core calls; the JSON form has had no caller since the parity fixtures were deleted.
 pub fn project_minimap_turns(
     turns: &[(
         &ghostex_gx_protocol::chat::ChatMessage,
@@ -49,7 +49,9 @@ pub fn project_minimap_turns(
         .iter()
         .map(|(user, reply)| {
             let id = user.id.clone();
-            let prompt = message_preview(Some(user), geometry.preview_limit);
+            let (prompt, prompt_lines) =
+                message_preview(Some(user), geometry.preview_lines, geometry.preview_limit);
+            let reply_lines = reply_line_budget(geometry.preview_lines, prompt_lines);
             MinimapMarkerRow {
                 item: item_index
                     .iter()
@@ -61,7 +63,7 @@ pub fn project_minimap_turns(
                 } else {
                     prompt
                 },
-                reply: message_preview(*reply, geometry.preview_limit),
+                reply: message_preview(*reply, reply_lines, geometry.preview_limit).0,
                 id,
             }
         })
@@ -89,7 +91,9 @@ pub fn project_minimap(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            let prompt = minimap_preview(Some(user), geometry.preview_limit);
+            let (prompt, prompt_lines) =
+                minimap_preview(Some(user), geometry.preview_lines, geometry.preview_limit);
+            let reply_lines = reply_line_budget(geometry.preview_lines, prompt_lines);
             MinimapMarkerRow {
                 item: item_index
                     .iter()
@@ -101,9 +105,15 @@ pub fn project_minimap(
                 } else {
                     prompt
                 },
-                reply: minimap_preview(reply.as_ref(), geometry.preview_limit),
+                reply: minimap_preview(reply.as_ref(), reply_lines, geometry.preview_limit).0,
                 id,
             }
         })
         .collect()
+}
+
+/// The lines the reply may take on the hover card: whatever the prompt left, after the blank line
+/// that separates the two. An empty prompt still shows its one "User message" line.
+fn reply_line_budget(card_lines: usize, prompt_lines: usize) -> usize {
+    card_lines.saturating_sub(prompt_lines.max(1) + 1)
 }

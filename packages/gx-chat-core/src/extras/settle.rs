@@ -25,9 +25,9 @@ use crate::wire::RpcOutcome;
 /// for.
 ///
 /// One of the six uniform per-family hooks `crate::dispatch::events::dispatch` runs in a fixed
-/// order. Ids come off the core's one allocator, taken out for the call and written back, so a
-/// replay reproduces them exactly and a late answer to a retired read cannot reach another
-/// family.
+/// order. Ids come off the core's one allocator, taken out for the call and written back, so the
+/// same inputs always produce the same ids and a late answer to a retired read cannot reach
+/// another family.
 pub fn settle(state: &mut ChatState, event: &Event, context: &ChatContext) -> Vec<Effect> {
     let mut allocated = state.core.next_request_id;
     let effects = settle_with_ids(state, event, context, || {
@@ -102,9 +102,9 @@ fn settle_with_ids(
         }
         _ => {}
     }
-    // `project()` runs at the three moments the page, the agent path or the working flag can move
-    // (a restart, a finished read, the settle hold expiring), all of which have already happened by
-    // the time this line runs.
+    // `project()` runs at the two moments the page, the agent path or the working flag can move
+    // (a restart, a finished read), both of which have already happened by the time this line
+    // runs.
     subagent_rows::refresh(state, context);
     track_transcript_loading(state, context);
     let working = working(state);
@@ -129,7 +129,7 @@ fn settle_with_ids(
 /// `computeSessionChatActivity`'s clock: the initializer on the first render, then
 /// `useEffect(() => { if (!hasClock) return; setNow(Date.now()); setInterval(...) },
 /// [activity?.detectedAt, hasClock])`. A new sample restarts the interval from its own moment,
-/// which is what puts the strip's ticks on the same records as the live brain's.
+/// which is what put the strip's ticks on the same records as the TypeScript brain's.
 fn settle_activity_clock(state: &mut ChatState, context: &ChatContext) {
     if !state.core.controller_started {
         return;
@@ -245,14 +245,13 @@ fn transcript_items(state: &ChatState, context: &ChatContext) -> Vec<Value> {
 /// Keeps family f's rows in the core's timer table, which is what the frame's `nextWakeMs` reads.
 ///
 /// The fleet's once a second while any row's clock is moving, the two loading stages, the
-/// subagent viewer's poll, and its settle hold. The terminal activity's clock restarts with every
+/// subagent viewer's poll. The terminal activity's clock restarts with every
 /// sample, so it is armed by `settle_activity_clock` instead. Each is a key, so re-arming is
 /// idempotent and a surface that goes away cancels its own row.
 fn arm_timers(state: &mut ChatState, context: &ChatContext) {
     let (_, _, fleet_ticking) = panels::project(state, context);
     let loading = state.extras.loading_started_at_ms;
     let poll = state.extras.subagent.poll_at_ms;
-    let hold = state.extras.subagent.hold_until_ms;
     let now = context.now_ms;
     let timers = &mut state.core.timers;
 
@@ -288,7 +287,6 @@ fn arm_timers(state: &mut ChatState, context: &ChatContext) {
     let backfill = state.extras.subagent.view.has_pending_backfill();
     let timers = &mut state.core.timers;
     deadline(timers, SUBAGENT_POLL, poll, now);
-    deadline(timers, SUBAGENT_HOLD, hold, now);
     if backfill {
         timers.arm_once(SUBAGENT_BACKFILL, now, 0.0);
     } else {
@@ -302,7 +300,6 @@ const ACTIVITY_CLOCK: &str = "extras.activityClock";
 const LOADING_INDICATOR: &str = "extras.loadingIndicator";
 const LOADING_RETRY: &str = "extras.loadingRetry";
 const SUBAGENT_POLL: &str = "extras.subagentPoll";
-const SUBAGENT_HOLD: &str = "extras.subagentHold";
 /// The viewer's own `scheduleBackfill`, zero delay, separate from family b's because the two
 /// projectors keep separate placeholder queues.
 const SUBAGENT_BACKFILL: &str = "extras.subagentBackfill";

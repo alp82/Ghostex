@@ -49,7 +49,7 @@ pub struct QuestionOption {
 
 /// What the agent is blocked on: a question set, or a tool approval.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum InteractivePrompt {
     Question {
         #[serde(default)]
@@ -139,6 +139,24 @@ impl TerminalNotice {
             .flatten()
             .filter(|choice| !choice.label.trim().is_empty())
             .collect()
+    }
+
+    /// Which visible row Escape answers.
+    ///
+    /// CDXC:SessionChat 2026-09-26 WHY: Escape declines. A permission prompt's rows are Yes, then any "Yes, and don't ask again" / "Yes, and switch to accept edits" rows, then No, and a plan's are "Yes, and switch to bypass permissions", "Yes, manually approve edits", "Tell Claude what to change", so taking the second row made Escape grant a standing permission or start the plan. Escape answers a row that says No; only Claude's two-way choosers (resume, model or effort switch, session paused), whose second row is the alternative rather than a yes, keep it on that row, and anything else leaves Escape unanswered.
+    pub fn secondary_choice_position(&self) -> Option<usize> {
+        let choices = self.visible_choices();
+        if let Some(no) = choices
+            .iter()
+            .rposition(|choice| choice.label.trim_start().starts_with("No"))
+        {
+            return Some(no);
+        }
+        let two_way = matches!(
+            self.kind.as_str(),
+            "resumePrompt" | "switchConfirmPrompt" | "sessionPausedPrompt"
+        );
+        (two_way && choices.len() > 1).then_some(1)
     }
 }
 

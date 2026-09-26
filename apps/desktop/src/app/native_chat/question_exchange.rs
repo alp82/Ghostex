@@ -1,9 +1,8 @@
 //! Answered question cards in the transcript.
 //!
 //! CDXC:SessionChat 2026-09-18 SEE-ALSO:
-//! React renders the same projected exchange in session-chat-question-exchange.tsx, and the rule
-//! that lifts a turn's exchanges out of its collapsed work fold is shared in
-//! packages/shared/session-chat-presentation/question-hoisting.ts. The live question card
+//! The rule that lifts a turn's exchanges out of its collapsed work fold lives in
+//! packages/gx-chat-core/src/questions/hoisting.rs. The live question card
 //! (question.rs) and this settled one deliberately share their choice rows, so an answer reads the
 //! same after the fact as it did while it was being given.
 
@@ -225,13 +224,14 @@ impl NativeChatView {
         if !options.is_empty() {
             let options_key = format!("question-exchange:{key}");
             let expanded = self.expanded.contains(&options_key);
+            let motion = self.disclosure_frame(&options_key, expanded, cx);
             section = section.child(
                 div()
                     .pt(px(4.0 * s))
                     .text_size(px(12.0 * s))
                     .text_color(p.muted)
                     .child(self.disclosure(
-                        options_key,
+                        options_key.clone(),
                         if expanded {
                             "Hide options".to_string()
                         } else {
@@ -243,7 +243,7 @@ impl NativeChatView {
                         cx,
                     )),
             );
-            if expanded {
+            if expanded || motion.is_some() {
                 let mut rows = div().flex().flex_col().gap(px(6.0 * s)).pt(px(6.0 * s));
                 for (option_index, option) in options.iter().enumerate() {
                     rows = rows.child(self.choice_row(
@@ -253,6 +253,7 @@ impl NativeChatView {
                         selected.contains(&option_index),
                         None,
                         true,
+                        false,
                         // Settled answers are a record, never a control.
                         true,
                         Value::Null,
@@ -260,7 +261,12 @@ impl NativeChatView {
                         cx,
                     ));
                 }
-                section = section.child(rows);
+                section = section.child(self.disclosure_body_motion(
+                    &options_key,
+                    motion,
+                    0.0,
+                    rows.into_any_element(),
+                ));
             }
         }
         section.into_any_element()
@@ -311,7 +317,7 @@ impl NativeChatView {
                     })
                     // A chosen option's title carries React's `font-medium`, so the answer reads
                     // ahead of its own description. The reader's own words in a custom answer or an
-                    // added note are prose and stay at the row's weight, as they do in React.
+                    // added note are prose and stay at the row's weight, as they did in React.
                     .child(
                         div()
                             .text_color(p.foreground)

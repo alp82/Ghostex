@@ -6,7 +6,6 @@ import type { DarkThemePreset, LightThemePreset } from './titlebar-color';
 import {
   type AppShotsHotkey,
   type AutoSleepIdleMinutes,
-  type ChatBrain,
   type ChatFileOpenView,
   type CommandsPanelSide,
   type DefaultEditorCommand,
@@ -21,6 +20,7 @@ import {
   type WebLinkOpenTarget,
   type PanelAnimationSpeed,
   type WindowGlassMode,
+  type WindowGlassLiveStyle,
   type WindowGlassSource,
   type WindowGlassImagePlacement,
 } from './types';
@@ -63,11 +63,21 @@ export const DARK_THEME_PRESET_OPTIONS: ReadonlyArray<{
   label: string;
   value: DarkThemePreset;
 }> = [
-  { label: 'Dark Gray', value: 'gray' },
+  { label: 'Graphite', value: 'gray' },
   { label: 'Black', value: 'black' },
+  { label: 'Slate', value: 'slate' },
+  { label: 'Midnight', value: 'midnight' },
   { label: 'Blue', value: 'blue' },
+  { label: 'Indigo', value: 'indigo' },
+  { label: 'Teal', value: 'teal' },
   { label: 'Green', value: 'green' },
+  { label: 'Forest', value: 'forest' },
+  { label: 'Olive', value: 'olive' },
+  { label: 'Amber', value: 'amber' },
+  { label: 'Orange', value: 'orange' },
   { label: 'Red', value: 'red' },
+  { label: 'Rose', value: 'rose' },
+  { label: 'Pink', value: 'pink' },
   { label: 'Purple', value: 'purple' },
   { label: 'Custom', value: 'custom' },
 ];
@@ -76,12 +86,22 @@ export const LIGHT_THEME_PRESET_OPTIONS: ReadonlyArray<{
   label: string;
   value: LightThemePreset;
 }> = [
-  { label: 'Light Gray', value: 'gray' },
+  { label: 'Graphite', value: 'gray' },
   { label: 'White', value: 'white' },
+  { label: 'Slate', value: 'slate' },
+  { label: 'Midnight', value: 'midnight' },
   { label: 'Blue', value: 'blue' },
+  { label: 'Indigo', value: 'indigo' },
+  { label: 'Teal', value: 'teal' },
   { label: 'Green', value: 'green' },
-  { label: 'Pink', value: 'pink' },
+  { label: 'Forest', value: 'forest' },
+  { label: 'Olive', value: 'olive' },
+  { label: 'Amber', value: 'amber' },
   { label: 'Orange', value: 'orange' },
+  { label: 'Red', value: 'red' },
+  { label: 'Rose', value: 'rose' },
+  { label: 'Pink', value: 'pink' },
+  { label: 'Purple', value: 'purple' },
   { label: 'Custom', value: 'custom' },
 ];
 
@@ -144,9 +164,9 @@ export const WINDOW_GLASS_OPTIONS: ReadonlyArray<{
   label: string;
   value: WindowGlassMode;
 }> = [
-  { label: 'Glass in dark mode', value: 'auto' },
-  { label: 'Always glass', value: 'frosted' },
-  { label: 'Always opaque', value: 'opaque' },
+  { label: 'Dark only', value: 'auto' },
+  { label: 'Always', value: 'frosted' },
+  { label: 'Never', value: 'opaque' },
 ];
 
 export const WINDOW_GLASS_SOURCE_OPTIONS: ReadonlyArray<{
@@ -156,7 +176,28 @@ export const WINDOW_GLASS_SOURCE_OPTIONS: ReadonlyArray<{
   { label: 'Desktop and windows', value: 'desktopAndWindows' },
   { label: 'Wallpaper only', value: 'wallpaper' },
   { label: 'Custom image', value: 'customImage' },
+  { label: 'Live', value: 'live' },
 ];
+
+/** The Live glass animations, in the order the Theme page shows them; `video` (the user's own file) follows them. */
+export const WINDOW_GLASS_LIVE_STYLE_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: Exclude<WindowGlassLiveStyle, 'video'>;
+}> = [
+  { label: 'Aurora', value: 'aurora' },
+  { label: 'Ink', value: 'ink' },
+  { label: 'Drift', value: 'drift' },
+  { label: 'Nebula', value: 'nebula' },
+  { label: 'Silk', value: 'silk' },
+  { label: 'Bokeh', value: 'bokeh' },
+  { label: 'Waves', value: 'waves' },
+  { label: 'Mesh', value: 'mesh' },
+];
+
+export const MIN_WINDOW_GLASS_LIVE_SPEED = 0.25;
+export const MAX_WINDOW_GLASS_LIVE_SPEED = 2;
+export const MIN_WINDOW_GLASS_LIVE_BRIGHTNESS = 10;
+export const MAX_WINDOW_GLASS_LIVE_BRIGHTNESS = 100;
 
 export const WINDOW_GLASS_IMAGE_PLACEMENT_OPTIONS: ReadonlyArray<{
   label: string;
@@ -315,14 +356,6 @@ export const GHOSTTY_SCROLLBAR_OPTIONS: ReadonlyArray<{
 }> = [
   { label: 'System', value: 'system' },
   { label: 'Never', value: 'never' },
-];
-
-export const CHAT_BRAIN_OPTIONS: ReadonlyArray<{
-  label: string;
-  value: ChatBrain;
-}> = [
-  { label: 'QuickJS (shipped)', value: 'quickjs' },
-  { label: 'Rust (in development)', value: 'rust' },
 ];
 
 export const PROMPT_EDITOR_BACKEND_OPTIONS: ReadonlyArray<{

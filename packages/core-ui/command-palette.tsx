@@ -505,6 +505,7 @@ export function CommandPalette({
       (definition) =>
         definition.id !== 'openCommandPalette' &&
         definition.id !== 'openSessionSearchPalette' &&
+        definition.id !== 'openProjectSearchPalette' &&
         definition.id !== 'openExtensions' &&
         definition.action.kind !== 'runActionSlot' &&
         definition.action.kind !== 'chatAction' &&
@@ -1003,7 +1004,7 @@ function BuiltInCommandIcon({ command }: { command: BuiltInPaletteCommand }) {
   }
 
   const action = command.definition.action;
-  if (action.kind === 'createSession') {
+  if (action.kind === 'createSession' || action.kind === 'createAgentSession') {
     return <IconPlus aria-hidden='true' />;
   }
   if (action.kind === 'openCommandsPanel') {

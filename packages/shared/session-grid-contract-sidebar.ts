@@ -213,7 +213,7 @@ export type SidebarGhostexCliStatusMessage = {
   manageBeadsSkillPath?: string;
   /**
    * CDXC:AgentSkills 2026-09-19 WHY:
-   * `$ghostex-agents-orchestration` (which replaced the Fable 5.6 orchestration skill in the same slot) shipped after existing hosts, so its
+   * `$ghostex-agents` (first shipped as `$ghostex-agents-orchestration`, which replaced the Fable 5.6 orchestration skill in the same slot) shipped after existing hosts, so its
    * status fields stay optional and consumers must treat a missing value as
    * not installed instead of requiring every host build to send it.
    */
@@ -1725,7 +1725,10 @@ export type SidebarToExtensionMessage =
         | 'installMoveCodexSessionSkill'
         | 'installHelpSkill'
         | 'uninstallBundledAgentSkills'
-        | 'installCuaDriver';
+        | 'installCuaDriver'
+        | 'reinstallCuaDriver'
+        | 'uninstallCuaDriver'
+        | 'checkCuaDriverUpdate';
     }
   | {
       /**
@@ -1861,9 +1864,10 @@ export type SidebarToExtensionMessage =
       /**
        * CDXC:TranscriptExport 2026-08-24:
        * The Export Transcript dialog's Export button: run the export with the
-       * chosen include-toggles. The dialog never names the session — the
-       * sidebar runtime holds the pending export context from opening the
-       * dialog — and `requestId` proves the command still belongs to that open.
+       * chosen include-toggles. The dialog never names the session (the
+       * host, apps/desktop/src/app/gx_store/git/export_transcript.rs, holds
+       * the pending export context from opening the dialog; the sidebar
+       * runtime held it until 2026-09-25), and `requestId` proves the command still belongs to that open.
        */
       includeCommands?: boolean;
       includePatches?: boolean;
@@ -1924,7 +1928,7 @@ export type SidebarToExtensionMessage =
        *
        * CDXC:ContextMenus 2026-09-11 WHY:
        * On the desktop app the same pair also holds the sidebar's native focus grant for as long as any menu is open, so every SidebarContextMenuPortal instance must send both, balanced.
-       * SEE-ALSO: apps/desktop/sidebar/gxserver-runtime/sessions-and-focus.ts.
+       * The runtime that counted the pair (`gxserver-runtime/sessions-and-focus.ts`) was deleted with QuickJS on 2026-09-25.
        */
       type: 'sidebarContextMenuOpened';
     }
@@ -2102,8 +2106,8 @@ export type SidebarToExtensionMessage =
        *
        * CDXC:AgentLauncher 2026-09-09 WHY:
        * The New Thread picker sends no group id: it is an app-modal window
-       * that cannot see sidebar groups, and the sidebar runtime already owns
-       * the active group, so an absent id means the active project.
+       * that cannot see sidebar groups, and the sidebar store (gx-core; the
+       * QuickJS runtime until 2026-09-25) already owns the active group, so an absent id means the active project.
        */
       groupId?: string;
       type: 'openBrowserPaneInGroup';
@@ -2448,7 +2452,7 @@ export type SidebarToExtensionMessage =
       /**
        * CDXC:Projects 2026-09-16 DECISION:
        * User: closing a project in a Space stays in that Space and selects a non-sleeping session from the next project in the list.
-       * SidebarApp resolves that session from the rows the user sees (see sidebar-app/close-project-successor.ts) and the host focuses it BEFORE parking the project, so the active project never falls back to one outside the Space.
+       * The sidebar resolves that session from the rows the user sees (packages/gx-core/src/sidebar_view/close_successor.rs) and the host focuses it BEFORE parking the project, so the active project never falls back to one outside the Space.
        */
       successorSessionId?: string;
     }
@@ -3299,6 +3303,11 @@ export type SidebarToExtensionMessage =
   | {
       appearance: 'dark' | 'light';
       type: 'pickWindowGlassImageFile';
+    }
+  /** Settings -> Window glass -> Live -> Your video: "Choose a file…", answered as windowGlassVideoFilePicked with a path or an error. */
+  | {
+      appearance: 'dark' | 'light';
+      type: 'pickWindowGlassVideoFile';
     }
   /**
    * CDXC:Onboarding 2026-08-24:

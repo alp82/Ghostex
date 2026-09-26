@@ -1,7 +1,7 @@
 //! Everything the composer's option pills publish, in one pass over the state.
 //!
 //! Port of `packages/shared/session-chat-controller/native-options.ts` and
-//! `packages/shared/session-chat-controller/session-options.ts`. The TypeScript is a React hook
+//! `packages/shared/session-chat-controller/session-options.ts`. The TypeScript was a React hook
 //! chain (`useMemo` over the catalog, `useLayoutEffect` for the detection, a store with
 //! listeners); here it is one function of the state, because the state already holds what the
 //! hooks memoized.
@@ -134,7 +134,7 @@ pub fn compute_native_chat_options(state: &ChatState, _context: &ChatContext) ->
     let can_pick_model = !state.session.pending_model_selection.is_absent() && provider.is_some();
     let queued_controls = matches!(
         catalog.as_ref().map(|catalog| catalog.model_icon.as_str()),
-        Some("codex") | Some("claude")
+        Some("codex") | Some("claude") | Some("opencode")
     );
     let can_send_key = menus.can_send_key;
     let draft_agents = DraftAgent::list(state.session.available_agents.as_ref());

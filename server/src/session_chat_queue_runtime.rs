@@ -208,6 +208,7 @@ pub struct SessionChatQueueRuntime {
     composer_reader: SessionChatQueueComposerReader,
     compacting_refresher: SessionChatQueueCompactingRefresher,
     gates: Arc<Mutex<HashMap<String, SessionQueueGate>>>,
+    composer_holds: crate::session_chat_queue_undelivered::SessionChatQueueComposerHolds,
     /// Sessions with a delivery in flight. The claim in
     /// `deliver_session_chat_queued_prompt` is the real guard; this only keeps
     /// the scheduler from stacking tasks for the same session every second
@@ -236,6 +237,7 @@ impl SessionChatQueueRuntime {
             composer_reader,
             compacting_refresher,
             gates: Arc::new(Mutex::new(HashMap::new())),
+            composer_holds: Default::default(),
             delivering: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -343,11 +345,16 @@ impl SessionChatQueueRuntime {
                 self.reset_gate(&key);
                 continue;
             }
-            let starting_draft = crate::agents::session_is_draft(&session);
+            // CDXC:SessionChat 2026-09-25 WHY:
+            // A send held for a session that was asleep or still starting (session_chat_send_wake.rs) waits exactly like a new chat's first message: nobody may be viewing the session, so the scheduler refreshes the screen itself and delivers the moment the input box appears. Waiting for the cached reading made a woken session take 40 seconds.
+            let awaiting_startup = crate::agents::session_is_draft(&session)
+                || snapshot
+                    .deliverable_head()
+                    .is_some_and(|head| head.startup_send);
             let composer_agent =
                 crate::session_chat_composer::session_chat_composer_agent_id(&session);
             let composer = (self.composer_reader)(&project_id, &session_id);
-            if starting_draft
+            if awaiting_startup
                 && crate::session_chat_composer::has_session_chat_composer_signature(
                     composer_agent.as_deref(),
                 )
@@ -398,19 +405,23 @@ impl SessionChatQueueRuntime {
                 self.reset_gate(&key);
                 continue;
             }
-            if self.transcript_lifecycle_is_working(&key, &session) {
+            let startup_composer_ready = awaiting_startup
+                && composer.state == crate::session_chat_composer::SessionChatComposerState::Ready;
+            // CDXC:SessionChat 2026-09-26 WHY:
+            // An agent that died mid-turn leaves its transcript ending in a tool result with no reply, which reads as Working forever. A freshly started CLI showing an empty input box cannot be mid-turn, so a startup send trusts the screen over that dead turn; checking the transcript here left a woken session's "continue" queued indefinitely.
+            if !startup_composer_ready && self.transcript_lifecycle_is_working(&key, &session) {
                 self.reset_gate(&key);
                 continue;
             }
-            if !(starting_draft
-                && composer.state == crate::session_chat_composer::SessionChatComposerState::Ready)
-                && !self.stability_window_elapsed(&key, now)
-            {
+            if !startup_composer_ready && !self.stability_window_elapsed(&key, now) {
                 continue;
             }
             let Some(head) = snapshot.deliverable_head() else {
                 continue;
             };
+            if self.composer_holds.waiting(&key, &head.id, now) {
+                continue;
+            }
             /*
             A trust dialog, a first-run setup screen, an update modal, a usage
             limit waiting on a keypress, an expired login, the agent process
@@ -431,7 +442,9 @@ impl SessionChatQueueRuntime {
                     self.reset_gate(&key);
                     continue;
                 }
-                if notice.blocks_queued_delivery() {
+                if notice.blocks_queued_delivery()
+                    && !escape_closes_claude_panel(&composer, &notice)
+                {
                     blocked.push((
                         project_id,
                         session_id,
@@ -473,16 +486,17 @@ impl SessionChatQueueRuntime {
         drop(db);
 
         for (project_id, session_id, prompt_id, reason) in blocked {
-            if fail_session_chat_queued_prompt(
+            if let Ok(snapshot) = fail_session_chat_queued_prompt(
                 &self.paths,
                 &project_id,
                 &session_id,
                 &prompt_id,
                 &reason,
-            )
-            .is_ok()
-            {
+            ) {
                 (self.publisher_factory)(&project_id, &session_id)();
+                if let Some(prompt) = snapshot.queue.iter().find(|prompt| prompt.id == prompt_id) {
+                    self.notify_sender(&project_id, &session_id, &prompt.text, &reason);
+                }
             }
             self.reset_gate(&session_queue_key(&project_id, &session_id));
         }
@@ -502,6 +516,9 @@ impl SessionChatQueueRuntime {
         marks it `failed` with the reason on error, so "Send now" and the
         scheduler can never both deliver the same row.
         */
+        let may_hold = self
+            .composer_holds
+            .may_hold(&key, &ready.prompt_id, Utc::now());
         let delivered = deliver_session_chat_queued_prompt(
             &self.paths,
             &self.server_id,
@@ -509,10 +526,27 @@ impl SessionChatQueueRuntime {
             &ready.session_id,
             &ready.prompt_id,
             &sender,
+            may_hold,
         )
         .await;
-        if delivered.is_ok() {
+        if let Ok(delivery) = &delivered {
             (self.publisher_factory)(&ready.project_id, &ready.session_id)();
+            if delivery.held {
+                self.composer_holds
+                    .record(&key, &ready.prompt_id, Utc::now());
+            } else {
+                self.composer_holds.clear(&key);
+            }
+            if let Some(reason) = delivery.error_message.as_deref() {
+                if let Some(prompt) = delivery
+                    .snapshot
+                    .queue
+                    .iter()
+                    .find(|prompt| prompt.id == ready.prompt_id)
+                {
+                    self.notify_sender(&ready.project_id, &ready.session_id, &prompt.text, reason);
+                }
+            }
         }
         /*
         ONE prompt per idle window, whatever happened: a fresh stability window
@@ -573,6 +607,22 @@ impl SessionChatQueueRuntime {
             .map(|(project_id, session_id)| session_queue_key(project_id, session_id))
             .collect();
         gates.retain(|key, _| live.contains(key));
+        self.composer_holds.retain(|key| live.contains(key));
+    }
+
+    fn notify_sender(&self, project_id: &str, session_id: &str, text: &str, reason: &str) {
+        if let Some((sender_project, sender_session)) =
+            crate::session_chat_queue_undelivered::notify_sender_of_undelivered_agent_message(
+                &self.paths,
+                &self.server_id,
+                project_id,
+                session_id,
+                text,
+                reason,
+            )
+        {
+            (self.publisher_factory)(&sender_project, &sender_session)();
+        }
     }
 
     fn is_delivering(&self, key: &str) -> bool {
@@ -635,6 +685,17 @@ fn runtime_text(session: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+/// An Escape-safe Claude panel (its Settings screen, or an offer Claude opened by itself) that the
+/// notice classifier also reads as an input-blocking dialog. The send closes it with Escape instead
+/// of handing it to the user as a question or failing a queued row on it.
+fn escape_closes_claude_panel(
+    composer: &crate::session_chat_composer::SessionChatComposerReadiness,
+    notice: &crate::session_chat_notice::SessionChatTerminalNotice,
+) -> bool {
+    composer.should_dismiss_with_escape()
+        && notice.kind == crate::session_chat_notice::SESSION_CHAT_NOTICE_CLAUDE_INPUT_BLOCKED
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -713,6 +774,42 @@ pub(crate) async fn send_session_chat_message_with_draft(
     let terminal_agent =
         crate::session_chat_composer::session_chat_composer_agent_id(&target.session)
             .or_else(|| agent.clone());
+    if agent.as_deref() == Some("opencode") {
+        let id = crate::session_chat_opencode::session_id(&target.session)?;
+        let send_id = id.clone();
+        let message = text.to_string();
+        let images = image_paths.to_vec();
+        let session = target.session.clone();
+        let message_id = draft_version.map(|version| {
+            use sha2::{Digest, Sha256};
+            let identity=json!([project_id,session_id,version.draft_id,version.revision]).to_string();
+            format!("msg_gx_{:x}", Sha256::digest(identity.as_bytes()))
+        });
+        let archive = tokio::task::spawn_blocking(move || {
+            let mut archive=crate::session_chat_local_command::prepare_session_chat_local_command(&message);
+            if let Some(command)=archive.as_mut() {
+                crate::session_chat_local_command::anchor_session_chat_local_command(command,&session);
+            }
+            crate::session_chat_opencode::Client::discover()?.send(&send_id, &message, &images, message_id.as_deref())?;
+            Ok::<_,DomainStateError>(archive)
+        }).await.map_err(|_| crate::session_chat_opencode::error("OpenCode delivery task failed."))??;
+        if let Some(command)=archive {
+            crate::session_chat_local_command::persist_session_chat_local_command(project_id,session_id,&command);
+        }
+        crate::session_chat_opencode::invalidate(&id);
+        promote_draft_session_after_send(state, project_id, session_id);
+        unpark_session_after_send(state, project_id, session_id);
+        crate::session_chat_returned_prompt::record_session_chat_send_submitted(project_id, session_id);
+        if let Some(version) = draft_version {
+            let db = open_gxserver_database(&state.paths).map_err(|e| crate::session_chat_opencode::error(e.to_string()))?;
+            crate::session_chat_draft_versions::consume(&db, project_id, session_id, version)?;
+            broadcast_session_chat_queue_state(state, project_id, session_id);
+        } else if source == SessionChatMessageSource::Composer {
+            retire_sent_session_chat_draft(state, project_id, session_id, text, draft_before_send.as_ref());
+        }
+        schedule_session_chat_option_redetect(state, project_id, session_id, Some("opencode"));
+        return Ok(text.len());
+    }
     /*
     CDXC:AgentScreenDetection 2026-08-19:
     Sample where the transcript ends BEFORE the message is enqueued: everything
@@ -755,16 +852,23 @@ pub(crate) async fn send_session_chat_message_with_draft(
             true,
         )
         .await;
-    if let Some(blocking) = detection
-        .notice
-        .as_ref()
-        .filter(|notice| notice.is_answerable())
-    {
+    let dismiss_claude_panel = detection.composer.should_dismiss_with_escape();
+    if let Some(blocking) = detection.notice.as_ref().filter(|notice| {
+        notice.is_answerable() && !escape_closes_claude_panel(&detection.composer, notice)
+    }) {
         session_chat_terminal_notice_publisher(state, &target.project_id, &target.session_id)();
         return Err(DomainStateError {
             code: "invalidState",
             message: format!("{}. Answer it in chat before sending.", blocking.title),
         });
+    }
+    if source == SessionChatMessageSource::Composer {
+        if let Some(starting) =
+            crate::session_chat_send_wake::starting_session_refusal(state, &target, &detection)
+                .await
+        {
+            return Err(starting);
+        }
     }
     // Recheck automatic delivery against the fresh capture: the scheduler's
     // cached notice may predate a quota, authentication, or agent error.
@@ -821,11 +925,10 @@ pub(crate) async fn send_session_chat_message_with_draft(
         }
     }
     if source == SessionChatMessageSource::AutomaticQueue {
-        if let Some(notice) = detection
-            .notice
-            .as_ref()
-            .filter(|notice| notice.blocks_queued_delivery())
-        {
+        if let Some(notice) = detection.notice.as_ref().filter(|notice| {
+            notice.blocks_queued_delivery()
+                && !escape_closes_claude_panel(&detection.composer, notice)
+        }) {
             return Err(DomainStateError {
                 code: "invalidState",
                 message: format!("{}. The queued message was not sent.", notice.title),
@@ -847,7 +950,6 @@ pub(crate) async fn send_session_chat_message_with_draft(
     carries a code and a message and nothing else, at 169 construction sites);
     clients read it from /api/readSessionTerminalTail instead.
     */
-    let dismiss_claude_settings = detection.composer.should_dismiss_with_escape();
     let redraw_claude_composer = detection.prompt.is_none()
         && !detection
             .notice
@@ -860,7 +962,7 @@ pub(crate) async fn send_session_chat_message_with_draft(
     if detection
         .composer
         .blocks_message_for(terminal_agent.as_deref())
-        && !dismiss_claude_settings
+        && !dismiss_claude_panel
         && !redraw_claude_composer
     {
         return Err(DomainStateError {
@@ -871,6 +973,16 @@ pub(crate) async fn send_session_chat_message_with_draft(
                 .clone()
                 .unwrap_or_else(|| "The agent's input box is not accepting input yet.".to_string()),
         });
+    }
+    if dismiss_claude_panel {
+        crate::session_chat_send_diagnostics::record_send_recovery(
+            state,
+            "sessionChatSendClosingClaudePanel",
+            &target.project_id,
+            &target.session_id,
+            detection.composer.reason.as_deref().unwrap_or_default(),
+            &detection.composer.screen_tail,
+        );
     }
     let send_probe = crate::session_chat_watchdog::SessionChatSendProbe::sample(
         &target.project_id,
@@ -894,7 +1006,7 @@ pub(crate) async fn send_session_chat_message_with_draft(
         terminal_agent.as_deref(),
         text,
         image_paths,
-        dismiss_claude_settings,
+        dismiss_claude_panel,
     );
     /*
     CDXC:SessionChat 2026-09-10 DECISION:
@@ -1251,6 +1363,7 @@ pub(crate) async fn handle_send_session_chat_queued_prompt_http(
         &session_id,
         &prompt_id,
         &sender,
+        false,
     )
     .await
     {
@@ -1485,7 +1598,6 @@ pub(crate) fn session_chat_queue_sender(
             send_session_chat_message_internal(&state, &project_id, &session_id, &text, &[], source)
                 .await
                 .map(|_| ())
-                .map_err(|error| error.message)
         })
     })
 }

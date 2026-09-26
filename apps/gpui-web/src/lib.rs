@@ -32,7 +32,7 @@ mod prelude {
     pub(crate) use std::sync::Arc;
     pub(crate) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     pub(crate) use std::time::Duration;
-    pub(crate) use web_time::{Instant, SystemTime};
+    pub(crate) use web_time::{Instant, SystemTime, UNIX_EPOCH};
 }
 pub(crate) use crate::app::consts::*;
 pub(crate) use crate::app::helpers::*;
@@ -80,6 +80,32 @@ fn gpui_platform_window_icon() -> Option<Arc<image::RgbaImage>> {
     None
 }
 
+/// The faces `gpui_web` used to bundle: IBM Plex Sans (the UI font) and
+/// Lilex (the fallback for a monospace family the browser does not have, such
+/// as the chat's `Menlo` inline code).
+///
+/// CDXC:WebGpui 2026-09-26 WHY: upstream `gpui_web` stopped bundling IBM Plex Sans and Lilex (zed `ef075910c9`, applications provide their fonts) but still names IBM Plex Sans as the system UI font and `.ZedMono` (Lilex) as the first fallback, so without these faces no font resolves and the first text layout panics the page, and inline code falls back to the sans face. The faces come from the Zed checkout's own assets, the files the platform used to bundle.
+fn platform_fonts() -> Vec<Cow<'static, [u8]>> {
+    macro_rules! zed_font {
+        ($path:literal) => {
+            include_bytes!(concat!("../../../.dependencies/zed/assets/fonts/", $path)).as_slice()
+        };
+    }
+    [
+        zed_font!("ibm-plex-sans/IBMPlexSans-Regular.ttf"),
+        zed_font!("ibm-plex-sans/IBMPlexSans-Italic.ttf"),
+        zed_font!("ibm-plex-sans/IBMPlexSans-SemiBold.ttf"),
+        zed_font!("ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf"),
+        zed_font!("lilex/Lilex-Regular.ttf"),
+        zed_font!("lilex/Lilex-Bold.ttf"),
+        zed_font!("lilex/Lilex-Italic.ttf"),
+        zed_font!("lilex/Lilex-BoldItalic.ttf"),
+    ]
+    .into_iter()
+    .map(Cow::Borrowed)
+    .collect()
+}
+
 #[wasm_bindgen]
 pub fn run() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
@@ -101,6 +127,20 @@ pub fn run() -> Result<(), JsValue> {
 
     app.with_assets(assets::GhostexAssets).run(|cx: &mut App| {
         gpui_component::init(cx);
+        // Match desktop's terminal keymap: Root's focus traversal otherwise
+        // consumes Tab/Shift+Tab before the shared terminal encoder sees them.
+        cx.bind_keys([
+            KeyBinding::new(
+                "tab",
+                gpui::NoAction {},
+                Some(terminal_element::TERMINAL_KEY_CONTEXT),
+            ),
+            KeyBinding::new(
+                "shift-tab",
+                gpui::NoAction {},
+                Some(terminal_element::TERMINAL_KEY_CONTEXT),
+            ),
+        ]);
 
         let emoji_font = Cow::Borrowed(include_bytes!("../fonts/NotoEmoji-Regular.ttf").as_slice());
         let mono_font =
@@ -108,13 +148,16 @@ pub fn run() -> Result<(), JsValue> {
         cx.text_system()
             .add_fonts(vec![emoji_font, mono_font])
             .expect("Failed to load fonts");
+        cx.text_system()
+            .add_fonts(platform_fonts())
+            .expect("Failed to load the platform fonts");
         cx.global_mut::<Theme>().mono_font_family = "JetBrains Mono".into();
 
         cx.open_window(WindowOptions::default(), |window, cx| {
             let shell = cx.new(|cx| {
                 let mut app = GhostexGpuiApp::new();
+                app.web_host.main_window = Some(window.window_handle());
                 app.gx_store_start(cx);
-                app.web_start_chat_broker(cx);
                 app
             });
             cx.new(|cx| Root::new(shell, window, cx))

@@ -8,6 +8,7 @@ use gpui::{
 use serde_json::json;
 
 impl NativeChatView {
+    /// CDXC:SessionChat 2026-09-16 DECISION: User: notices are the shared status card. Actions sit right-aligned in the footer band with a keyed action on the left; the 2026-09-07 20px padding rule is superseded by the card's shared padding. User: no "Selected in terminal" badge on any picker row, in any state.
     pub(crate) fn render_notice(
         &mut self,
         p: &ChatAppearance,
@@ -28,6 +29,13 @@ impl NativeChatView {
         let choices = notice["choices"].as_array().cloned().unwrap_or_default();
         let answerable = !choices.is_empty();
         let collapsed = answerable && !self.expanded.contains(&key);
+        // The card keeps its collapsed choices while shut, so an opening body grows from their
+        // height rather than from nothing.
+        let motion = answerable
+            .then(|| self.disclosure_frame(&key, !collapsed, cx))
+            .flatten();
+        let body_key = key.clone();
+        // CDXC:SessionChat 2026-09-07 DECISION: User: the rate-limit picker already has clickable options, so omit its redundant Previous/Next/Confirm/Cancel controls and terminal footer.
         let rate_limit = choices.iter().any(|choice| {
             text(choice, "label").starts_with("Wait here, then continue automatically")
         });
@@ -39,8 +47,13 @@ impl NativeChatView {
                 .is_some_and(Vec::is_empty)
         {
             let (body, actions) = self.render_terminal_dialog(&notice["dialog"], p, window, cx);
+            let copy_title = text(&notice["dialog"]["presentation"]["copy"], "title");
             return Some(self.status_card(
-                text(&notice["dialog"], "title"),
+                if copy_title.is_empty() {
+                    text(&notice["dialog"], "title")
+                } else {
+                    copy_title
+                },
                 "titlebar/terminal-2.svg",
                 body,
                 actions,
@@ -70,23 +83,29 @@ impl NativeChatView {
             } else {
                 choices.len()
             };
+            let secondary = notice["secondaryChoice"].as_u64().map(|index| index as usize);
             for (index, choice) in choices.iter().take(count).enumerate() {
                 let shortcut = if self.snapshot["showShortcutLabels"] != false {
-                    match index {
-                        0 => Some(
+                    if index == 0 {
+                        Some(
                             if cfg!(target_os = "macos") {
                                 "⌘Enter"
                             } else {
                                 "Ctrl+Enter"
                             }
                             .to_string(),
-                        ),
-                        1 => Some("Esc".to_string()),
-                        _ => None,
+                        )
+                    } else if Some(index) == secondary {
+                        Some("Esc".to_string())
+                    } else {
+                        None
                     }
                 } else {
                     None
                 };
+                // CDXC:SessionChat 2026-09-26 DECISION:
+                // User: a notice card's choice must never wrap onto 2 lines; truncate it with "..." and show the whole label on hover.
+                // SEE-ALSO: apps/mobile/app/src/chat/native/cards/NoticeCard.tsx, where pressing and holding the choice stands in for hover.
                 let row = self.choice_row(
                     format!("notice-choice:{}", choice["index"]),
                     text(choice, if collapsed { "collapsedLabel" } else { "label" }),
@@ -94,6 +113,7 @@ impl NativeChatView {
                     false,
                     shortcut,
                     collapsed,
+                    true,
                     snapshot["questionCard"]["busy"] == true,
                     json!({"type":"answer","answer":choice["answer"]}),
                     p,
@@ -115,11 +135,14 @@ impl NativeChatView {
             actions.extend(dialog_actions);
         }
         if !collapsed && !text(notice, "screenTail").is_empty() {
+            // CDXC:SessionChat 2026-09-13 DECISION: User: always hide the terminal-output disclosure in narrow chats. Use the shared narrow-chat breakpoint and hide already-expanded output as well.
             if f32::from(self.bounds.get().size.width) / p.scale <= 1070.0 {
                 body.push(div().into_any_element());
             } else {
                 let tail_key = format!("{key}:tail");
                 let tail_open = self.expanded.contains(&tail_key);
+                let tail_motion = self.disclosure_frame(&tail_key, tail_open, cx);
+                let tail_body_key = tail_key.clone();
                 let mut tail = div().flex().flex_col().gap(px(8.0 * p.scale)).child(
                     div()
                         .id("notice-terminal-output")
@@ -163,26 +186,32 @@ impl NativeChatView {
                             cx.notify();
                         })),
                 );
-                if tail_open {
+                if tail_open || tail_motion.is_some() {
                     tail = tail.child(
-                        div()
-                            .id("notice-terminal-output-text")
-                            .max_h(px(240.0 * p.scale))
-                            .overflow_y_scroll()
-                            .rounded(px(8.0 * p.scale))
-                            .border_1()
-                            .border_color(p.control_border.opacity(0.65))
-                            .bg(p.background.opacity(0.7))
-                            .p(px(12.0 * p.scale))
-                            .font_family("Menlo")
-                            .text_size(px(12.0 * p.scale))
-                            .child(text(notice, "screenTail")),
+                        self.disclosure_body_motion(
+                            &tail_body_key,
+                            tail_motion,
+                            8.0 * p.scale,
+                            div()
+                                .id("notice-terminal-output-text")
+                                .max_h(px(240.0 * p.scale))
+                                .overflow_y_scroll()
+                                .rounded(px(8.0 * p.scale))
+                                .border_1()
+                                .border_color(p.control_border.opacity(0.65))
+                                .bg(p.background.opacity(0.7))
+                                .p(px(12.0 * p.scale))
+                                .font_family("Menlo")
+                                .text_size(px(12.0 * p.scale))
+                                .child(text(notice, "screenTail"))
+                                .into_any_element(),
+                        ),
                     );
                 }
                 body.push(tail.into_any_element());
             }
         }
-        // CDXC:AgentProviders 2026-09-18 SEE-ALSO: NoticeAccountMenu in session-chat-terminal-notice-card.tsx; only sign-in and usage-limit notices offer the account panel.
+        // CDXC:AgentProviders 2026-09-13 DECISION: User approved restricting Switch account to relevant notices after it appeared on a queued reply. Only sign-in and usage-limit notices offer the existing account picker beside Open terminal, superseding the September 12 rule for all terminal notices.
         if !collapsed
             && snapshot["accountPanel"].is_object()
             && matches!(notice["kind"].as_str(), Some("loginExpired" | "usageLimit"))
@@ -216,7 +245,7 @@ impl NativeChatView {
                     .into_any_element(),
             );
         }
-        // Trust and Remember stays reachable on a collapsed picker, matching
+        // Trust and Remember stays reachable on a collapsed picker, as on
         // the React card: the collapsed rows are the prompt's own Yes/No.
         for action in notice["actions"]
             .as_array()
@@ -225,7 +254,39 @@ impl NativeChatView {
             .filter(|action| !collapsed || action["kind"] == "trustAndRemember")
         {
             if action["kind"] == "switchToTerminal" {
-                actions.push(self.host_button("terminalView", "titlebar/terminal-2.svg", p, cx));
+                actions.push(
+                    div()
+                        .id("notice-terminal-view")
+                        .role(gpui::Role::Button)
+                        .aria_label("Terminal View")
+                        .chat_cursor_pointer()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0 * p.scale))
+                        .px(px(8.0 * p.scale))
+                        .py(px(4.0 * p.scale))
+                        .rounded(px(6.0 * p.scale))
+                        .border_1()
+                        .border_color(p.border)
+                        .text_color(p.primary)
+                        .hover(|style| style.bg(p.border))
+                        .child(
+                            gpui::svg()
+                                .path("titlebar/terminal-2.svg")
+                                .size(px(14.0 * p.scale))
+                                .text_color(p.primary),
+                        )
+                        .child("Terminal View")
+                        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+                            this.perform_composer_action(
+                                "terminalView",
+                                event.position(),
+                                window,
+                                cx,
+                            )
+                        }))
+                        .into_any_element(),
+                );
             } else {
                 let answer = action["answer"].clone();
                 actions.push(self.chat_button(
@@ -238,16 +299,13 @@ impl NativeChatView {
             }
         }
         if notice["choices"].is_null() && notice["dialog"].is_null() {
-            actions.push(
-                div()
-                    .id("dismiss-notice")
-                    .chat_cursor_pointer()
-                    .child("Dismiss")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.invoke(json!({"type":"dismissNotice"}), cx);
-                    }))
-                    .into_any_element(),
-            );
+            actions.push(self.chat_button(
+                "dismiss-notice".into(),
+                "Dismiss".into(),
+                json!({"type":"dismissNotice"}),
+                p,
+                cx,
+            ));
         }
         if let Some(error) = snapshot["noticeError"].as_str() {
             body.push(
@@ -321,6 +379,17 @@ impl NativeChatView {
                         cx.notify();
                     }))
             });
-        Some(self.status_card_with_header(header.into_any_element(), body, actions, p))
+        Some(self.status_card_with_header_motion(
+            super::cards::CardBodyMotion {
+                key: &body_key,
+                frame: motion,
+                shut_body: true,
+                shut: collapsed,
+            },
+            header.into_any_element(),
+            body,
+            actions,
+            p,
+        ))
     }
 }

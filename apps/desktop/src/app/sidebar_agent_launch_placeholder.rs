@@ -61,7 +61,7 @@ impl GhostexGpuiApp {
         let Some(group) = snapshot.groups.iter().find(|group| {
             match command["groupId"].as_str() {
                 Some(group_id) => group.group_id == group_id,
-                // The New Thread picker targets the runtime's active group.
+                // The New Thread picker targets the active group.
                 None => picker_launch && group.is_active,
             }
         }) else {
@@ -124,6 +124,12 @@ impl GhostexGpuiApp {
         {
             self.agents_chat_mode_sessions.insert(shell_session_id);
             self.stage_native_chat_launch(shell_session_id, &project_id, agent_id, name, icon, cx);
+            self.track_untouched_agent_chat(
+                shell_session_id,
+                project_id.clone(),
+                agent_id.to_string(),
+                cx,
+            );
         }
         let Some(pane_id) = self.agents_workspace.pane_id_for_session(shell_session_id) else {
             return;
@@ -141,15 +147,6 @@ impl GhostexGpuiApp {
                 shell_session_id,
                 staged_at: Instant::now(),
             });
-        support_logs::append_temporary(
-            support_logs::GpuiSupportLog::TerminalFocus,
-            "TEMP.gpui.sessionSwitchLatency.agentLaunchPlaceholderStaged",
-            serde_json::json!({
-                "epochMs": support_logs::temporary_epoch_ms(),
-                "agentId": agent_id,
-                "chat": self.agents_chat_mode_sessions.contains(&shell_session_id),
-            }),
-        );
         cx.notify();
         cx.spawn(async move |this, cx| {
             cx.background_executor()
@@ -213,16 +210,6 @@ impl GhostexGpuiApp {
             self.reconcile_agents_pane_surfaces(cx);
             cx.notify();
         }
-        support_logs::append_temporary(
-            support_logs::GpuiSupportLog::TerminalFocus,
-            "TEMP.gpui.sessionSwitchLatency.agentLaunchPlaceholderAdopted",
-            serde_json::json!({
-                "epochMs": support_logs::temporary_epoch_ms(),
-                "projectId": key.project_id,
-                "sessionId": key.session_id,
-                "stagedMs": placeholder.staged_at.elapsed().as_millis() as u64,
-            }),
-        );
     }
 
     fn expire_agent_launch_placeholder(

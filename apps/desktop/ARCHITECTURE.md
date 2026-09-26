@@ -52,23 +52,20 @@ Main code:
 
 - `gpui/src/main.rs`
 - `gpui/assets/titlebar/*.svg`
-- `gpui/titlebar-host.html`
-- `native/sidebar/titlebar-host.tsx`
 
-The titlebar is GPUI-owned. It renders the project label, sidebar toggle, workarea switcher, Open In, Resources, Keep Awake, actions, and Settings controls. Git, Actions, Open In, Tips, and Resources use GPUI-rendered `gpui_component::menu::PopupMenu` surfaces in non-activating popup windows; OS utility menus continue to use `gpui_component::native_menu::NativeMenu`. The legacy React Tips and Resources implementations remain owned by the macOS app and are not loaded by these GPUI titlebar controls.
+The titlebar is GPUI-owned. It renders the project label, sidebar toggle, workarea switcher, Open In, Resources, Keep Awake, actions, and Settings controls. Git, Actions, Open In, Tips, and Resources use GPUI-rendered `gpui_component::menu::PopupMenu` surfaces in non-activating popup windows; OS utility menus continue to use `gpui_component::native_menu::NativeMenu`.
 
 ### Sidebar
 
-**Technology:** existing React `SidebarApp` inside CEF.
+**Technology:** native GPUI renderer fed by the Rust store (`packages/gx-core`).
 
 Main code:
 
-- `gpui/index.html`
-- `gpui/sidebar/main.tsx`
-- `gpui/sidebar/gxserver-runtime.ts`
-- `gpui/src/cef/macos.rs`
+- `apps/desktop/src/app/native_sidebar/` (drawing and input)
+- `apps/desktop/src/app/gx_store/` (the store, its gxserver calls through `gx_rpc`, and the actions)
+- `packages/gx-core/` (the rules)
 
-Rust creates a `CefSurface` for `index.html`. The TypeScript runtime mounts the shared sidebar React app and adapts it to GPUI by providing a local message source and a `vscode.postMessage`-compatible facade. The sidebar gets gxserver bootstrap data through `window.ghostexGpui`, talks to local gxserver over HTTP/WebSocket, and posts active-project/readiness/native-action messages back through fixed CEF bridge functions.
+The React sidebar in CEF was deleted on 2026-09-21 and the QuickJS app runtime that fed it on 2026-09-25; the desktop runs no JavaScript outside its CEF pages.
 
 ### Agents terminal panes
 
@@ -210,7 +207,6 @@ Build pieces:
   - `kanban.html`
   - `manage.html`
   - `modal-host.html`
-  - `titlebar-host.html`
 - The app packager creates a macOS `.app` bundle with CEF frameworks, helper apps, sidebar resources, sounds, CLI resources, Web resources, and optional remote gxserver packages.
 
 ## Current caveats

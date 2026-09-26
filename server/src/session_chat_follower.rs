@@ -148,6 +148,9 @@ pub(crate) fn follower_drain_once(
     want_snapshot: bool,
 ) -> FollowerDrainOutcome {
     let lineage = session_chat_lineage_extractor(agent);
+    if agent == SessionChatTranscriptAgent::OpenCode {
+        crate::session_chat_opencode::refresh_for_path(file_path);
+    }
     // Hermes's transcript is a mirror of its SQLite rows; freshen it before the
     // generic file logic reads it so each tick sees the latest turn state. An
     // in-place rewind rewrite swaps the inode, which the identity check below
@@ -759,6 +762,7 @@ async fn detect_and_adopt_successor_transcript(
         | SessionChatTranscriptAgent::Cursor
         | SessionChatTranscriptAgent::Grok
         | SessionChatTranscriptAgent::Hermes
+        | SessionChatTranscriptAgent::OpenCode
         | SessionChatTranscriptAgent::Pi
         | SessionChatTranscriptAgent::Zcode => return None,
     };
@@ -1117,7 +1121,11 @@ pub async fn run_session_chat_follower(
                         || live.working
                         || published_activity.is_some()
                         || published_fleet.is_some()
-                        || unresolved_last_probe.elapsed() >= UNRESOLVED_STEADY_PROBE_INTERVAL);
+                        || unresolved_last_probe.elapsed() >= UNRESOLVED_STEADY_PROBE_INTERVAL
+                        || crate::session_chat_screen_watch::session_chat_screen_changed(
+                            config.screen_change_watch.as_ref(),
+                        )
+                        .await);
                 let detection = if probe_due {
                     unresolved_last_probe = std::time::Instant::now();
                     let reader = config.options_reader.clone();
@@ -1622,9 +1630,18 @@ pub async fn run_session_chat_follower(
             .options_change_watch
             .as_ref()
             .is_some_and(|watch| watch(identity.agent_session_id.as_deref()));
+        // The faster tiers already probe every tick; only the idle one waits.
+        let screen_changed = probe_interval_ticks > 1
+            && published_state_valid
+            && config.options_reader.is_some()
+            && crate::session_chat_screen_watch::session_chat_screen_changed(
+                config.screen_change_watch.as_ref(),
+            )
+            .await;
         let periodic_probe_due = became_ready
             || activity_command_probe_due
             || statusline_changed
+            || screen_changed
             || reconcile_ticks % probe_interval_ticks == 0;
         if published_state_valid
             && config.options_reader.is_some()
@@ -2262,16 +2279,34 @@ pub(crate) fn sync_session_chat_follower_for_session(
         &project_id,
         &session_id,
     );
-    // CDXC:AgentScreenDetection 2026-09-03 WHY: only Claude has a statusline payload
-    // to watch; a cheap stat per tick, no capture until it actually changes.
+    // CDXC:AgentScreenDetection 2026-09-03 WHY: only Claude and Cursor have a
+    // statusline payload to watch; a cheap stat per tick, no capture until it changes.
+    let hook_state_directory =
+        crate::session_chat_options::session_chat_hook_state_directory(&state.paths);
     let options_change_watch =
+        match crate::session_chat_options::session_chat_option_agent(terminal_agent.as_deref()) {
+            Some(crate::session_chat_options::SessionChatOptionAgent::Claude) => Some(
+                crate::session_chat_options::claude_statusline_change_watch(hook_state_directory),
+            ),
+            Some(crate::session_chat_options::SessionChatOptionAgent::Cursor) => {
+                Some(crate::session_chat_options::cursor_statusline_change_watch(
+                    hook_state_directory,
+                    project_id.clone(),
+                    session_id.clone(),
+                ))
+            }
+            _ => None,
+        };
+    // Only an agent whose screen the probe can read is worth looking at.
+    let screen_change_watch =
         (crate::session_chat_options::session_chat_option_agent(terminal_agent.as_deref())
-            == Some(crate::session_chat_options::SessionChatOptionAgent::Claude))
-        .then(|| {
-            crate::session_chat_options::claude_statusline_change_watch(
-                crate::session_chat_options::session_chat_hook_state_directory(&state.paths),
-            )
-        });
+            .is_some()
+            || crate::session_chat_composer::has_session_chat_composer_signature(
+                terminal_agent.as_deref(),
+            ))
+        .then(|| crate::zmx::provider_zmx_session_name(session).ok())
+        .flatten()
+        .and_then(crate::session_chat_screen_watch::session_chat_screen_change_watch);
     let config = crate::session_chat::SessionChatFollowerConfig {
         project_id,
         session_id,
@@ -2284,6 +2319,7 @@ pub(crate) fn sync_session_chat_follower_for_session(
         state_reader: Some(state_reader),
         options_reader: Some(options_reader),
         options_change_watch,
+        screen_change_watch,
         queue_reader: Some(queue_reader),
         successor_hooks: Some(successor_hooks),
         notice_publisher: Some(notice_publisher),

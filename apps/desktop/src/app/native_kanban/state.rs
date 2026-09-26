@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::{Bounds, Entity, FocusHandle, Pixels, Subscription, Task};
-use gpui_component::input::InputState;
+use gpui_component::input::{InputState, TextareaState};
 
 use super::filters::{KanbanCardView, KanbanViewPreferences};
 use super::model::{BeadsIssue, BoardColumn, BoardTicket, KanbanConversationState};
@@ -78,8 +78,8 @@ pub(crate) struct KanbanTicketForm {
     /// The ticket as last loaded, for the read-only parts (ids, comments, assignee).
     pub(crate) ticket: Option<BoardTicket>,
     pub(crate) title: Entity<InputState>,
-    pub(crate) description: Entity<InputState>,
-    pub(crate) comment: Entity<InputState>,
+    pub(crate) description: Entity<TextareaState>,
+    pub(crate) comment: Entity<TextareaState>,
     pub(crate) label_input: Entity<InputState>,
     pub(crate) status: String,
     pub(crate) priority: String,
@@ -195,6 +195,15 @@ impl NativeKanbanState {
             appearance_signature,
             ..Self::default()
         };
+    }
+
+    /// The board's first load has not answered yet, so its lanes show skeleton cards.
+    pub(crate) fn loading_first(&self) -> bool {
+        !self.initial_load_done
+            && matches!(
+                self.load_state,
+                Some(KanbanLoadState::Loading | KanbanLoadState::Idle)
+            )
     }
 
     pub(crate) fn ticket(&self, ticket_id: &str) -> Option<&BoardTicket> {

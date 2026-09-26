@@ -4,26 +4,30 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# CDXC:WebGpui 2026-09-22 WHY: the browser build is its own crate because `ghostex-gpui` is binary-only and links CEF, libghostty, PTYs, SQLite and QuickJS, none of which exist on wasm32. This crate compiles the desktop's drawing code straight from `apps/desktop/src` (symlinks under `src/`, plus the items `build.rs` lifts out of mixed files) and feeds it from the platform-neutral cores, so the desktop crate does not change shape for an experiment.
+# CDXC:WebGpui 2026-09-22 WHY: the browser build is its own crate because `ghostex-gpui` is binary-only and links CEF, libghostty, PTYs and SQLite (and QuickJS until 2026-09-25), none of which exist on wasm32. This crate compiles the desktop's drawing code straight from `apps/desktop/src` (symlinks under `src/`, plus the items `build.rs` lifts out of mixed files) and feeds it from the platform-neutral cores, so the desktop crate does not change shape for an experiment.
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed" }
-gpui-component = { path = "../../.dependencies/gpui-component/crates/ui", default-features = false }
+gpui-component = { path = "../../.dependencies/gpui-component/crates/component", default-features = false }
 gpui-component-assets = { path = "component-assets" }
 rust-embed = { version = "8.7.2", features = ["debug-embed", "include-exclude"] }
 ghostex-gx-core = { path = "../../packages/gx-core" }
 ghostex-gx-protocol = { path = "../../packages/gx-protocol" }
 ghostex-gx-chat-core = { path = "../../packages/gx-chat-core" }
+ghostex-gx-chat-client = { path = "../../packages/gx-chat-client" }
 anyhow = "1"
 base64 = "0.22"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "wasmbind"] }
+icu_normalizer = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 futures = "0.3"
 web-time = "1"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 log = "0.4"
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 console_error_panic_hook = "0.1"
@@ -64,6 +68,7 @@ gpui_shared_string = { path = "../../.dependencies/zed/crates/gpui_shared_string
 gpui_util = { path = "../../.dependencies/zed/crates/gpui_util" }
 gpui_web = { path = "../../.dependencies/zed/crates/gpui_web" }
 gpui_wgpu = { path = "../../.dependencies/zed/crates/gpui_wgpu" }
+sum_tree = { path = "../../.dependencies/zed/crates/sum_tree" }
 
 [patch.crates-io]
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }

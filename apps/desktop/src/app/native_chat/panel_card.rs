@@ -1,7 +1,7 @@
 //! The clickable header the two composer panels share: lead icon, title, a
 //! muted meta line, an optional trailing ornament and the fold chevron. Both
 //! the Tasks panel and the Subagents strip are the shared status card with this
-//! header, the way React's `SessionChatStatusCard` renders them.
+//! header, the way React's `SessionChatStatusCard` rendered them.
 
 use super::{appearance::ChatAppearance, state::NativeChatView};
 use crate::app::native_chat::cursor::ChatCursor as _;
@@ -18,6 +18,8 @@ pub(super) struct PanelHeader {
     pub(super) title: &'static str,
     pub(super) meta: String,
     pub(super) open: bool,
+    /// Whether a body is drawn under the header now, which outlasts `open` while it eases away.
+    pub(super) has_body: bool,
     pub(super) toggle_label: &'static str,
     pub(super) trailing: Option<AnyElement>,
     pub(super) command: Value,
@@ -78,7 +80,6 @@ impl NativeChatView {
                     .flex_shrink_0(),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.invoke(command.clone(), cx)));
-        // Both panels show a body exactly while they are open.
-        super::cards::status_card_press_header(row, header.open, false, p).into_any_element()
+        super::cards::status_card_press_header(row, header.has_body, false, p).into_any_element()
     }
 }

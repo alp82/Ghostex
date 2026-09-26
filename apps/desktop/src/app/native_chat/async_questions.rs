@@ -7,7 +7,7 @@ use gpui::{
     ParentElement as _, StatefulInteractiveElement as _, Styled as _, Window, div, px, relative,
     rgb, svg,
 };
-use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::input::{InputEvent, Textarea, TextareaState};
 use serde_json::json;
 use std::time::Duration;
 
@@ -96,6 +96,7 @@ impl NativeChatView {
                             "Question from Codex"
                         }),
                 )
+                // CDXC:SessionChat 2026-09-14 DECISION: User: remove the idle "Reply when ready" label from the Codex questions card.
                 .child(div().min_w_0().flex_1().text_color(p.muted).child(
                     if state["working"] == true {
                         "Still working"
@@ -133,7 +134,8 @@ impl NativeChatView {
             .text_size(px(13.0 * s))
             .line_height(relative(1.4))
             .child(header);
-        if collapsed {
+        let motion = self.disclosure_frame("async-questions", !collapsed, cx);
+        if collapsed && motion.is_none() {
             return Some(card.into_any_element());
         }
         let pane_height = f32::from(self.bounds.get().size.height);
@@ -179,8 +181,7 @@ impl NativeChatView {
             .is_none_or(|(previous, _)| previous != &key)
         {
             let input = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .multi_line(true)
+                TextareaState::new(window, cx)
                     .submit_on_enter(true)
                     .auto_grow(1, 5)
                     .placeholder(if options.is_some_and(|options| !options.is_empty()) {
@@ -206,6 +207,7 @@ impl NativeChatView {
                             cx,
                         )
                     }
+                    // CDXC:SessionChat 2026-09-12 DECISION: User: Enter sends a question answer; Shift+Enter inserts a newline.
                     InputEvent::PressEnter { shift: false, .. } => {
                         if this.async_answer_echo.pending == 0 {
                             this.invoke(json!({"type":"asyncQuestionSend"}), cx)
@@ -296,7 +298,11 @@ impl NativeChatView {
                     }
                 }))
                 .child(
-                    Input::new(&input)
+                    Textarea::new(&input)
+                        .on_paste(Self::paste_handler(
+                            cx.entity().downgrade(),
+                            self.async_answer_input.clone(),
+                        ))
                         .aria_label("Your answer")
                         .appearance(false)
                         .bordered(false)
@@ -317,6 +323,7 @@ impl NativeChatView {
                                     .inset(),
                             ])
                         })
+                        // CDXC:SessionChat 2026-09-12 DECISION: User: the async question answer textarea must be rounded too.
                         .rounded(px(12.0 * s))
                         .bg(p.background)
                         .px(px(10.0 * s))
@@ -427,7 +434,13 @@ impl NativeChatView {
                 .line_height(px(20.0 * s)),
             );
         body = body.child(actions);
-        card = card.child(body);
+        // The header carries its own padding, so the body eases from nothing with no gap to carry.
+        card = card.child(self.disclosure_body_motion(
+            "async-questions",
+            motion,
+            0.0,
+            body.into_any_element(),
+        ));
         Some(card.into_any_element())
     }
 }

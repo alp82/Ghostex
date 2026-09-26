@@ -4,6 +4,7 @@ import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { SettingsModal, type TailcatSettingsRpc } from './settings-modal';
 import { DEFAULT_ghostex_SETTINGS, type ghostexSettings } from '../shared/ghostex-settings';
 import type { ProjectViewProject, ProjectViewSpace } from '../shared/ghostex-settings/project-views';
+import type { WebviewApi } from './webview-api';
 import { normalizeSessionCardHoverButtons } from '../shared/session-card-hover-actions';
 import { DEFAULT_SIDEBAR_AGENTS } from '../shared/sidebar-agents';
 import { encodeEasyConnectCode, encodeTailscaleCode } from '../shared/ghostex-remote-pairing';
@@ -178,6 +179,7 @@ function createRemoteStoryRpc({
 
 function SettingsModalStory({
   cuaDriverInstalled,
+  cuaDriverUpdateAvailable = false,
   cuaPermissionsGranted,
   initialSettings = modalSettings,
   initialTab = 'settings',
@@ -187,8 +189,10 @@ function SettingsModalStory({
   projectViewProjects,
   projectViewSpaces,
   remoteRpc,
+  vscode,
 }: {
   cuaDriverInstalled?: boolean;
+  cuaDriverUpdateAvailable?: boolean;
   cuaPermissionsGranted?: boolean;
   initialSettings?: ghostexSettings;
   initialTab?:
@@ -201,13 +205,15 @@ function SettingsModalStory({
     | 'openTargets'
     | 'hotkeys'
     | 'remote'
-    | 'extensions';
+    | 'extensions'
+    | 'debugging';
   nativeWindow?: boolean;
   pluginSettingsStatus?: SidebarPluginSettingsStatusMessage;
   projects?: SidebarProjectSettingsItem[];
   projectViewProjects?: ProjectViewProject[];
   projectViewSpaces?: ProjectViewSpace[];
   remoteRpc?: TailcatSettingsRpc;
+  vscode?: WebviewApi;
 }) {
   const [settings, setSettings] = useState<ghostexSettings>(initialSettings);
   useEffect(() => {
@@ -243,7 +249,11 @@ function SettingsModalStory({
     cuaDriverAccessibilityPermissionGranted: cuaPermissionsGranted,
     cuaDriverInstallCommand: '/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"',
     cuaDriverInstalled: cuaDriverInstalled ?? cuaPermissionsGranted !== undefined,
+    cuaDriverLatestVersion: cuaDriverUpdateAvailable ? '0.29.1' : '0.23.2',
+    cuaDriverManagedUpdatesSupported: true,
     cuaDriverScreenRecordingPermissionGranted: cuaPermissionsGranted,
+    cuaDriverUpdateAvailable,
+    cuaDriverVersion: '0.23.2',
     detail:
       'Ghostex CLI is installed automatically with the app. Use ghostex for the full command. Ghostex Browser Use and Ghostex Computer Use are not installed yet.',
     generateTitleSkillInstalled: false,
@@ -327,6 +337,20 @@ function SettingsModalStory({
             cuaDriverInstalled: true,
             cuaDriverPath: '/Users/madda/.local/bin/cua-driver',
             cuaDriverScreenRecordingPermissionGranted: true,
+            cuaDriverUpdateAvailable: false,
+            cuaDriverVersion: ghostexCliStatus.cuaDriverLatestVersion,
+          })
+        }
+        onCheckCuaDriverUpdate={() =>
+          setGhostexCliStatus({ ...ghostexCliStatus, generatedAt: new Date().toISOString() })
+        }
+        onReinstallCuaDriver={() => setGhostexCliStatus({ ...ghostexCliStatus, generatedAt: new Date().toISOString() })}
+        onUninstallCuaDriver={() =>
+          setGhostexCliStatus({
+            ...ghostexCliStatus,
+            cuaAppInstalled: false,
+            cuaDriverInstalled: false,
+            cuaDriverPath: undefined,
           })
         }
         onInstallGhostexCli={() => setGhostexCliStatus({ ...ghostexCliStatus, installed: true })}
@@ -342,6 +366,7 @@ function SettingsModalStory({
         settings={settings}
         tailcatRpc={remoteRpc}
         theme={settings.sidebarTheme === 'plain-light' ? 'plain-light' : 'dark-blue'}
+        vscode={vscode}
       />
     </div>
   );
@@ -393,6 +418,10 @@ export const IntegrationsTrycuaMissing: Story = {
   render: () => <SettingsModalStory cuaDriverInstalled={false} initialTab='integrations' />,
 };
 
+export const IntegrationsTrycuaUpdateAvailable: Story = {
+  render: () => <SettingsModalStory cuaDriverUpdateAvailable cuaPermissionsGranted initialTab='integrations' />,
+};
+
 export const Projects: Story = {
   render: () => <SettingsModalStory initialTab='projects' projects={storyProjects} />,
 };
@@ -441,6 +470,13 @@ const storyPluginStatus: SidebarPluginSettingsStatusMessage = {
 export const Extensions: Story = {
   render: () => (
     <SettingsModalStory
+      initialSettings={{
+        ...modalSettings,
+        customViews: [
+          { enabled: true, id: 'custom-view-tasks', name: 'Tasks', url: 'https://ticktick.com/webapp#q/all/tasks' },
+          { enabled: false, id: 'custom-view-tower', name: 'Tower', url: 'https://tower.wecourts.com/' },
+        ],
+      }}
       initialTab='extensions'
       pluginSettingsStatus={storyPluginStatus}
       projects={storyProjects}
@@ -463,6 +499,77 @@ export const Theme: Story = {
   render: () => <SettingsModalStory initialTab='theme' />,
 };
 
+const glassLiveSettings: ghostexSettings = {
+  ...modalSettings,
+  windowGlass: 'frosted',
+  windowGlassSource: 'live',
+  windowGlassLiveStyleDark: 'aurora',
+  windowGlassLiveStyleLight: 'drift',
+  windowGlassLiveSpeed: 1,
+};
+
+/** Theme with the Live source: the eight animated styles, one per mode, and their speed. */
+export const ThemeGlassLive: Story = {
+  render: () => <SettingsModalStory initialSettings={glassLiveSettings} initialTab='theme' />,
+};
+
+/** Live with Use transparency set to Dark only: only the dark-mode style is offered. */
+export const ThemeGlassLiveDarkOnly: Story = {
+  render: () => (
+    <SettingsModalStory initialSettings={{ ...glassLiveSettings, windowGlass: 'auto' }} initialTab='theme' />
+  ),
+};
+
+/**
+ * A desktop host for the Live "Your video" stories: "Choose file…" answers with a pretend path, so the slot fills in
+ * as it does in the app.
+ */
+function createGlassLiveVideoHost(): WebviewApi {
+  return {
+    postMessage: (message) => {
+      if (message.type === 'pickWindowGlassVideoFile') {
+        window.dispatchEvent(
+          new CustomEvent('ghostex-app-modal-host-message', {
+            detail: {
+              appearance: message.appearance,
+              path: `/Users/you/Movies/${message.appearance === 'light' ? 'Morning light' : 'Rain on glass'}.mp4`,
+              type: 'windowGlassVideoFilePicked',
+            },
+          })
+        );
+      }
+    },
+  } as WebviewApi;
+}
+
+const glassLiveVideoSettings: ghostexSettings = {
+  ...glassLiveSettings,
+  windowGlassLiveStyleDark: 'video',
+  windowGlassVideoDark: '/Users/you/Movies/Rain on glass.mp4',
+};
+
+/** Live with the dark mode's slot set to Your video: the file, Change and Clear under the cards. */
+export const ThemeGlassLiveVideo: Story = {
+  render: () => (
+    <SettingsModalStory
+      initialSettings={glassLiveVideoSettings}
+      initialTab='theme'
+      vscode={createGlassLiveVideoHost()}
+    />
+  ),
+};
+
+/** Your video with Use transparency set to Dark only: one slot. */
+export const ThemeGlassLiveVideoDarkOnly: Story = {
+  render: () => (
+    <SettingsModalStory
+      initialSettings={{ ...glassLiveVideoSettings, windowGlass: 'auto' }}
+      initialTab='theme'
+      vscode={createGlassLiveVideoHost()}
+    />
+  ),
+};
+
 export const Hotkeys: Story = {
   render: () => <SettingsModalStory initialTab='hotkeys' />,
 };
@@ -478,6 +585,22 @@ export const Agents: Story = {
  */
 export const Remote: Story = {
   render: () => <SettingsModalStory initialTab='remote' remoteRpc={createRemoteStoryRpc({ sshEnabled: true })} />,
+};
+
+export const Debugging: Story = {
+  render: () => (
+    <SettingsModalStory
+      initialSettings={{
+        ...modalSettings,
+        debuggingMode: true,
+        diagnosticLogging: {
+          scenarios: { 'gpui.sessionChat.viewState': { enabled: true }, 'native.terminal.focus': { enabled: true } },
+          version: 1,
+        },
+      }}
+      initialTab='debugging'
+    />
+  ),
 };
 
 export const RemoteSshAccessOff: Story = {

@@ -12,7 +12,6 @@ mod browser_history;
 mod cef;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 mod cef_component_window;
-mod chat_preview;
 mod component_store;
 mod ghostty_kit;
 mod ghostty_vt;
@@ -108,7 +107,6 @@ use gpui::Pixels;
 use gpui::Point;
 use gpui::PressureStage;
 use gpui::Render;
-use gpui::RenderOnce;
 use gpui::ScrollDelta;
 use gpui::ScrollHandle;
 use gpui::Size;
@@ -129,7 +127,6 @@ use gpui::rgba;
 use gpui::size;
 use gpui::svg;
 use gpui_component::Root;
-use gpui_component::Selectable;
 use gpui_component::h_flex;
 use gpui_component::menu::PopupMenu;
 use gpui_component::scroll::Scrollbar;
@@ -174,10 +171,6 @@ fn main() {
     if gpui_run_windows_remote_ssh_askpass() {
         return;
     }
-    if std::env::var_os("GHOSTEX_CHAT_PREVIEW_STATE").is_some() {
-        chat_preview::run();
-        return;
-    }
     #[cfg(target_os = "windows")]
     windows_updater::run_startup_hooks();
 
@@ -206,13 +199,12 @@ fn main() {
             );
         }
     }
-    // PATH wrappers for `ghostex`/`gx` go stale across Sparkle and DMG
-    // updates, which swap the bundle but never rewrite them. Refresh
-    // Ghostex-owned wrappers off the main thread so filesystem probing cannot
+    // Install missing `ghostex`/`gx` PATH wrappers and refresh stale
+    // Ghostex-owned ones off the main thread so filesystem probing cannot
     // delay first paint, and only after the PATH normalization above so the
     // scan sees the user's standard tool directories.
     profiling::start();
-    thread::spawn(gpui_auto_repair_stale_ghostex_cli_wrappers);
+    thread::spawn(gpui_auto_install_ghostex_cli_wrappers);
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     cef_component_window::configure_cef_framework_path_for_process();
     // The Linux app is X11-only for v1 (CEF child-window embedding requires
@@ -236,6 +228,7 @@ fn main() {
     // (GPUI previously lost panics to stderr; macOS counterpart:
     // NativeCrashDiagnostics).
     support_logs::install_panic_hook();
+    app::gx_store::initialize_client_storage_at_start();
     cef::prepare_application();
     #[cfg(target_os = "macos")]
     reconcile_gpui_managed_ghostty_config();
@@ -329,10 +322,10 @@ fn main() {
             gpui_key_binding_from_shared_hotkey("cmd+b", ToggleGpuiSidebarCollapsed, None),
             gpui_key_binding_from_shared_hotkey("cmd+alt+b", ToggleViewPanel, None),
             KeyBinding::new(SLEEP_FOCUSED_SESSION_DEFAULT_KEY, SleepFocusedSession, None),
-            gpui_key_binding_from_shared_hotkey("cmd+t", NewTerminalTab, None),
+            gpui_key_binding_from_shared_hotkey("cmd+shift+t", NewTerminalTab, None),
             gpui_key_binding_from_shared_hotkey("cmd+d", SplitFocusedTerminalRight, None),
             gpui_key_binding_from_shared_hotkey("cmd+shift+d", SplitFocusedTerminalDown, None),
-            gpui_key_binding_from_shared_hotkey("cmd+n", NewBrowserTab, None),
+            gpui_key_binding_from_shared_hotkey("cmd+t", NewBrowserTab, None),
             gpui_key_binding_from_shared_hotkey("cmd+ctrl+f", ToggleAgentsFocusMode, None),
             gpui_key_binding_from_shared_hotkey(
                 gpui_platform_hotkey_for_action("mergeAllTabs", "ctrl+shift+m"),
@@ -379,9 +372,11 @@ fn main() {
                 None,
             ),
         };
+        let main_window_background = window_glass_background_appearance();
+        crate::app::helpers::note_main_window_background(main_window_background);
         let options = WindowOptions {
             window_bounds: Some(window_bounds),
-            window_background: window_glass_background_appearance(),
+            window_background: main_window_background,
             display_id,
             window_min_size: Some(size(
                 px(GPUI_WINDOW_FRAME_MIN_WIDTH),
@@ -490,34 +485,12 @@ fn main() {
                             GPUI_LATEST_WINDOW_FRAME_STATE.with(|latest| latest.borrow().clone());
                         if previous_frame_state != current_frame_state {
                             schedule_gpui_window_frame_state_persist(cx);
-                            if let Some(state) = app.titlebar_popup_menu.as_ref() {
-                                log_gpui_titlebar_popup_repro(
-                                    "gpui.titlebarPopup.mainWindowBoundsChanged",
-                                    serde_json::json!({
-                                        "kind": state.kind.diagnostic_label(),
-                                        "mainWindowActive": window.is_window_active(),
-                                        "windowBounds": gpui_titlebar_popup_bounds_diagnostic(
-                                            Some(window.bounds())
-                                        ),
-                                    }),
-                                );
-                            }
                             app.close_gpui_titlebar_popup(None, window, cx);
                             app.recycle_gpui_new_thread_picker_preload(cx);
                         }
                     })
                     .detach();
                     cx.observe_window_activation(window, |app, window, cx| {
-                        log_gpui_titlebar_popup_repro(
-                            "gpui.titlebarPopup.mainWindowActivationChanged",
-                            serde_json::json!({
-                                "kind": app
-                                    .titlebar_popup_menu
-                                    .as_ref()
-                                    .map(|state| state.kind.diagnostic_label()),
-                                "mainWindowActive": window.is_window_active(),
-                            }),
-                        );
                         if !window.is_window_active() {
                             app.close_gpui_titlebar_popup(None, window, cx);
                             /*
@@ -736,72 +709,6 @@ fn reconcile_gpui_managed_ghostty_config() {
         snapshot.object(),
         &keys,
     );
-}
-
-#[derive(IntoElement)]
-struct GpuiTitlebarTipsTrigger {
-    selected: bool,
-    show_badge: bool,
-}
-
-impl GpuiTitlebarTipsTrigger {
-    fn new(show_badge: bool) -> Self {
-        Self {
-            selected: false,
-            show_badge,
-        }
-    }
-}
-
-impl Selectable for GpuiTitlebarTipsTrigger {
-    fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.selected
-    }
-}
-
-impl RenderOnce for GpuiTitlebarTipsTrigger {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let icon_color = if self.selected {
-            titlebar_icon_hover_color()
-        } else {
-            titlebar_icon_color()
-        };
-
-        div()
-            .id("ghostex-gpui-titlebar-button-tips")
-            .relative()
-            .flex()
-            .h(px(TITLEBAR_CONTROL_HEIGHT))
-            .px(px(TITLEBAR_BUTTON_HORIZONTAL_PADDING))
-            .items_center()
-            .justify_center()
-            .text_color(icon_color)
-            .cursor_default()
-            .when(self.selected, |this| this.bg(titlebar_button_hover_color()))
-            .hover(|this| {
-                this.bg(titlebar_button_hover_color())
-                    .text_color(titlebar_icon_hover_color())
-            })
-            .child(titlebar_svg_icon(TITLEBAR_ICON_INFO, 16.0, icon_color))
-            .when(self.show_badge, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .right(px(2.0))
-                        .top(px(5.0))
-                        .size(px(7.5))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(titlebar_background())
-                        .bg(rgb(0x95d7f6)),
-                )
-            })
-    }
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]

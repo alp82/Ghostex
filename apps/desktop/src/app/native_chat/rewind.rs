@@ -1,11 +1,12 @@
 //! The rewind confirmation, as a native child window.
 //!
 //! CDXC:SessionChat 2026-09-18 SEE-ALSO:
-//! React's session-chat-rewind-dialog.tsx. Rewinding drives the agent's own terminal dialog, so it
+//! The deleted React chat's session-chat-rewind-dialog.tsx, which this replaced. Rewinding drives the agent's own terminal dialog, so it
 //! is not undoable and not cancellable once the daemon starts typing: both buttons are therefore
 //! disabled while the call is in flight instead of offering a Cancel that could leave the terminal
 //! half-way through its own picker. The wording, the refusal handling, and the "put the prompt back
-//! in the composer" rule live in packages/shared/session-chat-controller/native-message-actions.ts.
+//! in the composer" rule live in packages/gx-chat-core (the rewind sheet in `transcript/actions.rs`),
+//! ported from the deleted packages/shared/session-chat-controller/native-message-actions.ts.
 
 use super::{appearance::ChatAppearance, state::NativeChatView, transcript::text};
 use crate::app::native_chat::cursor::ChatCursor as _;
@@ -33,9 +34,9 @@ pub(super) struct RewindWindow {
 
 impl NativeChatView {
     pub(in crate::app::native_chat) fn sync_rewind_window(&mut self, cx: &mut Context<Self>) {
-        if self.snapshot["rewind"].is_null() {
+        if self.pane_hidden || self.snapshot["rewind"].is_null() {
             if let Some(handle) = self.rewind_window.handle.take() {
-                let main = self.main_window;
+                let main = self.main_window.filter(|_| !self.pane_hidden);
                 cx.defer(move |cx| {
                     let _ = handle.update(cx, |_, window, _| window.remove_window());
                     if let Some(main) = main {
@@ -48,12 +49,12 @@ impl NativeChatView {
         if self.rewind_window.handle.is_some() || self.rewind_window.opening {
             return;
         }
-        let Some(main) = self.main_window else {
+        let Some(main) = self.open_main_window(cx) else {
             return;
         };
         self.rewind_window.opening = true;
         let pane = self.bounds.get();
-        let parent = self.config.parent_native_view;
+        let parent = self.child_window_parent(cx);
         let chat = cx.entity();
         cx.defer(move |cx| {
             let result = main
@@ -79,6 +80,8 @@ impl NativeChatView {
                     cx.open_window(
                         WindowOptions {
                             kind: crate::app::window::popup_frame::child_window_kind(),
+                            #[cfg(target_os = "linux")]
+                            x11_parent: Some(main),
                             window_bounds: Some(WindowBounds::Windowed(bounds)),
                             display_id,
                             app_id: crate::gpui_platform_window_app_id(),

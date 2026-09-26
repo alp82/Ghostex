@@ -2,9 +2,8 @@
 //! pane, with the child's model label, its task, back and close, and the child's
 //! own transcript rendered by the same row renderers as the main list.
 //!
-//! Every value comes from the host's `subagent` projection and its own splice
-//! channel (`packages/shared/session-chat-controller/native-subagent.ts`), the
-//! same rules React's `session-chat-subagent-viewer.tsx` renders; this file only
+//! Every value comes from the core's `subagent` projection and its own splice
+//! channel (`packages/gx-chat-core/src/extras/subagent.rs`); this file only
 //! lays them out.
 
 use super::{appearance::ChatAppearance, state::NativeChatView, transcript::text};
@@ -19,7 +18,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 impl NativeChatView {
-    /// The viewer's transcript window, spliced exactly like the main list (`subagentItemsSplice` in native-host.ts).
+    /// The viewer's transcript window, spliced exactly like the main list (the core frame's `subagent_splice`).
     pub(super) fn apply_subagent_splice(&mut self, splice: &mut Value) {
         let inserted = splice
             .get_mut("items")
@@ -71,6 +70,12 @@ impl NativeChatView {
     /// CDXC:SessionChat 2026-09-18 DECISION:
     /// User: clicking a subagent's name in the chat transcript shows that subagent's transcript in a popup with a backdrop over the main chat, and that transcript uses the same normal display as the main chat, with verbose and summarized off.
     /// GPUI paints the popup inside the chat pane rather than in a child window, and the backdrop takes the pointer so nothing behind it is clickable while it is open.
+    ///
+    /// CDXC:SessionChat 2026-09-25 DECISION:
+    /// User: "please make this modal for sub agents fit our glass look. should look similar to gpui chat view main area so they look cohesive". Under window glass the card is the composer's frosted wash and border on the pane's own glass, with the same frosted rows as the main transcript, instead of a solid dark panel; its header line is the same faint border. Outside glass it keeps the chat's own background.
+    ///
+    /// CDXC:SessionChat 2026-09-25 WHY:
+    /// GPUI cannot blur behind an element inside a window, so a see-through card over the chat would show the main transcript's text through it. Under glass the pane therefore stops painting the chat behind the viewer (render.rs, `covered`), and the backdrop is the pane's glass itself rather than a dark scrim.
     pub(super) fn render_subagent_viewer(
         &mut self,
         p: &ChatAppearance,
@@ -85,7 +90,7 @@ impl NativeChatView {
             }
             return None;
         }
-        // React's dialog traps focus, so Escape closes it whatever the reader last clicked. The
+        // React's dialog trapped focus, so Escape closed it whatever the reader last clicked. The
         // native card is painted inside the pane, so it has to claim the pane's focus itself:
         // without this the keyboard handler never sees Escape unless the composer already had it.
         if !self.subagent_focused {
@@ -93,6 +98,13 @@ impl NativeChatView {
             self.subagent_focus.focus(window, cx);
         }
         let s = p.scale;
+        let glass = crate::app::helpers::window_glass_active_in(window);
+        let card_fill = if glass {
+            p.composer_background
+        } else {
+            p.background
+        };
+        let card_border = if glass { p.composer_border } else { p.border };
         let title = text(&state, "title");
         let tooltip = text(&state, "tooltip");
         let mut header = div()
@@ -103,7 +115,7 @@ impl NativeChatView {
             .px(px(16.0 * s))
             .py(px(12.0 * s))
             .border_b_1()
-            .border_color(p.border);
+            .border_color(card_border);
         if state["canBack"] == true {
             header = header.child(self.subagent_icon_button(
                 "subagent-back",
@@ -168,10 +180,10 @@ impl NativeChatView {
             .h_full()
             .max_w(px(960.0 * s))
             .max_h(px(860.0 * s))
-            .rounded(px(8.0 * s))
+            .rounded(px(if glass { 16.0 } else { 8.0 } * s))
             .border_1()
-            .border_color(p.border)
-            .bg(p.background)
+            .border_color(card_border)
+            .bg(card_fill)
             .text_color(p.primary)
             .overflow_hidden()
             // A click inside the card is not a click on the backdrop that closes it.
@@ -275,13 +287,17 @@ impl NativeChatView {
                 .flex_col()
                 .items_center()
                 .justify_center()
-                // React's dialog is `min(960px, 100% - 2rem)` by `min(860px, 100dvh - 3rem)`: the
+                // React's dialog was `min(960px, 100% - 2rem)` by `min(860px, 100dvh - 3rem)`: the
                 // padding is that 1rem side and 1.5rem top/bottom inset, and the card's max size
                 // caps it, so a narrow pane still shows the backdrop on both sides of the card.
                 .px(px(16.0 * s))
                 .py(px(24.0 * s))
-                // The dialog's own backdrop tone, dark enough to read the card against a light transcript.
-                .bg(rgba(if p.light { 0x00000061 } else { 0x00000094 }))
+                // The dialog's own backdrop tone, dark enough to read the card against a light
+                // transcript. Under glass nothing is painted behind the card, so the pane's glass is
+                // the backdrop.
+                .when(!glass, |this| {
+                    this.bg(rgba(if p.light { 0x00000061 } else { 0x00000094 }))
+                })
                 .font_family(p.font.clone())
                 .on_click(
                     cx.listener(|this, _, _, cx| this.invoke(json!({"type":"subagentClose"}), cx)),
@@ -310,7 +326,12 @@ impl NativeChatView {
         }))
     }
 
-    /// A subagent's name as the link React paints: no fill, an underline on hover, and the agent type above the action in its tooltip.
+    /// A subagent's name as the link React painted: no fill, an underline on hover, and the agent type above the action in its tooltip.
+    ///
+    /// CDXC:Tooltips 2026-09-12 DECISION: User: subagent transcript links use the same styled tooltip as chat skill references, with no model name; agent types use the regular action font.
+    ///
+    /// CDXC:SessionChat 2026-09-09 DECISION: User: subagent links show only a dotted underline on hover, with no background fill.
+    /// GPUI has no dotted underline, so the hover draws a thin muted underline.
     pub(super) fn subagent_link(
         &self,
         id: String,

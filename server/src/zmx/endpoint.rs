@@ -584,6 +584,20 @@ pub fn dispatch_zmx_lifecycle_endpoint(
                         presentation_session: None,
                     });
                 }
+                /*
+                CDXC:SessionSleep 2026-09-24 DECISION:
+                User: a session whose agent still has a background shell or monitor running (the grey
+                dot) is not inactive, so Sleep Inactive, Close Inactive and Auto Sleep skip it. The
+                decline lives here so every client's sweep gets the same answer; an explicit Sleep on
+                the row still goes through.
+                */
+                if crate::presentation::session_background_work_detected_at(&session).is_some() {
+                    return Ok(ZmxEndpointOutput {
+                        created_workspace_terminal: None,
+                        result: json!({ "declined": "backgroundWork", "session": session }),
+                        presentation_session: None,
+                    });
+                }
             }
             let target_lifecycle = if endpoint_path == "/api/sleepSession" {
                 "sleeping"
@@ -636,6 +650,21 @@ pub(crate) fn read_zmx_session_history_capture(
         read_zmx_session_screen_capture(&zmx_name)
     };
     capture.map_err(ZmxEndpointError::DependencyUnavailable)
+}
+
+/// The session's screen as a VT capture whatever the agent, for a reader that needs the styling.
+pub(crate) fn read_zmx_session_history_capture_vt(
+    repository: &DomainRepository<'_>,
+    project_id: &str,
+    session_id: &str,
+) -> ZmxEndpointResult<ZmxHistoryCapture> {
+    let lifecycle = LifecycleParams {
+        project_id: project_id.to_string(),
+        session_id: session_id.to_string(),
+    };
+    let session = require_session(repository, &lifecycle)?;
+    let zmx_name = provider_zmx_session_name(&session)?;
+    read_zmx_session_screen_capture_vt(&zmx_name).map_err(ZmxEndpointError::DependencyUnavailable)
 }
 
 /*

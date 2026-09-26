@@ -4,17 +4,16 @@
 //! Ported from `packages/shared/session-chat-presentation/tool-rows.ts`.
 //!
 //! CDXC:SessionChat 2026-09-18 SEE-ALSO:
-//! The two transcripts must keep picking, previewing, and folding the same rows:
-//! `packages/core-ui/chat/session-chat-tool-run.tsx` reads these directly, and
-//! `apps/desktop/src/app/native_chat/tool_run.rs` reads them off the wire through the projection. A
-//! rule added here belongs to both, never to one renderer.
+//! `apps/desktop/src/app/native_chat/tool_run.rs` reads these off the wire through the projection.
+//! A rule for picking, previewing, or folding rows belongs here, never in a renderer.
 
 use serde_json::{json, Value};
 
 use crate::transcript::jsstr::{ascii_lower, js_trim, utf16_len, utf16_take};
 use crate::transcript::tool_fold::ToolPair;
 use crate::transcript::tool_summary::{
-    summarize_command_input, summarize_tool_input, truncate_tool_preview,
+    summarize_command_input, summarize_primary_argument, summarize_tool_input,
+    truncate_tool_preview,
 };
 
 /// The first line of a result is the preview when the call has nothing to say.
@@ -33,8 +32,8 @@ pub fn clip_tool_body(text: &str) -> String {
 
 /// The one glyph on this surface that says WHAT ran rather than "this expands".
 ///
-/// The renderers map these names onto their own icon sets (Tabler in React, the bundled titlebar
-/// SVGs in GPUI); the classification itself lives here.
+/// The renderers map these names onto their own icon sets (the bundled titlebar SVGs in GPUI);
+/// the classification itself lives here.
 pub fn tool_glyph(name: &str) -> &'static str {
     let normalized = ascii_lower(name);
     let has = |needles: &[&str]| needles.iter().any(|needle| normalized.contains(needle));
@@ -61,14 +60,15 @@ pub fn is_command_tool(name: &str) -> bool {
 }
 
 /// The compact text beside a tool row's name.
-pub fn tool_preview(pair: &ToolPair<'_>) -> String {
+pub fn tool_preview(pair: &ToolPair<'_>, working_directory: Option<&str>) -> String {
     if let Some(name) = pair.call_name() {
         if is_command_tool(name) {
             return summarize_command_input(pair.call_input().unwrap_or(&Value::Null));
         }
     }
     let input = match pair.call_input() {
-        Some(input) => summarize_tool_input(input),
+        Some(input) => summarize_primary_argument(input, working_directory)
+            .unwrap_or_else(|| summarize_tool_input(input)),
         None => String::new(),
     };
     if !input.is_empty() {

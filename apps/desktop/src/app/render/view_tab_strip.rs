@@ -139,11 +139,17 @@ impl GhostexGpuiApp {
                             .track_scroll(&scroll_handle)
                             .children(tab_elements),
                     )
-                    .child(self.render_view_tab_add_button(
-                        entries.len(),
-                        drop_index == Some(entries.len()),
-                        cx,
-                    )),
+                    .map(|row| {
+                        if entries.is_empty() {
+                            row.child(self.render_view_tab_strip_close_panel_button(cx))
+                        } else {
+                            row.child(self.render_view_tab_add_button(
+                                entries.len(),
+                                drop_index == Some(entries.len()),
+                                cx,
+                            ))
+                        }
+                    }),
             )
             .child(div().flex_1().min_w(px(8.0)).h_full())
             .when(active_mode.is_storybook(), |strip| {
@@ -153,7 +159,14 @@ impl GhostexGpuiApp {
                 strip.child(self.render_view_tab_strip_pop_out_button(active_mode, cx))
             })
             .child(self.render_view_tab_strip_expand_button(cx))
-            .child(self.render_workarea_panel_toggles(cx))
+            // Where the collapsed header puts them (WORKAREA_HEADER_PINNED_GAP).
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .mt(px(WORKAREA_HEADER_HEIGHT - WORKAREA_VIEW_TAB_STRIP_HEIGHT))
+                    .mr(px(WORKAREA_HEADER_PINNED_GAP))
+                    .child(self.render_workarea_panel_toggles(cx)),
+            )
             .into_any_element()
     }
 
@@ -273,6 +286,9 @@ impl GhostexGpuiApp {
 
     /// The box every tab in the strip shares, view or browser page: one fixed width per kind, a
     /// faint outline, and the drop line before it. A pinned tab is its icon alone.
+    ///
+    /// CDXC:Titlebar 2026-09-26 DECISION:
+    /// User: "make the border color around tabs match the border of these combined buttons". The tab outline uses the split buttons' border colour (the see-through line under window glass, the solid colour when opaque) instead of the fixed #252525 / #d4d4d4 titlebar button border.
     pub(crate) fn view_strip_tab_frame(
         id: String,
         group: &'static str,
@@ -296,7 +312,7 @@ impl GhostexGpuiApp {
             .gap(px(6.0))
             .rounded(px(WORKAREA_VIEW_TAB_RADIUS))
             .border_1()
-            .border_color(titlebar_button_border_color())
+            .border_color(titlebar_split_button_border_color())
             .px(px(WORKAREA_VIEW_TAB_HORIZONTAL_PADDING))
             .text_size(px(12.5))
             .line_height(px(WORKAREA_VIEW_TAB_HEIGHT))
@@ -513,6 +529,34 @@ impl GhostexGpuiApp {
             })
     }
 
+    /// CDXC:Workarea 2026-09-25 DECISION:
+    /// User: with every tab closed the strip shows an X where the `+` was, so the panel closes
+    /// right where the last tab's close button was instead of at the panel toggle in the top right
+    /// corner. The picker filling the panel already opens a view, so the `+` is not needed there.
+    fn render_view_tab_strip_close_panel_button(
+        &self,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let tooltip = titlebar_tooltip_label("Close side panel", "toggleViewPanel");
+        Self::render_view_tab_strip_icon_button(
+            "ghostex-gpui-view-tab-close-panel",
+            TITLEBAR_ICON_X,
+            true,
+            false,
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _event: &MouseDownEvent, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+                this.close_view_panel(window, cx);
+            }),
+        )
+        .managed_tooltip_with_placement(ManagedTooltipPlacement::Right, move |window, cx| {
+            titlebar_tooltip(tooltip.clone(), window, cx)
+        })
+    }
+
     fn render_view_tab_strip_pop_out_button(
         &self,
         active_mode: TitlebarMode,
@@ -561,9 +605,8 @@ impl GhostexGpuiApp {
     ) -> impl IntoElement {
         let maximized = self.view_panel_maximized();
         let fully = self.view_panel_fully_expanded();
-        // With the picker on screen there is no view to give the window to, so the control says so
-        // rather than looking live and doing nothing.
-        let enabled = self.open_view_mode().is_some();
+        // The picker can be expanded like a view (see `view_panel_maximized`).
+        let enabled = self.view_panel_open();
         let cell = |id: &'static str, icon: &'static str, active: bool| {
             div()
                 .id(id)
@@ -574,9 +617,9 @@ impl GhostexGpuiApp {
                 .items_center()
                 .justify_center()
                 .cursor_default()
-                .when(active, |this| this.bg(titlebar_active_segment_color()))
+                .when(active, |this| this.bg(titlebar_split_button_open_color()))
                 .when(enabled, |this| {
-                    this.hover(|this| this.bg(titlebar_button_hover_color()))
+                    this.hover(|this| this.bg(titlebar_split_button_hover_color()))
                 })
                 .child(titlebar_svg_icon(
                     icon,
@@ -597,15 +640,12 @@ impl GhostexGpuiApp {
         };
         let expand_tooltip = tooltip_for("Expand side panel", "expandViewPanel");
         let fully_tooltip = tooltip_for("Expand side panel fully", "expandViewPanelFully");
-        h_flex()
+        let segment_radius = titlebar_split_button_segment_radius(WORKAREA_VIEW_TAB_HEIGHT);
+        titlebar_split_button_frame(h_flex(), WORKAREA_VIEW_TAB_HEIGHT)
             .flex_shrink_0()
-            .h(px(WORKAREA_VIEW_TAB_HEIGHT))
             .ml(px(2.0))
             .items_center()
             .overflow_hidden()
-            .rounded(px(WORKAREA_VIEW_TAB_RADIUS))
-            .border_1()
-            .border_color(titlebar_split_button_border_color())
             .child(
                 cell(
                     "ghostex-gpui-view-tab-expand",
@@ -616,6 +656,7 @@ impl GhostexGpuiApp {
                     },
                     maximized && !fully,
                 )
+                .rounded_l(segment_radius)
                 .when(enabled, |this| {
                     this.on_mouse_down(
                         MouseButton::Left,
@@ -631,19 +672,14 @@ impl GhostexGpuiApp {
                     move |window, cx| titlebar_tooltip(expand_tooltip.clone(), window, cx),
                 ),
             )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .w(px(1.0))
-                    .h_full()
-                    .bg(titlebar_split_button_border_color()),
-            )
+            .child(titlebar_split_button_divider(WORKAREA_VIEW_TAB_HEIGHT))
             .child(
                 cell(
                     "ghostex-gpui-view-tab-expand-fully",
                     TITLEBAR_ICON_MAXIMIZE,
                     fully,
                 )
+                .rounded_r(segment_radius)
                 .when(enabled, |this| {
                     this.on_mouse_down(
                         MouseButton::Left,

@@ -132,6 +132,9 @@ pub(crate) struct GpuiProjectViewState {
     /// comes back to the same view.
     pub(crate) last_view_mode: Option<TitlebarMode>,
     pub(crate) workarea_split_ratio: f32,
+    /// CDXC:Workarea 2026-09-26 DECISION:
+    /// User: going between Spaces must not sleep the side panel view; "it should stay active", just the currently active view. A view's awake flag is app-wide, so while another project is on screen the idle timer and the awake cap would count this project's active view as a hidden tab and sleep it. A project left with its active view awake keeps that view out of both (`view_modes_kept_awake_by_parked_projects`) until the user is back or sleeps it on purpose (Sleep Space clears this). Supersedes the 2026-09-25 rule that let it sleep and woke it on the way back in. Runtime only, never persisted: after a launch every view starts asleep (CDXC:Browser 2026-09-19).
+    pub(crate) active_view_awake: bool,
 }
 
 pub(crate) struct ProjectEditorShellModel {
@@ -251,7 +254,12 @@ impl ProjectEditorShellModel {
             .is_some_and(|lifecycle| lifecycle.state == ProjectEditorLifecycleState::Awake)
     }
 
-    pub(crate) fn mark_mode_awake(&mut self, mode: TitlebarMode) -> bool {
+    /// `kept_awake` are the views the cap may not put to sleep besides `mode` itself.
+    pub(crate) fn mark_mode_awake(
+        &mut self,
+        mode: TitlebarMode,
+        kept_awake: &[TitlebarMode],
+    ) -> bool {
         if !mode.is_project_editor_mode() {
             return false;
         }
@@ -263,7 +271,7 @@ impl ProjectEditorShellModel {
         };
         lifecycle.state = ProjectEditorLifecycleState::Awake;
         lifecycle.recency = recency;
-        self.enforce_awake_mode_cap(mode);
+        self.enforce_awake_mode_cap(mode, kept_awake);
         true
     }
 
@@ -272,7 +280,11 @@ impl ProjectEditorShellModel {
     /// could be on screen. A tab strip can hold extension views too, and an extension page is the
     /// same live CEF child view as Kanban's, so the cap counts them: without this six tabs really
     /// would mean six renderer processes.
-    pub(crate) fn enforce_awake_mode_cap(&mut self, active_mode: TitlebarMode) {
+    pub(crate) fn enforce_awake_mode_cap(
+        &mut self,
+        active_mode: TitlebarMode,
+        kept_awake: &[TitlebarMode],
+    ) {
         let mut awake_modes = self
             .lifecycle_modes()
             .into_iter()
@@ -295,7 +307,7 @@ impl ProjectEditorShellModel {
             if modes_to_sleep == 0 {
                 break;
             }
-            if mode == active_mode {
+            if mode == active_mode || kept_awake.contains(&mode) {
                 continue;
             }
             if let Some(lifecycle) = self.lifecycle_mut(mode) {
@@ -449,6 +461,7 @@ pub(crate) fn project_view_state_from_shell_state(
             .and_then(TitlebarMode::from_slug)
             .filter(|mode| *mode != TitlebarMode::Agents),
         workarea_split_ratio: workarea_split_ratio_from_shell_state(object, "companionWidthRatio"),
+        active_view_awake: false,
     })
 }
 
@@ -522,7 +535,7 @@ pub(crate) fn project_editor_shell_from_shell_state(
         .unwrap_or(model.next_lifecycle_recency)
         .max(max_recency.saturating_add(1))
         .max(1);
-    model.enforce_awake_mode_cap(active_mode);
+    model.enforce_awake_mode_cap(active_mode, &[]);
     Some(model)
 }
 

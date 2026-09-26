@@ -3,7 +3,6 @@ import Fuse from 'fuse.js';
 import { Command } from '@/packages/components/ui/command';
 import {
   APP_SHOTS_HOTKEY_OPTIONS,
-  CHAT_BRAIN_OPTIONS,
   DIAGNOSTIC_LOGGING_SCENARIOS,
   SESSION_TITLE_GENERATION_AGENT_OPTIONS,
 } from '../../shared/ghostex-settings';
@@ -262,49 +261,14 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
           {
             key: 'debuggingMode',
             title: 'Show debug UI controls',
-            subtitle: 'Show debug-only controls, storage statistics, and enabled routine diagnostic logs.',
+            subtitle: 'Show diagnostic logs, and Copy Resume and Copy Attach in session menus.',
           },
           {
             key: 'diagnosticLogging',
-            title: 'Diagnostic disk logging scenarios',
+            title: 'Diagnostic logs',
             subtitle:
-              'Choose routine repro log areas while Show debug UI controls is on. Important warnings, errors, and crashes remain captured when it is off.',
-            options: DIAGNOSTIC_LOGGING_SCENARIOS.flatMap((scenario) => [
-              { label: scenario.label, value: scenario.id },
-              ...scenario.logFiles.map((logFile) => ({ label: logFile, value: logFile })),
-            ]),
-          },
-          {
-            key: 'chatBrain',
-            title: 'Chat brain',
-            subtitle: 'Which engine runs the chat. Leave this on QuickJS; the Rust engine is still in development.',
-            options: CHAT_BRAIN_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
-          },
-          {
-            key: 'showSessionCommandCopyActions',
-            title: 'Show command copy actions',
-            subtitle: 'Show Copy resume and Copy attach command in session context menus.',
-          },
-          {
-            key: 'showSessionDetailsCopyAction',
-            title: 'Show Copy Details option',
-            subtitle: 'Show Copy Details in session context menus.',
-          },
-        ],
-      },
-      {
-        id: 'storage',
-        title: 'Storage',
-        settings: [
-          {
-            key: 'storageUsage',
-            title: 'Storage usage',
-            subtitle: 'Inspect browser storage by feature, budgets, pending saves, and disposable caches.',
-          },
-          {
-            key: 'storageStats',
-            title: 'Ghostex folder storage',
-            subtitle: 'View on-disk Ghostex folder sizes and total usage, refresh statistics, or open the data folder.',
+              'Pick the areas to log while you reproduce an issue, and when logging turns off. Warnings, errors, and crashes are always captured.',
+            options: DIAGNOSTIC_LOGGING_SCENARIOS.map((scenario) => ({ label: scenario.label, value: scenario.id })),
           },
         ],
       },
@@ -539,19 +503,7 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
             title: 'Chromium runtime (CEF)',
           },
         ],
-        title: 'Official Extensions',
-      },
-      {
-        id: 'accountUsage',
-        settings: [
-          {
-            key: 'accountTitlebarUsage',
-            title: 'Account usage in the sidebar',
-            subtitle:
-              'Show or hide usage stats for saved Claude and Codex accounts at the bottom of the desktop sidebar. Star accounts to pin their usage.',
-          },
-        ],
-        title: 'Account usage in the sidebar',
+        title: 'Built-in',
       },
       {
         id: 'store',
@@ -575,6 +527,18 @@ export const EXTRA_SETTINGS_TAB_SEARCH_SECTIONS: Record<
           },
         ],
         title: 'Your views',
+      },
+      {
+        id: 'accountUsage',
+        settings: [
+          {
+            key: 'accountTitlebarUsage',
+            title: 'Account usage in the sidebar',
+            subtitle:
+              'Show or hide usage stats for saved Claude and Codex accounts at the bottom of the desktop sidebar. Star accounts to pin their usage.',
+          },
+        ],
+        title: 'Account usage in the sidebar',
       },
     ],
     title: 'Extensions',

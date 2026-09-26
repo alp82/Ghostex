@@ -15,6 +15,21 @@ pub(crate) struct RunConfiguredGhostexHotkey {
     pub(crate) action_id: String,
 }
 
+const LEGACY_VIEW_PANEL_HOTKEY_ACTION_ID: &str = "toggleCompanionPane";
+
+/// CDXC:Hotkeys 2026-09-24 WHY:
+/// The view panel replaced the companion pane, but saved hotkeys still contain its old action id. Registering that retired id after the new defaults shadows Ctrl+Alt+B with an action that no longer exists. Read its custom or blank chord through the current id and omit the retired binding, matching shared hotkey normalization.
+fn gpui_persisted_hotkey_value<'a>(
+    hotkeys: &'a serde_json::Map<String, serde_json::Value>,
+    action_id: &str,
+) -> Option<&'a serde_json::Value> {
+    hotkeys.get(action_id).or_else(|| {
+        (action_id == "toggleViewPanel")
+            .then(|| hotkeys.get(LEGACY_VIEW_PANEL_HOTKEY_ACTION_ID))
+            .flatten()
+    })
+}
+
 /*
 CDXC:Hotkeys 2026-08-22:
 Cmd-K clears the focused terminal, matching the `clear_screen` binding
@@ -63,6 +78,25 @@ pub(crate) fn gpui_migrated_hotkey_for_action<'a>(
     {
         return default_key;
     }
+    // CDXC:Hotkeys 2026-09-25: the new-session keys moved (Cmd+Shift+O, Cmd+N picker, Cmd+T browser
+    // tab, Cmd+Ctrl+Shift+F fork), mirroring retiredDefaultKeys in packages/shared/ghostex-hotkeys.ts.
+    let retired_new_session_keys: &[&str] = match action_id {
+        "createAgentSession" => &["cmd+t"],
+        "createSession" => &["cmd+t"],
+        "openNewThreadPalette" => &["cmd+shift+t", "cmd+alt+t"],
+        "openBrowserPane" => &["cmd+n"],
+        "forkSession" => &["ctrl+shift+f", "cmd+alt+f"],
+        "openHotkeys" => &["cmd+."],
+        "openCommandsPanel" => &["f12"],
+        "reloadSession" => &["ctrl+shift+r", "cmd+alt+r"],
+        _ => &[],
+    };
+    if retired_new_session_keys
+        .iter()
+        .any(|retired| key.trim().eq_ignore_ascii_case(retired))
+    {
+        return default_key;
+    }
     // CDXC:PromptSearch 2026-08-24: retired Alt+F default, mirroring
     // retiredDefaultKeys in packages/shared/ghostex-hotkeys.ts.
     if action_id == "openFindPrompts" && key.trim().eq_ignore_ascii_case("alt+f") {
@@ -100,6 +134,23 @@ pub(crate) fn gpui_migrated_hotkey_for_action<'a>(
     key
 }
 
+/// The chat box answers this chord itself, in its own key context, so it also works while you type
+/// and never reaches terminals (`ghostexChatHotkeyActionId` in the shared catalog).
+pub(crate) fn gpui_chat_owned_hotkey_action_id(action_id: &str) -> bool {
+    matches!(action_id, "scrollChatToBottom")
+}
+
+/// The hotkeys that act on the focused session's chat (`focused_chat_hotkeys.rs`).
+pub(crate) fn gpui_focused_chat_hotkey_action_id(action_id: &str) -> bool {
+    matches!(
+        action_id,
+        "focusChatComposer"
+            | "copyLastChatCodeBlock"
+            | "copyLastChatReply"
+            | "toggleChatSummaryMode"
+    )
+}
+
 pub(crate) fn gpui_platform_hotkey_for_action<'a>(action_id: &str, key: &'a str) -> &'a str {
     if cfg!(target_os = "macos") {
         key
@@ -110,8 +161,14 @@ pub(crate) fn gpui_platform_hotkey_for_action<'a>(action_id: &str, key: &'a str)
             "delayedSend" => Some(("ctrl+shift+s", "cmd+alt+s")),
             "promptEditor" => Some(("ctrl+g", "cmd+shift+g")),
             "stashedPrompts" => Some(("cmd+alt+s", "cmd+shift+s")),
-            "forkSession" => Some(("ctrl+shift+f", "cmd+alt+f")),
-            "reloadSession" => Some(("ctrl+shift+r", "cmd+alt+r")),
+            "forkSession" => Some(("cmd+ctrl+shift+f", "cmd+alt+shift+f")),
+            // CDXC:Hotkeys 2026-09-25: Ctrl+R is the terminal's reverse history search, the
+            // Commands panel has no Ctrl+J, and Ctrl+Shift+C is terminal copy on Windows and Linux.
+            "renameActiveSession" => Some(("cmd+r", "cmd+shift+r")),
+            "openCommandsPanel" => Some(("cmd+j", "f12")),
+            "copyLastChatReply" => Some(("cmd+shift+c", "")),
+            // Ctrl+Alt+S is Delayed Actions on Windows and Linux.
+            "toggleChatSummaryMode" => Some(("cmd+ctrl+s", "cmd+alt+shift+s")),
             "popOutPane" => Some(("ctrl+shift+o", "cmd+alt+o")),
             // CDXC:Navigation 2026-08-19: same Mac-Control substitution
             // as the Jump to Project entries below, mirroring the
@@ -256,21 +313,23 @@ pub(crate) fn gpui_key_binding_from_shared_hotkey<A: Action>(
 /// overlay from this table. Kept in lockstep with the TypeScript source by
 /// packages/shared/gpui-hotkey-defaults-parity.test.ts.
 pub(crate) const GPUI_DEFAULT_GHOSTEX_HOTKEYS: &[(&str, &str)] = &[
-    ("createSession", "cmd+t"),
+    ("createAgentSession", "cmd+shift+o"),
+    ("createSession", "cmd+shift+t"),
     ("openCommandPalette", "cmd+shift+p"),
     ("openSessionSearchPalette", "cmd+p"),
-    ("openNewThreadPalette", "cmd+shift+t"),
-    ("openCommandsPanel", "f12"),
+    ("openProjectSearchPalette", "cmd+alt+shift+o"),
+    ("openNewThreadPalette", "cmd+n"),
+    ("openCommandsPanel", "cmd+j"),
     ("openSettings", "cmd+,"),
     ("openExtensions", ""),
     ("openGhostexHelp", ""),
-    ("openHotkeys", "cmd+."),
+    ("openHotkeys", "cmd+/"),
     ("toggleSidebarCollapsed", "cmd+b"),
     ("toggleViewPanel", "cmd+alt+b"),
     ("expandViewPanel", "cmd+ctrl+e"),
     ("expandViewPanelFully", "cmd+ctrl+shift+e"),
     ("renameActiveSession", "cmd+r"),
-    ("openBrowserPane", "cmd+n"),
+    ("openBrowserPane", "cmd+t"),
     ("switchAgentsView", ""),
     ("switchSourceView", ""),
     ("switchGitHubView", ""),
@@ -313,11 +372,15 @@ pub(crate) const GPUI_DEFAULT_GHOSTEX_HOTKEYS: &[(&str, &str)] = &[
     page key and capture it in terminals.
     */
     ("scrollChatToBottom", "ctrl+shift+down"),
-    ("forkSession", "ctrl+shift+f"),
-    ("reloadSession", "ctrl+shift+r"),
-    ("sleepFocusedSession", ""),
+    ("focusChatComposer", "shift+escape"),
+    ("copyLastChatCodeBlock", "cmd+shift+;"),
+    ("copyLastChatReply", "cmd+shift+c"),
+    ("toggleChatSummaryMode", "cmd+ctrl+s"),
+    ("forkSession", "cmd+ctrl+shift+f"),
+    ("reloadSession", ""),
+    ("sleepFocusedSession", "cmd+shift+a"),
     ("wakeFocusedSession", ""),
-    ("closeFocusedSession", ""),
+    ("closeFocusedSession", "cmd+shift+backspace"),
     ("popOutPane", "ctrl+shift+o"),
     // CDXC:Navigation 2026-09-19: mirrors packages/shared/ghostex-hotkeys.ts,
     // where the brackets moved from group focus to Back/Forward.
@@ -495,12 +558,14 @@ pub(crate) fn gpui_configured_hotkey_action_id_for_native_text(
         .get("hotkeys")
         .and_then(serde_json::Value::as_object);
     for (action_id, default_key) in GPUI_DEFAULT_GHOSTEX_HOTKEYS {
-        // Chat owns this chord (see GPUI_DEFAULT_GHOSTEX_HOTKEYS), so the key
+        // Chat owns these chords (see GPUI_DEFAULT_GHOSTEX_HOTKEYS), so the key
         // travels onward to the page instead of resolving to a native action.
-        if *action_id == "scrollChatToBottom" {
+        if gpui_chat_owned_hotkey_action_id(action_id) {
             continue;
         }
-        let key = match persisted_hotkeys.and_then(|hotkeys| hotkeys.get(*action_id)) {
+        let key = match persisted_hotkeys
+            .and_then(|hotkeys| gpui_persisted_hotkey_value(hotkeys, action_id))
+        {
             Some(serde_json::Value::String(key)) => key.as_str(),
             _ => default_key,
         };
@@ -516,7 +581,10 @@ pub(crate) fn gpui_configured_hotkey_action_id_for_native_text(
             .collect::<HashSet<_>>();
         for (action_id, key) in persisted_hotkeys {
             // CDXC:SessionChat 2026-09-11 WHY: Chat owns this configurable chord in its capture handler, including editor focus; binding it natively would swallow the page key or affect terminals.
-            if action_id == "scrollChatToBottom" || known_action_ids.contains(action_id.as_str()) {
+            if gpui_chat_owned_hotkey_action_id(action_id)
+                || action_id == LEGACY_VIEW_PANEL_HOTKEY_ACTION_ID
+                || known_action_ids.contains(action_id.as_str())
+            {
                 continue;
             }
             if key
@@ -566,8 +634,9 @@ pub(crate) fn gpui_titlebar_view_hotkey_index(action_id: &str) -> Option<usize> 
     (1..=9).contains(&slot).then(|| slot - 1)
 }
 
-/// Resolve labels through the same settings, defaults, and migrations as native key bindings.
-pub(crate) fn gpui_configured_hotkey_label(action_id: &str) -> Option<String> {
+/// The chord an action is bound to, in the shared "+" syntax, resolved through the same
+/// settings, defaults, and migrations as native key bindings. `None` when it has no valid chord.
+pub(crate) fn gpui_configured_hotkey_key(action_id: &str) -> Option<String> {
     let (_, default_key) = GPUI_DEFAULT_GHOSTEX_HOTKEYS
         .iter()
         .find(|(id, _)| *id == action_id)?;
@@ -576,13 +645,19 @@ pub(crate) fn gpui_configured_hotkey_label(action_id: &str) -> Option<String> {
         .object()
         .get("hotkeys")
         .and_then(serde_json::Value::as_object)
-        .and_then(|hotkeys| hotkeys.get(action_id))
+        .and_then(|hotkeys| gpui_persisted_hotkey_value(hotkeys, action_id))
         .and_then(serde_json::Value::as_str)
         .unwrap_or(default_key);
     let key = gpui_migrated_hotkey_for_action(action_id, key, default_key);
     let key = gpui_platform_hotkey_for_action(action_id, key);
     gpui_keystroke_from_shared_hotkey(key)?;
-    Some(terminal_element::terminal_overlay_hotkey_chord_label(key))
+    Some(key.to_string())
+}
+
+/// Resolve labels through the same settings, defaults, and migrations as native key bindings.
+pub(crate) fn gpui_configured_hotkey_label(action_id: &str) -> Option<String> {
+    let key = gpui_configured_hotkey_key(action_id)?;
+    Some(terminal_element::terminal_overlay_hotkey_chord_label(&key))
 }
 
 #[cfg(target_os = "macos")]
@@ -631,8 +706,21 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
     }
     // CDXC:AgentLauncher 2026-09-09 WHY:
     // The New Thread picker targets the active project, not the focused surface, so its chord must win from every responder (sidebar, Browser, Session Chat, workareas) the same way the model picker does; otherwise it only works while an Agents terminal has focus.
-    if action_id == "openNewThreadPalette" {
-        return true;
+    // The focused-chat keys only mean something while GPUI (where chats are drawn) owns the
+    // keyboard; a terminal or page keeps Shift+Esc and the copy chords (focused_chat_hotkeys.rs).
+    if gpui_focused_chat_hotkey_action_id(action_id) {
+        return false;
+    }
+    // New Agent Session starts the last-used agent in the active project, the picker's first row.
+    // CDXC:Hotkeys 2026-09-25 DECISION:
+    // User: while the Code editor itself has keyboard focus, Cmd+N and Cmd+Shift+O belong to VS Code (New File, Go to Symbol); only then, not whenever the Code view is merely open.
+    if matches!(action_id, "openNewThreadPalette" | "createAgentSession") {
+        return !matches!(
+            owner,
+            GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::CefSurface(
+                FirstResponderCefSurface::ProjectWorkarea(ProjectWorkareaCefSurfaceSlotKey::Source),
+            ))
+        );
     }
     // CDXC:Workarea 2026-09-21 WHY:
     // The view panel toggle is window chrome, so it must win from every responder like the New Thread picker. It was only listed for the owners a view leaves behind while it is open, so Cmd+Option+B closed the panel but could not open it again once the keyboard sat with a responder outside those lists: the router passed the chord on to that responder and GPUI never saw it.
@@ -653,6 +741,7 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
         )) => matches!(
             action_id,
             "createSession"
+                | "openBrowserPane"
                 | "deferNotificationAndJumpNext"
                 | "focusLeft"
                 | "focusNextPaneTab"
@@ -686,6 +775,7 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
         )) => matches!(
             action_id,
             "createSession"
+                | "openBrowserPane"
                 | "deferNotificationAndJumpNext"
                 | "focusLeft"
                 | "focusRight"
@@ -740,7 +830,7 @@ pub(crate) fn gpui_configured_hotkey_key_bindings_from_settings() -> Vec<KeyBind
         ),
     ];
     let mut push_binding = |action_id: &str, key: &str| {
-        if action_id == "scrollChatToBottom"
+        if gpui_chat_owned_hotkey_action_id(action_id)
             || key.trim().is_empty()
             || gpui_hotkey_is_reserved(key)
         {
@@ -761,7 +851,7 @@ pub(crate) fn gpui_configured_hotkey_key_bindings_from_settings() -> Vec<KeyBind
         ));
     };
     for (action_id, default_key) in GPUI_DEFAULT_GHOSTEX_HOTKEYS {
-        let key = match persisted_hotkeys.get(*action_id) {
+        let key = match gpui_persisted_hotkey_value(&persisted_hotkeys, action_id) {
             Some(serde_json::Value::String(persisted_key)) => persisted_key.as_str(),
             _ => default_key,
         };
@@ -776,7 +866,10 @@ pub(crate) fn gpui_configured_hotkey_key_bindings_from_settings() -> Vec<KeyBind
         .map(|(action_id, _)| *action_id)
         .collect();
     for (action_id, key) in &persisted_hotkeys {
-        if action_id.trim().is_empty() || default_action_ids.contains(action_id.as_str()) {
+        if action_id.trim().is_empty()
+            || action_id == LEGACY_VIEW_PANEL_HOTKEY_ACTION_ID
+            || default_action_ids.contains(action_id.as_str())
+        {
             continue;
         }
         let Some(key) = key.as_str() else {
@@ -801,12 +894,14 @@ pub(crate) fn gpui_configured_hotkey_unbinds_from_settings(
     let mut keys = GPUI_DEFAULT_GHOSTEX_HOTKEYS
         .iter()
         .filter_map(|(action_id, default_key)| {
-            // Chat owns this chord (see GPUI_DEFAULT_GHOSTEX_HOTKEYS): it is
+            // Chat owns these chords (see GPUI_DEFAULT_GHOSTEX_HOTKEYS): they are
             // never bound natively, so there is nothing to unbind either.
-            if *action_id == "scrollChatToBottom" {
+            if gpui_chat_owned_hotkey_action_id(action_id) {
                 return None;
             }
-            let key = match persisted_hotkeys.and_then(|hotkeys| hotkeys.get(*action_id)) {
+            let key = match persisted_hotkeys
+                .and_then(|hotkeys| gpui_persisted_hotkey_value(hotkeys, action_id))
+            {
                 Some(serde_json::Value::String(key)) => key.as_str(),
                 _ => default_key,
             };
@@ -840,7 +935,10 @@ impl GhostexGpuiApp {
         cx: &mut gpui::Context<Self>,
     ) -> bool {
         if action_id == "openModelPicker" {
-            return self.request_focused_session_model_picker(cx);
+            return self.request_focused_session_model_picker(window, cx);
+        }
+        if gpui_focused_chat_hotkey_action_id(action_id) {
+            return self.run_focused_chat_hotkey(action_id, window, cx);
         }
         self.handle_gpui_app_modal_sidebar_command(
             serde_json::json!({

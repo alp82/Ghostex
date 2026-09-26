@@ -1,16 +1,14 @@
 /*!
-The empty transcript region: the new-session welcome, the loading hold (drawn by
-transcript_skeleton.rs), and the plain empty-state copy.
+The empty transcript region: the new-session welcome and the plain empty-state copy. The
+loading hold that comes before either is transcript_reveal.rs.
 
 CDXC:SessionChat 2026-09-18 WHY:
 GPUI chat used to print `emptyState.title` / `.detail` for every transcript with
 no rows, so a brand new session sat on "Loading conversation… / Reading the agent
 transcript." while React showed the agent mark and "What should we build with X?".
-The host now projects `newSessionWelcome` and `loadingStage` from the same shared
-rules React reads, and this module renders them.
-SEE-ALSO: packages/shared/session-chat-presentation/new-session-welcome.ts,
-packages/core-ui/chat/session-chat-new-session-welcome.tsx (and its
-`.ghostex-chat-new-session*` rules in packages/core-ui/styles/chat.css).
+The core now projects `newSessionWelcome` and `loadingStage` (packages/gx-chat-core/src/extras/welcome.rs),
+and this module renders them. The sizes below come from the React welcome's
+`.ghostex-chat-new-session*` rules in packages/core-ui/styles/chat.css (deleted 2026-09-25).
 */
 
 use super::{appearance::ChatAppearance, state::NativeChatView};
@@ -27,7 +25,7 @@ const AGENT_CARD_SIZE: f32 = 48.0;
 const AGENT_LOGO_SIZE: f32 = 28.0;
 /// `.ghostex-chat-new-session-title`: 1.375rem / 600.
 ///
-/// React also tightens it with `letter-spacing: -0.025em`, which GPUI has no style for, so the
+/// React also tightened it with `letter-spacing: -0.025em`, which GPUI has no style for, so the
 /// headline measures a few percent wider here at the same glyph size. Do not shrink the size to
 /// compensate: that trades a width difference for a cap-height one.
 const TITLE_TEXT_SIZE: f32 = 22.0;
@@ -36,7 +34,7 @@ const TITLE_TEXT_SIZE: f32 = 22.0;
 /// chat's own theme tokens rather than the app chrome's.
 pub(super) fn brand_logo_color(icon: &str, p: &ChatAppearance) -> Hsla {
     match icon {
-        // chat.css: `--ghostex-zcode-logo` is black on light chat, white on dark.
+        // `--ghostex-zcode-logo` (styles/theme.css) is black on light chat, white on dark.
         "zcode" => {
             if p.light {
                 rgb(0x000000).into()
@@ -44,7 +42,7 @@ pub(super) fn brand_logo_color(icon: &str, p: &ChatAppearance) -> Hsla {
                 rgb(0xffffff).into()
             }
         }
-        // chat.css: `--ghostex-codex-logo` resolves to the foreground on light chat.
+        // `--ghostex-codex-logo` resolved to the foreground on the React chat's light theme.
         "codex" if p.light => p.foreground,
         _ => {
             let accent = workspace_tab_agent_icon_accent_color(icon);
@@ -67,16 +65,6 @@ impl NativeChatView {
         p: &ChatAppearance,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        /*
-        The loading hold. A chat whose host has not published its first snapshot yet is still
-        reading its transcript too, so it draws the skeleton instead of a blank region.
-        */
-        let stage = state["loadingStage"]
-            .as_str()
-            .or_else(|| (state["status"].is_null() && self.error.is_none()).then_some("indicator"));
-        if let Some(stage) = stage {
-            return self.render_transcript_skeleton(stage, p, cx);
-        }
         let s = p.scale;
         // `.ghostex-chat-new-session`: `padding: 1.5rem 1.5rem var(--ghostex-chat-composer-overlay)`.
         // The band below already reserves its own height, so the welcome has no bottom padding of
@@ -140,7 +128,7 @@ impl NativeChatView {
         let region = region.pb(px(24.0 * s));
 
         /*
-        A transcript that is ready but has no rows yet is React's message list with nothing in it,
+        A transcript that is ready but has no rows yet was React's message list with nothing in it,
         so it draws nothing rather than the empty-state copy ("Start a chat with …").
         */
         if state["view"]["kind"] == "ready" {
@@ -178,7 +166,7 @@ impl NativeChatView {
 /// CDXC:SessionChat 2026-09-20 DECISION:
 /// User: when GPUI chat is very narrow, the welcome title wraps, is center aligned, and the second line has 2 or 3 words, never 1.
 /// GPUI treats U+00A0 as a wrap point, so a hard newline is the break; `whitespace_nowrap` keeps the last line from splitting again. A 6+ word headline keeps 3 words on the last line ("What should we" / "build with Codex?"); shorter ones keep 2.
-/// SEE-ALSO: packages/shared/session-chat-presentation/new-session-welcome.ts (`wrapNewSessionWelcomeTitle`).
+/// SEE-ALSO: packages/gx-chat-core/src/extras/welcome.rs (`wrap_new_session_welcome_title`).
 fn new_session_welcome_title_wrap(title: &str) -> String {
     if title.contains('\n') {
         return title.to_owned();

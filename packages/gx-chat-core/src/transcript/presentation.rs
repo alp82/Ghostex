@@ -20,6 +20,7 @@ use crate::transcript::foreign::{
 };
 use crate::transcript::images::{image_source, ImageRef};
 use crate::transcript::jsstr::js_trim;
+use crate::transcript::line_breaks::{agent_line_breaks, AgentLineBreaks};
 use crate::transcript::markdown_links::markdown_references;
 use crate::transcript::message_text::{
     message_action_content, normalize_user_message_markdown, split_reasoning_headline,
@@ -79,7 +80,7 @@ pub fn message_can_rewind(message: &ChatMessage, copy_text: &str, suppressed: &V
 
 /// Agents whose own rewind flow Ghostex drives; anything else never offers the action.
 pub fn agent_supports_rewind(agent: Option<&str>) -> bool {
-    matches!(agent, Some("claude") | Some("codex"))
+    matches!(agent, Some("claude") | Some("codex") | Some("opencode"))
 }
 
 /// The message's own wire keys, which the projection spreads before it adds its own.
@@ -96,6 +97,7 @@ pub fn project_message(
     message: &ChatMessage,
     agent_path: &str,
     working_directory: Option<&str>,
+    line_breaks: AgentLineBreaks,
     context: &ChatContext,
 ) -> Value {
     let (prose, tools) = split_blocks(&message.blocks);
@@ -104,10 +106,13 @@ pub fn project_message(
     let is_user = message.role == ChatRole::User;
     let displayed_body = if is_user {
         normalize_user_message_markdown(&body)
+    } else if message.role == ChatRole::Assistant {
+        agent_line_breaks(&body, line_breaks)
     } else {
         body.clone()
     };
     let agent_message = parse_agent_message(&body);
+    let inter_agent_message = is_user.then(|| parse_inter_agent_message(&body)).flatten();
     let (remaining, changes) = split_file_changes(tools);
     let tool_pairs = pair_tool_blocks(remaining);
     let copy_text = if is_user {
@@ -123,7 +128,7 @@ pub fn project_message(
     // Code-block headers, GitHub alerts, and typed file paths, marked for the native renderer.
     let native_body = native_markdown(&displayed_body, is_user);
     let suppressed = suppressed_turn_presentation(message);
-    let rows = tool_rows(&tool_pairs, agent_path);
+    let rows = tool_rows(&tool_pairs, agent_path, working_directory);
     let system_card = classify_system_card(message, &displayed_body);
     let reasoning = split_reasoning_headline(&body);
     let questions: Vec<Value> = {
@@ -145,7 +150,11 @@ pub fn project_message(
     projected.insert("copyText".to_string(), copy_text.clone().into());
     projected.insert(
         "canRewind".to_string(),
-        message_can_rewind(message, &copy_text, &suppressed).into(),
+        (message_can_rewind(message, &copy_text, &suppressed)
+            && !inter_agent_message
+                .as_ref()
+                .is_some_and(|inter| inter.cross_session))
+        .into(),
     );
     projected.insert("actionContent".to_string(), message_action_content(&body));
     projected.insert("time".to_string(), message_time(message.timestamp, context));
@@ -170,7 +179,7 @@ pub fn project_message(
     );
     projected.insert(
         "interAgentMessage".to_string(),
-        match is_user.then(|| parse_inter_agent_message(&body)).flatten() {
+        match &inter_agent_message {
             Some(inter) => serde_json::json!({
                 "agentName": inter.agent_name,
                 "sessionTitle": inter.session_title,
@@ -307,6 +316,15 @@ pub struct ProjectionScope<'a> {
     /// Shortens the paths on file-change cards. Module level in the TypeScript, so both instances
     /// read the same one.
     pub working_directory: Option<&'a str>,
+    pub line_breaks: AgentLineBreaks,
+}
+
+/// The session's line-break rule, which the subagent viewer shares: a child runs the same agent.
+pub fn line_breaks(state: &ChatState) -> AgentLineBreaks {
+    AgentLineBreaks::for_agent(
+        state.session.agent.as_deref(),
+        state.session.session_agent_id.as_deref(),
+    )
 }
 
 /// The session's own scope, off the composed list family a builds.
@@ -318,6 +336,7 @@ pub fn scope<'a>(state: &'a ChatState, view: &'a TranscriptViewState) -> Project
         deferred: &view.deferred,
         agent_path: &view.agent_path,
         working_directory: view.working_directory.as_deref(),
+        line_breaks: line_breaks(state),
     }
 }
 
@@ -333,16 +352,23 @@ pub fn project_cached(
     message: &ChatMessage,
 ) -> Value {
     if let Some(entry) = cache.get(&message.id) {
-        if entry.source == *message {
+        if entry.source == *message && entry.line_breaks == scope.line_breaks {
             return entry.model.clone();
         }
     }
-    let model = project_message(message, scope.agent_path, scope.working_directory, context);
+    let model = project_message(
+        message,
+        scope.agent_path,
+        scope.working_directory,
+        scope.line_breaks,
+        context,
+    );
     cache.insert(
         message.id.clone(),
         ProjectedMessage {
             source: message.clone(),
             model: model.clone(),
+            line_breaks: scope.line_breaks,
         },
     );
     model
@@ -385,7 +411,7 @@ impl Builder<'_> {
     fn projected(&self, message: &ChatMessage) -> Option<Value> {
         self.cache
             .get(&message.id)
-            .filter(|entry| entry.source == *message)
+            .filter(|entry| entry.source == *message && entry.line_breaks == self.scope.line_breaks)
             .map(|entry| entry.model.clone())
     }
 
@@ -452,6 +478,11 @@ pub fn build_scope(
     };
 
     let items: Vec<TranscriptItem> = if summary {
+        // CDXC:SessionChat 2026-09-26 DECISION: User: when summary mode is enabled, don't collapse the last agent reply. The newest turn with a reply keeps it open (it stays open while the next prompt is working), and the reader can still fold it.
+        let latest_reply = projection
+            .summary_turns
+            .iter()
+            .rposition(|turn| turn.final_message.is_some());
         projection
             .summary_turns
             .iter()
@@ -465,12 +496,23 @@ pub fn build_scope(
                         .final_message
                         .as_ref()
                         .map(|message| builder.message_or_placeholder(message, eager)),
+                    earlier_replies: turn
+                        .earlier_replies
+                        .iter()
+                        .map(|message| builder.message_or_placeholder(message, eager))
+                        .collect(),
                     active: turn.active,
                     work: turn
                         .active_work
                         .iter()
                         .map(|message| builder.message_or_placeholder(message, eager))
                         .collect(),
+                    outcome: turn
+                        .outcome
+                        .iter()
+                        .map(|message| builder.message_or_placeholder(message, eager))
+                        .collect(),
+                    latest_reply: latest_reply == Some(index),
                 }
             })
             .collect()

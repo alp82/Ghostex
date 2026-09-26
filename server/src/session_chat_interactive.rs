@@ -12,7 +12,14 @@ pub struct SessionChatQuestionOption {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The mockup or code Claude shows beside this option (AskUserQuestion's `preview`), which the
+    /// card draws under it; capped at [`SESSION_CHAT_OPTION_PREVIEW_MAX_CHARS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
+
+/// A preview is a small mockup; anything longer is cut, since the card only has room for a glance.
+const SESSION_CHAT_OPTION_PREVIEW_MAX_CHARS: usize = 4000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionChatQuestion {
@@ -34,7 +41,7 @@ pub struct SessionChatQuestion {
     #[serde(rename = "toolName", skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
     /// omp's `recommended` option index: its ask dialog opens with the cursor
-    /// on this row (default 0), so arrow-key answer plans start counting here.
+    /// on this row (default 0). Answer plans read the live highlight instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended: Option<usize>,
     /// CDXC:SessionChat 2026-09-23 WHY: an AskUserQuestion option with a `preview` makes Claude Code draw the question as an option list beside a preview pane, with no "Type something" row: a digit only moves the highlight, Enter commits it, and typed text can only be a note on the highlighted option (`n`). The answer plan needs this layout before the screen shows it, so it is read from the tool input.
@@ -302,6 +309,7 @@ fn parse_session_chat_question_options(raw: Option<&Value>) -> Vec<SessionChatQu
             Value::String(label) => Some(SessionChatQuestionOption {
                 label: label.clone(),
                 description: None,
+                preview: None,
             }),
             // Pi options carry `{label, value}`; the label is what its select
             // renders, with `value` as the fallback the bridge also uses.
@@ -315,6 +323,17 @@ fn parse_session_chat_question_options(raw: Option<&Value>) -> Vec<SessionChatQu
                     .get("description")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                preview: record
+                    .get("preview")
+                    .and_then(Value::as_str)
+                    .map(str::trim_end)
+                    .filter(|preview| !preview.trim().is_empty())
+                    .map(|preview| {
+                        preview
+                            .chars()
+                            .take(SESSION_CHAT_OPTION_PREVIEW_MAX_CHARS)
+                            .collect()
+                    }),
             }),
             _ => None,
         })
@@ -394,7 +413,13 @@ pub fn detect_cursor_question_prompt(
     let mut options = Vec::new();
     let mut allow_custom = false;
     for line in lines.iter().take(footer).skip(question_index + 1) {
-        let Some((_, after_checkbox)) = line.split_once("[ ]") else {
+        // A row the user already ticked in the terminal still counts, or every
+        // later option index would point one row too high.
+        let Some((_, after_checkbox)) = line
+            .split_once("[ ]")
+            .or_else(|| line.split_once("[x]"))
+            .or_else(|| line.split_once("[X]"))
+        else {
             continue;
         };
         let label = after_checkbox.trim();
@@ -404,6 +429,7 @@ pub fn detect_cursor_question_prompt(
             options.push(SessionChatQuestionOption {
                 label: label.to_string(),
                 description: None,
+                preview: None,
             });
         }
     }
@@ -566,9 +592,10 @@ pub fn session_chat_prompt_clear_decision(
     if event.next_activity == Some("idle") {
         return true;
     }
+    // A new prompt reached the agent, which it cannot take while a question or approval owns its input: whatever the card asked is over (answered in the terminal, or its tool call interrupted, which no hook reports).
     matches!(
         normalize_hook_event_name(event.event_name.unwrap_or_default()).as_str(),
-        "stop" | "session_end" | "idle"
+        "stop" | "session_end" | "idle" | "user_prompt_submit"
     )
 }
 
@@ -649,7 +676,7 @@ impl SessionChatTranscriptPromptState {
             }
             for block in &message.blocks {
                 match block {
-                    SessionChatBlock::ToolCall { name, input }
+                    SessionChatBlock::ToolCall { name, input, .. }
                         if is_ask_user_question_tool(name) =>
                     {
                         self.answered = false;
@@ -814,6 +841,74 @@ pub fn build_session_chat_prompt_state_frame(
 // ---------------------------------------------------------------------------
 // Inline sanity tests (real transcript files are skipped when absent)
 // ---------------------------------------------------------------------------
+
+/// CDXC:SessionChat 2026-09-25 WHY:
+/// Deny answers an approval card with Escape, and Claude Code reports that interrupted tool call through no hook: no PostToolUse (the tool never ran) and no Stop (interrupts skip it). The stored card therefore outlived the answer until the next finished turn, and every client that opened the chat in between (the phone reopening it, a second window) drew a live Allow/Deny card for a command that was already refused. The daemon sent that Escape itself, so it retires the card itself, only when the stored card is still the approval that was answered.
+pub(crate) fn retire_denied_session_chat_approval(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    answered: &SessionChatInteractivePrompt,
+) {
+    retire_stored_session_chat_prompt(state, project_id, session_id, Some(answered));
+}
+
+/// CDXC:SessionChat 2026-09-26 WHY: the chat's Stop is the same daemon-sent Escape as Deny, and it ends the tool call a card was asking about just as silently, so a card answered Yes and then stopped came back as a live Allow/Deny on the next open.
+pub(crate) fn retire_interrupted_session_chat_prompt(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+) {
+    retire_stored_session_chat_prompt(state, project_id, session_id, None);
+}
+
+/// Drops the stored card, or only the one `answered` names.
+fn retire_stored_session_chat_prompt(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    answered: Option<&SessionChatInteractivePrompt>,
+) {
+    let Ok(db) = crate::storage::open_gxserver_database(&state.paths) else {
+        return;
+    };
+    let repository = crate::domain::DomainRepository::new(&db, state.metadata.server_id.as_str());
+    let Ok(Some(session)) = repository.get_session(project_id, session_id) else {
+        return;
+    };
+    let stored = crate::agents::session_chat_prompt_setting(&session);
+    let Some(stored) = stored else {
+        return;
+    };
+    if answered.is_some_and(|answered| {
+        parse_stored_session_chat_prompt(&stored).as_ref() != Some(answered)
+    }) {
+        return;
+    }
+    let mut runtime = session
+        .get("runtimeSettings")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let Some(activity) = runtime
+        .get_mut("agentActivity")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    activity.remove("sessionChatPrompt");
+    let update = json!({
+        "projectId": project_id,
+        "sessionId": session_id,
+        "runtimeSettings": runtime,
+    });
+    let Some(update) = update.as_object() else {
+        return;
+    };
+    if let Ok(updated) = repository.update_session(update) {
+        emit_session_chat_prompt_state_frame(state, &updated);
+    }
+}
 
 /*
 CDXC:SessionChat 2026-07-31:

@@ -6,19 +6,19 @@
 //! React owned this decision inline in session-chat-view.tsx, so the GPUI chat had no way to reach
 //! it and fell through to the `emptyState` copy: a brand new session greeted the user with
 //! "Loading conversation… / Reading the agent transcript." forever instead of the welcome.
-//! SEE-ALSO: packages/core-ui/chat/session-chat-new-session-welcome.tsx,
-//! apps/desktop/src/app/native_chat/new_session_welcome.rs.
+//! SEE-ALSO: apps/desktop/src/app/native_chat/new_session_welcome.rs.
 
 use crate::document::EmptyState;
 use crate::extras::agent_tasks::js_trim;
 use crate::extras::agents::{agent_icon_id, default_agent_by_id, is_sidebar_agent_icon};
 
-/// How long a transcript read stays blank before the skeleton appears.
+/// How long a transcript read stays `blank` before it reports the `indicator` stage.
 ///
 /// CDXC:SessionChat 2026-09-19 DECISION:
-/// User: the skeleton shows the moment a transcript starts loading, in both GPUI and React chat;
-/// the pane must react at once instead of holding blank. This supersedes the 600ms blank hold from
-/// the same day.
+/// User: the skeleton shows the moment a transcript starts loading, in React chat; the pane must
+/// react at once instead of holding blank. This supersedes the 600ms blank hold from the same day.
+/// The GPUI chat draws no skeleton for either stage since 2026-09-24 and fades the transcript in
+/// once it is ready (apps/desktop/src/app/native_chat/transcript_reveal.rs).
 pub const LOADING_INDICATOR_DELAY_MS: i64 = 0;
 /// How long a transcript read runs before the empty region offers Retry.
 pub const LOADING_RETRY_DELAY_MS: i64 = 12_000;
@@ -71,8 +71,7 @@ pub fn new_session_welcome_title(agent_name: Option<&str>) -> String {
 /// User: when chat is very narrow, the welcome title wraps, is center aligned, and the second line
 /// has 2 or 3 words, never 1. A 6+ word headline keeps 3 words on the last line ("What should we" /
 /// "build with Codex?"); shorter ones keep 2 ("What should we" / "work on?").
-/// SEE-ALSO: apps/desktop/src/app/native_chat/new_session_welcome.rs,
-/// packages/core-ui/chat/session-chat-new-session-welcome.tsx.
+/// SEE-ALSO: apps/desktop/src/app/native_chat/new_session_welcome.rs.
 pub fn wrap_new_session_welcome_title(title: &str) -> String {
     if title.contains('\n') {
         return title.to_string();

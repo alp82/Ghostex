@@ -2,7 +2,7 @@
 //! the notices.
 //!
 //! Port of the question, notice and async-strip arms of the `action` switch in
-//! `packages/shared/session-chat-controller/native-host.ts`. The TypeScript awaits each call; here
+//! `packages/shared/session-chat-controller/native-host.ts`. The TypeScript awaited each call; here
 //! an action leaves a request behind and `crate::questions::events` finishes the work when the
 //! answer arrives.
 
@@ -95,6 +95,11 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
                 state.core.effects_not_awaited = true;
             }
         }
+        // The host is still saving pasted pictures, so Send waits instead of leaving them out.
+        ActionKind::AsyncQuestionImagesPending => async_controller::images_pending(
+            &mut state.questions.async_questions,
+            action.param("pending") == Some(&Value::Bool(true)),
+        ),
         ActionKind::AsyncQuestionOption => {
             let projection = async_projection(state, prompt.as_ref(), notice.as_ref());
             let key = action.param("key").and_then(Value::as_str).unwrap_or("");
@@ -195,7 +200,12 @@ fn notice_answer(
     }
     let notice = notice?;
     let choices = notice.visible_choices();
-    match choices.get(if primary { 0 } else { 1 }) {
+    let position = if primary {
+        Some(0)
+    } else {
+        notice.secondary_choice_position()
+    };
+    match position.and_then(|position| choices.get(position)) {
         Some(choice) => Some(terminal_notice_choice_answer(Some(notice), choice.index)),
         None if primary => notice
             .actions
@@ -219,6 +229,7 @@ fn answer_prompt(state: &mut ChatState, answer: &Value) -> Vec<Effect> {
         .to_string();
     state.questions.answering = true;
     state.questions.notice_error = None;
+    // CDXC:SessionChat 2026-09-16 DECISION: User: picking an option is optimistic: the card disappears at once while the answer is sent in the background; it only comes back, with its failure line, when the daemon proves the answer did not land.
     // A picker answer hides the card at once: gxserver keeps reporting the detection until the
     // agent's screen catches up, and the user has already chosen.
     if kind == "terminalChoice"
@@ -470,6 +481,11 @@ fn with_identity(state: &ChatState, params: Value) -> Value {
         Value::Object(object) => object,
         _ => Map::new(),
     };
+    if state.session.agent.as_deref() == Some("opencode") {
+        if let Some(id) = state.session.prompt.as_ref().and_then(|p|p.get("toolUseId")).and_then(Value::as_str) {
+            object.insert("toolUseId".into(), json!(id));
+        }
+    }
     object.insert(
         "projectId".to_string(),
         json!(state.identity.project_id.clone()),

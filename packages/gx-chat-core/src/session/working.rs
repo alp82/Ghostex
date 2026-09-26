@@ -145,9 +145,29 @@ pub fn working_signal(state: &crate::state::ChatState) -> bool {
         || session.external_working
 }
 
+/// Whether the transcript keeps the newest turn open: the live signal, with the Stop suppression
+/// applied, until the turn lifecycle ends the current run.
+///
+/// CDXC:SessionChat 2026-09-24 SEE-ALSO:
+/// The user's decision (fold right away, no settle hold) was first recorded on
+/// `sessionChatTranscriptWorking` in `packages/core-ui/chat/session-chat-working-status.ts`.
+/// Unlike [`is_working`] there is no trailing-prose recovery, which would fold and unfold a turn at
+/// every commentary line.
+pub fn transcript_working(state: &crate::state::ChatState) -> bool {
+    let session = &state.session;
+    working_signal(state)
+        && !session.interrupted
+        && !lifecycle_terminates_current_turn(
+            session.lifecycle.as_ref(),
+            session
+                .working_started_at_ms
+                .map(|value| value.round() as i64),
+        )
+}
+
 /// Records when the current working run began.
 ///
-/// The TypeScript does this during render (`workingStartedAtRef.current ??= Date.now()`), and it
+/// The TypeScript did this during render (`workingStartedAtRef.current ??= Date.now()`), and it
 /// is load bearing: without a start boundary the PREVIOUS turn's completed lifecycle would settle
 /// the new turn instantly, which is the dead-indicator bug. The core has no render pass, so the
 /// stamp is taken once per event, before the document is assembled.

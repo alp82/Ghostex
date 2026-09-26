@@ -15,6 +15,12 @@ pub const STOP_BUTTON_COOLDOWN_MS: u64 = 2_000;
 pub const DESKTOP_COMPOSER_PLACEHOLDER: &str =
     "Press Enter to send a message and Tab to Queue.\nUse @ to mention a file and $ for using skills.";
 
+/// What a touch composer (the phone, `StartConfig::touch_composer`) says when nothing is blocking
+/// it, the text of the React chat's `MOBILE_SESSION_CHAT_PLACEHOLDER`
+/// (`session-chat-composer.tsx`).
+pub const TOUCH_COMPOSER_PLACEHOLDER: &str =
+    "Tap \u{2191} to send or hold it to queue; use @ for files and $ for skills.";
+
 /// The title of the toast a blocked Send raises.
 pub const SEND_BLOCKED_TITLE: &str = "Message not sent";
 
@@ -56,6 +62,27 @@ pub fn send_blocked_reason(state: &SendGate) -> Option<&'static str> {
     None
 }
 
+/// Why a send is refused outright, or `None` when it may go (at once or once the gate clears).
+///
+/// CDXC:SessionChat 2026-09-24 SEE-ALSO:
+/// Port of `sessionChatSendRefusedReason` in `composer-policy.ts`, which holds the user's decision
+/// that a block which clears on its own (an answer still being applied, a mode or model switch, an
+/// account switch) holds the send instead of refusing it. Only these blocks need the user.
+pub fn send_refused_reason(state: &SendGate) -> Option<&'static str> {
+    if !state.can_send {
+        return Some("Input is held by another device.");
+    }
+    if state.conversation_locked {
+        return Some(
+            "This conversation is open elsewhere. Use Continue here or close it in the other app and retry.",
+        );
+    }
+    if state.terminal_choice_pending && state.notice_card_visible {
+        return Some("Answer the question above first.");
+    }
+    None
+}
+
 /// What the composer shows instead of its own placeholder, or `None` to keep it.
 pub fn composer_placeholder(
     can_send: bool,
@@ -84,9 +111,10 @@ pub fn composer_placeholder(
 }
 
 /// CDXC:SessionChat 2026-09-18 SEE-ALSO:
-/// The 2026-09-03 decision in `packages/core-ui/chat/session-chat-send-blocked-toast.tsx` is that a
-/// blocked Send raises a red toast naming the reason instead of disabling the composer. React posts
-/// this request over the app-modal bridge; GPUI chat emits the same request to its native toast host.
+/// The 2026-09-03 decision, first recorded in
+/// `packages/core-ui/chat/session-chat-send-blocked-toast.tsx`, is that a blocked Send raises a red
+/// toast naming the reason instead of disabling the composer. GPUI chat emits this request to its
+/// native toast host.
 pub fn send_blocked_toast_request(reason: &str) -> OrderedMap {
     let description = reason.trim();
     app_toast_request("error", SEND_BLOCKED_TITLE, description)

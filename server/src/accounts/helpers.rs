@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::{
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     time::{Duration, Instant},
 };
 
@@ -194,7 +194,7 @@ mod windows {
 pub(crate) fn json_command(home: &Path, name: &str, args: &[&str]) -> Result<Value, String> {
     let binary =
         executable(home, name).ok_or_else(|| format!("Install {name} on this computer first."))?;
-    let mut command = Command::new(binary);
+    let mut command = crate::platform::process::background_command(binary);
     command.args(args).env("HOME", home);
     // The Windows helpers resolve their registry from USERPROFILE, so both variables must name the same home.
     #[cfg(windows)]
@@ -420,6 +420,16 @@ pub(crate) fn discover(home: &Path, provider: Provider) -> Result<Vec<Discovered
                 account.usage.push(w);
             }
             account.usage_updated_at = fetched_at.as_str().map(str::to_string);
+            if account.status == "ready" {
+                match super::claude_resets::cached(home, &account.selector) {
+                    Ok(Some(credits)) => {
+                        account.reset_credits = Some(credits.len() as u64);
+                        account.reset_credit_details = Some(credits);
+                    }
+                    Ok(None) => {}
+                    Err(error) => account.reset_credits_error = Some(error),
+                }
+            }
         } else {
             account.identity = text(row, "accountId");
             account.status = match text(row, "loginStatus").as_str() {
@@ -452,6 +462,26 @@ pub(crate) fn discover(home: &Path, provider: Provider) -> Result<Vec<Discovered
     Ok(accounts)
 }
 pub(crate) fn codex_get(row: &Value, path: &str) -> Result<Value, String> {
+    let response = match codex_request(row, "GET", path)?.call() {
+        Ok(r) => r,
+        Err(ureq::Error::Status(401, _)) => {
+            return Err("Sign in again to refresh account usage.".into());
+        }
+        Err(ureq::Error::Status(429, _)) => {
+            return Err("Usage requests are temporarily limited. Ghostex will try again.".into());
+        }
+        Err(_) => return Err("Usage could not be refreshed. Ghostex will try again.".into()),
+    };
+    response
+        .into_json()
+        .map_err(|_| "The usage service returned an invalid response.".to_string())
+}
+/// A ChatGPT backend request authorized as the xswap account in `row`, after checking its saved login still belongs to that account.
+pub(crate) fn codex_request(
+    row: &Value,
+    method: &str,
+    path: &str,
+) -> Result<ureq::Request, String> {
     let home = PathBuf::from(text(row, "home"));
     if !home.is_absolute() {
         return Err("Invalid Codex account home.".into());
@@ -467,29 +497,18 @@ pub(crate) fn codex_get(row: &Value, path: &str) -> Result<Value, String> {
         .pointer("/tokens/access_token")
         .and_then(Value::as_str)
         .ok_or("Sign in again to read usage.")?;
-    let response = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(12))
+    Ok(ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(15))
         .build()
-        .get(&format!("https://chatgpt.com/backend-api/wham/{path}"))
+        .request(
+            method,
+            &format!("https://chatgpt.com/backend-api/wham/{path}"),
+        )
         .set("Authorization", &format!("Bearer {token}"))
         .set("ChatGPT-Account-Id", &expected)
         .set("Accept", "application/json")
         .set("OpenAI-Beta", "codex-1")
-        .set("originator", "Codex Desktop")
-        .call();
-    let response = match response {
-        Ok(r) => r,
-        Err(ureq::Error::Status(401, _)) => {
-            return Err("Sign in again to refresh account usage.".into());
-        }
-        Err(ureq::Error::Status(429, _)) => {
-            return Err("Usage requests are temporarily limited. Ghostex will try again.".into());
-        }
-        Err(_) => return Err("Usage could not be refreshed. Ghostex will try again.".into()),
-    };
-    response
-        .into_json()
-        .map_err(|_| "The usage service returned an invalid response.".to_string())
+        .set("originator", "Codex Desktop"))
 }
 fn codex_usage(row: &Value) -> Result<(Vec<UsageWindow>, Option<u64>), String> {
     let value = codex_get(row, "usage")?;

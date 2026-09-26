@@ -2,7 +2,7 @@
 //! the pending terminal tool card.
 //!
 //! Ported from `packages/shared/session-chat-controller/native-transcript-rows.ts`. Every
-//! classification here comes from the same presentation rules React reads, so GPUI only lays the
+//! classification here comes from the same presentation rules React read, so GPUI only lays the
 //! rows out (`apps/desktop/src/app/native_chat/tool_run.rs`, `file_change_card.rs`,
 //! `terminal_tool_row.rs`).
 
@@ -15,13 +15,19 @@ use crate::transcript::file_changes::FileChange;
 use crate::transcript::question_exchange::answered_question_exchange;
 use crate::transcript::subagent::{is_subagent_self, tool_subagent};
 use crate::transcript::tool_fold::ToolPair;
-use crate::transcript::tool_rows::{clip_tool_body, tool_glyph, tool_preview, tool_run_fold};
-use crate::transcript::tool_summary::format_tool_input;
+use crate::transcript::tool_rows::{
+    clip_tool_body, is_command_tool, tool_glyph, tool_preview, tool_run_fold,
+};
+use crate::transcript::tool_summary::{command_detail, format_tool_input};
 
 /// A tool's arguments and result as its open row shows them.
 pub fn tool_detail(pair: &ToolPair<'_>) -> Value {
     let input = match pair.call_input() {
-        Some(input) => format_tool_input(input),
+        Some(input) => pair
+            .call_name()
+            .filter(|name| is_command_tool(name))
+            .and_then(|_| command_detail(input))
+            .unwrap_or_else(|| format_tool_input(input)),
         None => String::new(),
     };
     json!({
@@ -34,7 +40,11 @@ pub fn tool_detail(pair: &ToolPair<'_>) -> Value {
 ///
 /// The arguments and result stay behind: GPUI asks for them only while the row is open
 /// (`row_details.rs`).
-pub fn tool_rows(pairs: &[ToolPair<'_>], agent_path: &str) -> Vec<Value> {
+pub fn tool_rows(
+    pairs: &[ToolPair<'_>],
+    agent_path: &str,
+    working_directory: Option<&str>,
+) -> Vec<Value> {
     pairs
         .iter()
         .map(|pair| {
@@ -43,8 +53,8 @@ pub fn tool_rows(pairs: &[ToolPair<'_>], agent_path: &str) -> Vec<Value> {
                 || !detail["output"].as_str().unwrap_or_default().is_empty();
             let subagent = match tool_subagent(pair, agent_path) {
                 Some(Value::Object(mut target)) => {
-                    // `self` is a selector pointing back at the conversation being read: React
-                    // renders it as plain text rather than a link, and so does the GPUI heading chip.
+                    // `self` is a selector pointing back at the conversation being read: the GPUI
+                    // heading chip renders it as plain text rather than a link, as React did.
                     let selector = target
                         .get("selector")
                         .and_then(Value::as_str)
@@ -74,7 +84,10 @@ pub fn tool_rows(pairs: &[ToolPair<'_>], agent_path: &str) -> Vec<Value> {
                 "glyph".to_string(),
                 tool_glyph(pair.call_name().unwrap_or_default()).into(),
             );
-            row.insert("preview".to_string(), tool_preview(pair).into());
+            row.insert(
+                "preview".to_string(),
+                tool_preview(pair, working_directory).into(),
+            );
             row.insert("failed".to_string(), pair.result_is_error().into());
             row.insert("hasDetail".to_string(), has_detail.into());
             row.insert("subagent".to_string(), subagent);
@@ -93,7 +106,7 @@ pub fn tool_fold(pairs: &[ToolPair<'_>]) -> Value {
 
 /// One card per file a turn wrote.
 ///
-/// Only the projected card crosses the bridge: the raw result block would ship the whole write
+/// Only the projected card ships: the raw result block would ship the whole write
 /// output again.
 pub fn file_rows(
     changes: &[FileChange<'_>],
@@ -106,9 +119,9 @@ pub fn file_rows(
         .map(|(index, change)| {
             let counts = file_change_counts(&change.lines);
             let failed = change.result_is_error();
-            // The same opt-out React's card takes: both renderers shorten the folder half against
+            // The same opt-out React's card took: the renderer shortens the folder half against
             // the row's real width, so a character budget on top of that only cuts folders that
-            // would have fitted, and the two panes disagree about the same path.
+            // would have fitted.
             let parts = file_change_path_parts(&change.path, working_directory, None);
             json!({
                 "path": change.path,

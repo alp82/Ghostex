@@ -4,7 +4,7 @@ User: "i want codex to list the available models and efforts and if fast is enab
 
 CDXC:AgentScreenDetection 2026-09-03 WHY:
 Codex has no non-interactive way to set the model. `/model <name>` is not a command: the CLI sends it to the model as a prompt and starts a turn (measured on Codex 0.153). The only channel is its own `/model` picker: a numbered "Select Model and Effort" list, then a numbered "Select Reasoning Level for <model>" list, where a digit both selects and confirms a row. So `/api/selectSessionChatModel` drives that picker in the session's terminal the way the Claude rewind driver drives `/rewind`: every keystroke is preceded by a screen capture that must show the expected list, the digit is read off the row that names the requested model (never computed from a catalog index), and any capture that disagrees aborts with Escape instead of typing into whatever is on screen. The whole drive is one job on the session's serialized send worker, so a queued prompt can never land inside the picker.
-SEE-ALSO: packages/core-ui/chat/session-chat-session-options.ts (the `model-picker` dispatch), session_chat_rewind.rs (the driver pattern).
+SEE-ALSO: packages/gx-chat-core/src/menus/option_catalog.rs (the `model-picker` dispatch), session_chat_rewind.rs (the driver pattern).
 */
 
 use std::collections::HashMap;
@@ -15,6 +15,8 @@ use std::time::Duration;
 #[path = "session_chat_provider_model_picker.rs"]
 mod provider_model_picker;
 pub(crate) use provider_model_picker::run_provider_model_picker_job;
+#[path = "session_chat_claude_effort_slider.rs"]
+mod claude_effort_slider;
 #[path = "session_chat_selection_options.rs"]
 mod selection_options;
 
@@ -216,7 +218,9 @@ fn model_picker_rows(screen: &str) -> Option<Vec<PickerRow>> {
 
 fn effort_picker_rows(screen: &str, model: &str) -> Option<Vec<PickerRow>> {
     let expected = format!("{CODEX_EFFORT_PICKER_TITLE_PREFIX}{model}");
-    picker_rows_under(&screen_lines(screen), |line| line == expected)
+    picker_rows_under(&screen_lines(screen), |line| {
+        line.eq_ignore_ascii_case(&expected)
+    })
 }
 
 fn advanced_effort_picker_rows(screen: &str) -> Option<Vec<PickerRow>> {
@@ -227,6 +231,7 @@ fn advanced_effort_picker_rows(screen: &str) -> Option<Vec<PickerRow>> {
 
 fn any_picker_open(screen: &str) -> bool {
     claude_model_picker_open(screen)
+        || claude_effort_slider::claude_effort_slider_open(screen)
         || screen_lines(screen).iter().any(|line| {
             line == CODEX_MODEL_PICKER_TITLE
                 || line.starts_with(CODEX_EFFORT_PICKER_TITLE_PREFIX)
@@ -250,12 +255,20 @@ fn claude_model_picker_open(screen: &str) -> bool {
 /// Whether a row's text is the model or effort label `wanted`: the label is
 /// the whole text, or the text continues with a space (` (current)`, ` (default)`,
 /// or the row's description).
+///
+/// CDXC:AgentScreenDetection 2026-09-24 WHY:
+/// Codex 0.156 lists display names (`GPT-6-Sol`) in its model picker and effort title while the
+/// catalog, the footer reader and the "Model changed to" line use ids (`gpt-6-sol`), so the label
+/// is compared without case. An exact match failed every Codex model change from chat.
+/// SEE-ALSO: server/src/session_chat_options.rs codex_model_value.
 fn row_names(row: &PickerRow, wanted: &str) -> bool {
-    row.text == wanted
-        || row
-            .text
-            .strip_prefix(wanted)
-            .is_some_and(|rest| rest.starts_with(' '))
+    row.text
+        .get(..wanted.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(wanted))
+        && row.text[wanted.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| next == ' ')
 }
 
 /// The label Codex paints for a catalog effort id.
@@ -603,6 +616,17 @@ impl PickerDriver<'_> {
         capture_session_terminal_text(self.zmx_name).await
     }
 
+    /// CDXC:SessionChat 2026-09-26 WHY:
+    /// A plain capture cannot tell Claude's faint placeholder (`Try "fix lint errors"`) or its next-prompt suggestion from a typed draft, so every queued model or option change on an idle session was refused forever and held the chat messages queued behind it at "Waiting for agent…". Only a VT capture keeps the faint style that marks them as empty; an unreadable screen still counts as a draft so a real one is never replaced.
+    async fn claude_input_holds_draft(&self) -> bool {
+        crate::session_chat_send::capture_session_terminal_text_vt(self.zmx_name)
+            .await
+            .is_none_or(|screen| {
+                crate::session_chat_composer::session_chat_composer_input("claude", &screen)
+                    .is_some_and(|input| !input.is_empty())
+            })
+    }
+
     /// Polls the screen until `accept` answers `Some`, the step deadline
     /// passes, or the session's send generation is superseded.
     async fn wait_for<T>(
@@ -788,24 +812,22 @@ impl PickerDriver<'_> {
         // Never replace a terminal draft while applying a queued setting.
         if crate::session_chat_composer::claude_composer_input_text(&screen)
             .is_some_and(|text| !text.trim().is_empty())
+            && self.claude_input_holds_draft().await
         {
             return Err(agent_busy(
                 "Waiting for the text in Claude's terminal input to be sent or cleared.",
             ));
         }
-        let selection = detect_session_chat_selection(SessionChatOptionAgent::Claude, &screen);
-        let applied = |field: Option<&crate::session_chat_options::SessionChatDetectedChoice>,
-                       value: &str| {
-            value.is_empty() || field.is_some_and(|choice| choice.value == value)
+        let (model, effort) = claude_effort_slider::claude_live_selection(plan, &screen);
+        let applied = |current: Option<&String>, value: &str| {
+            value.is_empty() || current.is_some_and(|current| current == value)
         };
-        if applied(
-            selection.as_ref().and_then(|state| state.model.as_ref()),
-            &plan.model,
-        ) && applied(
-            selection.as_ref().and_then(|state| state.effort.as_ref()),
-            &plan.effort,
-        ) {
+        let model_applied = applied(model.as_ref(), &plan.model);
+        if model_applied && applied(effort.as_ref(), &plan.effort) {
             return Ok(());
+        }
+        if model_applied {
+            return self.drive_claude_effort_session_only(&plan.effort).await;
         }
 
         self.write(&crate::session_chat_send::build_session_chat_paste_bytes(
@@ -952,7 +974,13 @@ impl PickerDriver<'_> {
                 self.cancel_dialog().await;
                 if let Some(screen) = self.capture().await {
                     if crate::session_chat_composer::claude_composer_input_text(&screen)
-                        .is_some_and(|text| text.trim() == CLAUDE_MODEL_COMMAND)
+                        .is_some_and(|text| {
+                            [
+                                CLAUDE_MODEL_COMMAND,
+                                claude_effort_slider::CLAUDE_EFFORT_COMMAND,
+                            ]
+                            .contains(&text.trim())
+                        })
                     {
                         let _ = self
                             .write(crate::session_chat_send::AGENT_TUI_CLEAR_INPUT_LINE)
@@ -988,21 +1016,16 @@ impl PickerDriver<'_> {
             }
             // CDXC:SessionChat 2026-09-15 WHY:
             // The effort picker sends the model too. Reapplying an unchanged model added a complete command/confirmation round trip before every effort change, and retries repeated already-applied work.
-            let selection = detect_session_chat_selection(SessionChatOptionAgent::Claude, &screen);
-            let current = selection.as_ref().and_then(|selection| {
-                if field == "model" {
-                    selection.model.as_ref()
-                } else {
-                    selection.effort.as_ref()
-                }
-            });
-            if current.is_some_and(|choice| choice.value == value) {
+            let (model, effort) = claude_effort_slider::claude_live_selection(plan, &screen);
+            let current = if field == "model" { model } else { effort };
+            if current.as_deref() == Some(value) {
                 continue;
             }
             let command = format!("/{field} {value}");
             // Never replace a terminal draft while applying a queued setting.
             if crate::session_chat_composer::claude_composer_input_text(&screen)
                 .is_some_and(|text| !text.trim().is_empty())
+                && self.claude_input_holds_draft().await
             {
                 return Err(agent_busy(
                     "Waiting for the text in Claude's terminal input to be sent or cleared.",
@@ -1141,10 +1164,10 @@ impl PickerDriver<'_> {
                 .map(|row| row.text.split(' ').next().unwrap_or_default().to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Err(dialog_mismatch(
-                "model",
-                &format!("the picker lists {listed}, not {}.", plan.model),
-            ));
+            return Err(unsupported_selection(format!(
+                "Codex's model picker lists {listed}, not {}.",
+                plan.model
+            )));
         };
         self.write(&row_key(model_row, "model")?).await?;
 
@@ -1174,10 +1197,10 @@ impl PickerDriver<'_> {
                 .map(|row| row.text.clone())
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Err(dialog_mismatch(
-                "effort",
-                &format!("{} offers {listed}, not {effort_label}.", plan.model),
-            ));
+            return Err(unsupported_selection(format!(
+                "Codex's {} offers {listed}, not {effort_label}.",
+                plan.model
+            )));
         }
 
         self.wait_for("confirm", |screen| {
@@ -1409,6 +1432,21 @@ pub(crate) async fn select_session_chat_model(
     }
     let target = resolve_session_chat_send_target(state, params, "selectSessionChatModel")?;
     let agent = crate::session_chat_follower::session_chat_agent_for_session(&target.session);
+    if agent.as_deref() == Some("opencode") {
+        let id = crate::session_chat_opencode::session_id(&target.session)?;
+        let args = params.clone();
+        let result =
+            tokio::task::spawn_blocking(move || crate::session_chat_opencode::select(&id, &args))
+                .await
+                .map_err(|_| invalid_params("OpenCode model operation failed."))??;
+        crate::session_chat_options::schedule_session_chat_option_redetect(
+            state,
+            &target.project_id,
+            &target.session_id,
+            Some("opencode"),
+        );
+        return Ok(result);
+    }
     if !matches!(
         agent.as_deref(),
         Some("codex" | "claude" | "cursor" | "grok" | "antigravity")

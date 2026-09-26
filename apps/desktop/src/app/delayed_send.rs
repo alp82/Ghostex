@@ -333,8 +333,8 @@ impl GhostexGpuiApp {
         CDXC:DelayedSend 2026-08-17:
         Remote sidebar rows carry their canonical machine/project/session id,
         but they do not belong to a local command tab or local Agents mapping.
-        Return that bounded command to the sidebar runtime so it can submit the
-        durable trigger to the gxserver that hosts the session.
+        Hand that bounded command to the Rust store (gx_store/terminal_lifecycle/session_edits.rs)
+        so it can submit the durable trigger to the gxserver that hosts the session.
         */
         if command
             .get("sessionId")
@@ -849,6 +849,9 @@ impl GhostexGpuiApp {
                 .any(|(_, mapped_session_id)| *mapped_session_id == session_id);
         open_message["supportsSendWhenAllProjectSessionsStop"] =
             serde_json::json!(supports_project_scope);
+        // The daemon's armed send, which the row's own open carries; a local watcher or timer
+        // below restates it.
+        self.gx_store_seed_daemon_delayed_send(open_message, session_id);
         /*
         CDXC:DelayedSend 2026-08-19:
         Armed Delayed Sends live on the daemon, and the sidebar row already
@@ -1650,16 +1653,11 @@ impl GhostexGpuiApp {
         let Some(key) = self.local_workspace_key_for_shell_session(shell_session_id) else {
             return false;
         };
-        self.dispatch_gpui_sidebar_host_message(
-            serde_json::json!({
-                "sessionId": gpui_combined_presentation_session_id(
-                    &key.project_id,
-                    &key.session_id,
-                ),
-                "type": "toggleCloseAfterDone",
-            }),
+        self.gx_store_toggle_close_after_done(
+            &gpui_combined_presentation_session_id(&key.project_id, &key.session_id),
             cx,
-        )
+        );
+        true
     }
 
     pub(crate) fn toggle_gpui_command_close_after_done_for_command_pane_tab(
@@ -1990,6 +1988,12 @@ impl GhostexGpuiApp {
                     cx,
                 );
             }
+            "pickWindowGlassVideoFile" => {
+                self.handle_gpui_pick_window_glass_video_message(
+                    &serde_json::Value::Object(command.clone()),
+                    cx,
+                );
+            }
             "pickFirstLaunchProjectFolder" => {
                 self.handle_gpui_pick_first_launch_project_folder_message(cx);
             }
@@ -2007,9 +2011,6 @@ impl GhostexGpuiApp {
             }
             "probeRemoteGxserverInstall" => {
                 self.handle_gpui_probe_remote_gxserver_install_message(command, cx);
-            }
-            "remoteGxserverSubscribePresentation" => {
-                self.handle_gpui_remote_gxserver_subscribe_presentation_message(command, cx);
             }
             "browseRemoteProjectDirectories" => {
                 self.handle_gpui_browse_remote_project_directories_message(command, cx);
@@ -2036,9 +2037,9 @@ impl GhostexGpuiApp {
             CDXC:SessionNotes 2026-08-24:
             The Session Note dialog's confirm. Like `removeProject`, this is a
             sidebar-owned write that happens to be issued from an app-modal
-            window, so it is forwarded to the sidebar runtime rather than acted
-            on here: that runtime owns the gxserver client and the local/remote
-            machine routing. Only the sidebar session id and the note text
+            window, so it is handed to the Rust store rather than acted
+            on here: the store (gx_store/terminal_lifecycle/session_edits.rs) owns the
+            gxserver call and the local/remote machine routing. Only the sidebar session id and the note text
             cross this boundary, and the note is never logged.
             */
             "setSessionNote" => {
@@ -2072,21 +2073,20 @@ impl GhostexGpuiApp {
             CDXC:Spaces 2026-08-27:
             The New/Edit Space dialog's confirm and delete. Like `setSessionNote`
             this is a sidebar-owned write issued from an app-modal window, so it
-            is forwarded to the sidebar rather than acted on here — and unlike
-            `setSessionNote`, its owner is SidebarApp itself, because the Space
-            document lives in React state and the edit must be applied to the
-            CURRENT one.
+            is not acted on here. Its owner was SidebarApp until 2026-09-21; the
+            store applies it to the CURRENT Space document now
+            (gx_store/space_editor.rs, see `CDXC:Spaces 2026-09-21`).
             */
             "sidebarSpaceEditorResult" => {
                 self.forward_gpui_sidebar_space_editor_result_to_sidebar(command, cx);
             }
             /*
-            CDXC:Sessions 2026-09-11 WHY:
+            CDXC:Sessions 2026-09-25 WHY:
             The Settings modal creates custom session tags from the app-modal
             host window, so its catalog write arrives here instead of from the
-            sidebar page. Like `setSessionNote` it is forwarded to the sidebar
-            runtime, which owns the gxserver client, the write-through debounce,
-            and the local/remote machine routing, and nothing is applied here.
+            sidebar page. It is bounded and then pushed from Rust
+            (gx_store/custom_tags_sync.rs); supersedes the 2026-09-11 note that
+            forwarded it to the sidebar runtime.
             */
             "updateCustomSessionTags" => {
                 self.forward_gpui_custom_session_tags_update_to_sidebar(command, cx);
@@ -2143,9 +2143,6 @@ impl GhostexGpuiApp {
                 );
                 self.close_gpui_app_modal_window_and_restore_command_focus(cx);
             }
-            "gpuiRemoteGxserverSidebarRequest" => {
-                self.handle_gpui_remote_gxserver_sidebar_request_message(command, cx);
-            }
             "requestProjectWorktrees"
             | "createProjectWorktree"
             | "confirmDeleteWorktree"
@@ -2173,33 +2170,15 @@ impl GhostexGpuiApp {
                     cx,
                 );
             }
-            "openBrowserPane" => {
-                let Some(url) = command
-                    .get("url")
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|url| self.gpui_titlebar_browser_url_allowed(url))
-                    .map(str::to_string)
-                else {
-                    return;
-                };
-                if self.titlebar_resources_panel_open {
-                    self.set_gpui_titlebar_resources_panel_open(false, window, cx);
-                } else {
-                    self.set_gpui_titlebar_tips_panel_open(false, window, cx);
-                }
-                self.open_gpui_browser_action_url(url, window, cx);
-            }
             // CDXC:Onboarding 2026-09-15 DECISION:
             // The Tips dropdown's "Setup" button opens the Onboarding modal, the same one the automatic
             // first run opens (modals.rs); the old FirstLaunchSetup stays in the tree under its own id and
-            // nothing opens it by default. This is the CEF titlebar-host twin of the native Tips header
-            // action in titlebar/settings_and_action_state.rs; both must match.
+            // nothing opens it by default. Quick Access's Setup Ghostex row reaches this arm, so it must
+            // open the same modal as the native Tips header action in titlebar/settings_and_action_state.rs.
             "openWorkspaceWelcome" => {
-                self.set_gpui_titlebar_tips_panel_open(false, window, cx);
                 self.open_gpui_app_modal_from_titlebar(GpuiAppModalKind::Onboarding, window, cx);
             }
             "openGhostexTutorialVideo" => {
-                self.set_gpui_titlebar_tips_panel_open(false, window, cx);
                 self.open_gpui_app_modal_from_titlebar(
                     GpuiAppModalKind::WatchGhostexVideo,
                     window,
@@ -2214,6 +2193,14 @@ impl GhostexGpuiApp {
                 // The New Thread picker is a native GPUI window, not an app-modal page.
                 if action_id == "openNewThreadPalette" {
                     self.toggle_gpui_new_thread_picker(cx);
+                    return;
+                }
+                if action_id == "createAgentSession" {
+                    self.start_new_agent_session(cx);
+                    return;
+                }
+                if gpui_focused_chat_hotkey_action_id(action_id) {
+                    self.run_focused_chat_hotkey(action_id, window, cx);
                     return;
                 }
                 /*
@@ -2260,7 +2247,7 @@ impl GhostexGpuiApp {
                     return;
                 }
                 if action_id == "openModelPicker" {
-                    self.request_focused_session_model_picker(cx);
+                    self.request_focused_session_model_picker(window, cx);
                     return;
                 }
                 if action_id == "toggleChatView" {
@@ -2308,9 +2295,10 @@ impl GhostexGpuiApp {
                     /*
                     CDXC:Navigation 2026-08-19:
                     Back/Forward is shell navigation, not an app-modal command,
-                    and it is owned by the sidebar runtime rather than Rust —
-                    the keypress takes the exact same route as a click on the
-                    titlebar arrows.
+                    and it is owned by the navigation history controller
+                    (navigation_history/controller.rs; the sidebar runtime until
+                    2026-09-25): the keypress takes the exact same route as a
+                    click on the titlebar arrows.
                     */
                     self.request_navigation_history_navigation(direction, cx);
                     return;
@@ -2653,6 +2641,15 @@ impl GhostexGpuiApp {
             }
             "installCuaDriver" => {
                 self.handle_gpui_cua_driver_install_or_update(window, cx);
+            }
+            "reinstallCuaDriver" => {
+                self.handle_gpui_cua_driver_reinstall(window, cx);
+            }
+            "uninstallCuaDriver" => {
+                self.handle_gpui_cua_driver_uninstall(window, cx);
+            }
+            "checkCuaDriverUpdate" => {
+                self.check_gpui_cua_driver_update(cx);
             }
             "uninstallBundledAgentSkills" => {
                 self.run_gpui_ghostex_cli_settings_action(
@@ -3298,7 +3295,8 @@ impl GhostexGpuiApp {
             Saved Prompts rows carry the raw gxserver ids of the session they
             were stashed from plus that session's provider conversation id. The
             modal closes itself (like the Quick Access rows above), so this arm
-            only forwards the bounded selector into the sidebar runtime, which
+            only hands the bounded selector to the Rust store
+            (stashed_prompt_jump.rs, `gx_store_open_conversation`), which
             owns the present → restore → resume routing.
             */
             "jumpToStashedPromptSession" => {
@@ -3446,11 +3444,7 @@ impl GhostexGpuiApp {
                                     project_id,
                                     session_id,
                                 } => {
-                                    this.refresh_gpui_remote_gxserver_presentation_in_background(
-                                        remote_machine_id.clone(),
-                                        false,
-                                        cx,
-                                    );
+                                    this.refresh_gpui_remote_gxserver_presentation_in_background(&remote_machine_id);
                                     this.handle_gpui_remote_session_native_action(
                                         GpuiSidebarNativeProjectPathActionMessage {
                                             action:
@@ -3497,6 +3491,12 @@ impl GhostexGpuiApp {
                     .detach();
                 }
             }
+            command_type
+                if crate::app::quick_access::commands::QUICK_ACCESS_COMMAND_ROW_TYPES
+                    .contains(&command_type) =>
+            {
+                self.run_quick_access_command_row(command_type, command, window, cx);
+            }
             "searchPreviousSessionsByText" => {
                 /*
                 CDXC:Sessions 2026-06-24-11:53:
@@ -3508,6 +3508,7 @@ impl GhostexGpuiApp {
                 self.refresh_open_gpui_app_modal_sidebar_state_in_background(cx);
             }
             command_type if gpui_app_modal_unsupported_settings_command_noop(command_type) => {}
+            command_type if self.gx_store_run_app_modal_create_command(command_type, cx) => {}
             _ => {}
         }
     }

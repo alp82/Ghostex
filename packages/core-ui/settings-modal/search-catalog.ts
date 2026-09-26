@@ -12,6 +12,7 @@ import {
   COMMANDS_PANEL_SIDE_OPTIONS,
   WINDOW_GLASS_OPTIONS,
   WINDOW_GLASS_SOURCE_OPTIONS,
+  WINDOW_GLASS_LIVE_STYLE_OPTIONS,
   WINDOW_GLASS_IMAGE_PLACEMENT_OPTIONS,
   PANEL_ANIMATION_SPEED_OPTIONS,
   COMMANDS_PANEL_AUTO_MINIMIZE_DELAY_OPTIONS,
@@ -69,6 +70,9 @@ export type SettingsSearchSectionDefinition = {
  * that was already chosen keeps working.
  */
 export const APP_ICON_CONTROLS_VISIBLE = false;
+
+/** A Live slot: the eight animations, then the user's own video. */
+const LIVE_SLOT_OPTIONS = [...WINDOW_GLASS_LIVE_STYLE_OPTIONS, { label: 'Your video', value: 'video' }] as const;
 
 export function getSettingsSearchSectionDefinitions() {
   const settingsSearchSections = {
@@ -427,6 +431,11 @@ export function getSettingsSearchSectionDefinitions() {
           title: 'Panel animations',
         },
         {
+          key: 'closeSidePanelWithLastTab',
+          subtitle: 'Close the side panel when you close its last tab, instead of showing the Open a view picker.',
+          title: 'Close side panel with its last tab',
+        },
+        {
           key: 'sidebarTooltipDelayMs',
           subtitle: 'Set how long sidebar hover labels wait before appearing. Set to 0 to show them immediately.',
           title: 'Tooltip Delay',
@@ -517,46 +526,48 @@ export function getSettingsSearchSectionDefinitions() {
         {
           key: 'darkThemePreset',
           options: DARK_THEME_PRESET_OPTIONS,
-          subtitle: 'Preset dark chrome for the sidebar and window, or Custom to tune its contrast and tint.',
-          title: 'Dark theme',
+          subtitle:
+            'The colour of the sidebar and window in dark mode: one of sixteen colour squares, or a custom colour under More colour options.',
+          title: 'Dark mode colour',
         },
         {
           key: 'customSidebarTitlebarBackgroundDarknessPercent',
-          subtitle: 'Contrast of the dark sidebar and window chrome background while Dark theme is Custom.',
-          title: 'Dark theme background contrast',
+          subtitle: 'How deep the custom dark mode colour is, while Custom colour in dark mode is on.',
+          title: 'Custom dark mode depth',
         },
         {
           key: 'customSidebarTitlebarBackgroundTintColor',
-          subtitle: 'Subtle tint of the dark sidebar and window chrome background while Dark theme is Custom.',
-          title: 'Dark theme background tint',
+          subtitle: 'The hue of the custom dark mode colour, while Custom colour in dark mode is on.',
+          title: 'Custom dark mode tint',
         },
         {
           key: 'lightThemePreset',
           options: LIGHT_THEME_PRESET_OPTIONS,
-          subtitle: 'Preset light chrome for the sidebar and window, or Custom to tune its contrast and tint.',
-          title: 'Light theme',
+          subtitle:
+            'The colour of the sidebar and window in light mode: one of sixteen colour squares, or a custom colour under More colour options.',
+          title: 'Light mode colour',
         },
         {
           key: 'themeSidebarContrast',
           subtitle:
-            "The sidebar's contrast. Higher makes dark backgrounds darker and light backgrounds whiter; 0 is the theme's own.",
-          title: 'Sidebar contrast',
+            'How much of the theme colour shows in the sidebar, from Subtle (deeper, nearly neutral) to Vivid (lighter, more colourful). Colourfulness sets the sidebar and work area together.',
+          title: 'Sidebar colourfulness',
         },
         {
           key: 'themeWorkAreaContrast',
           subtitle:
-            "The work area's contrast (chat, terminals and views). Higher makes dark backgrounds darker and light backgrounds whiter; 0 is the theme's own.",
-          title: 'Work area contrast',
+            'How much of the theme colour shows in the work area (chat, terminals and views), from Subtle to Vivid. Colourfulness sets the sidebar and work area together.',
+          title: 'Work area colourfulness',
         },
         {
           key: 'customSidebarTitlebarLightBackgroundLightnessPercent',
-          subtitle: 'Contrast of the light sidebar and window chrome background while Light theme is Custom.',
-          title: 'Light theme background contrast',
+          subtitle: 'How deep the custom light mode colour is, while Custom colour in light mode is on.',
+          title: 'Custom light mode depth',
         },
         {
           key: 'customSidebarTitlebarLightBackgroundTintColor',
-          subtitle: 'Subtle tint of the light sidebar and window chrome background while Light theme is Custom.',
-          title: 'Light theme background tint',
+          subtitle: 'The hue of the custom light mode colour, while Custom colour in light mode is on.',
+          title: 'Custom light mode tint',
         },
         {
           key: 'sessionChatTheme',
@@ -576,43 +587,81 @@ export function getSettingsSearchSectionDefinitions() {
             (option) => option.value !== '__ghostex_ghostty_theme_unmanaged__'
           ),
           subtitle: 'Uses your configured Ghostty light theme, or GitHub Light when no theme is configured.',
-          title: 'Terminal light palette',
+          title: 'Terminal palette in light mode',
         },
         {
           key: 'terminalGhosttyTheme',
           options: GHOSTTY_THEME_SETTING_OPTIONS,
           subtitle: 'Uses your configured Ghostty dark theme, or GitHub Dark when no theme is configured.',
-          title: 'Terminal dark palette',
+          title: 'Terminal palette in dark mode',
         },
         {
           key: 'windowGlass',
           options: WINDOW_GLASS_OPTIONS,
-          subtitle: 'Let the blurred desktop show through the window. By default, light mode stays opaque.',
-          title: 'Window glass',
+          subtitle: 'Let your desktop show through the window. Use transparency picks Dark only, Always or Never.',
+          title: 'Enable transparency',
         },
         {
           key: 'windowGlassSource',
           options: WINDOW_GLASS_SOURCE_OPTIONS,
           subtitle:
-            'Wallpaper only keeps other windows from showing through the glass. Custom image shows a picture you choose.',
-          title: 'Glass shows',
+            'Desktop and windows, your wallpaper, a picture you choose, or Live: a calm animation in your theme colours or your own video.',
+          title: 'What shows behind the glass',
         },
         {
           key: 'windowGlassImagePlacement',
           options: WINDOW_GLASS_IMAGE_PLACEMENT_OPTIONS,
           subtitle:
-            'Where the wallpaper or custom picture sits behind the glass. Stays with the desktop can trail the window while you drag it.',
-          title: 'Glass picture position',
+            'Where the wallpaper, custom picture or your own Live video sits behind the glass. Stays with the desktop can trail the window while you drag it.',
+          title: 'Picture position',
         },
         {
           key: 'windowGlassImageDark',
-          subtitle: 'The picture the glass blurs in dark mode when Glass shows is Custom image.',
-          title: 'Glass image for dark mode',
+          subtitle: 'The picture the glass blurs in dark mode when Picture shows behind the glass.',
+          title: 'Picture for dark mode',
         },
         {
           key: 'windowGlassImageLight',
-          subtitle: 'The picture the glass blurs in light mode when Glass shows is Custom image.',
-          title: 'Glass image for light mode',
+          subtitle: 'The picture the glass blurs in light mode when Picture shows behind the glass.',
+          title: 'Picture for light mode',
+        },
+        {
+          key: 'windowGlassVideoDark',
+          subtitle: 'The video file the glass plays in dark mode when Live is set to Your video.',
+          title: 'Your video for dark mode',
+        },
+        {
+          key: 'windowGlassVideoLight',
+          subtitle: 'The video file the glass plays in light mode when Live is set to Your video.',
+          title: 'Your video for light mode',
+        },
+        {
+          key: 'windowGlassVideoOnlyOnPower',
+          subtitle:
+            'Pause the Live animation or video while your computer runs on battery. It always pauses when Ghostex is in the background.',
+          title: 'Play only when plugged in',
+        },
+        {
+          key: 'windowGlassLiveStyleDark',
+          options: LIVE_SLOT_OPTIONS,
+          subtitle: 'The animation, or your own video, the glass shows in dark mode when Live shows behind the glass.',
+          title: 'Live background for dark mode',
+        },
+        {
+          key: 'windowGlassLiveStyleLight',
+          options: LIVE_SLOT_OPTIONS,
+          subtitle: 'The animation, or your own video, the glass shows in light mode when Live shows behind the glass.',
+          title: 'Live background for light mode',
+        },
+        {
+          key: 'windowGlassLiveSpeed',
+          subtitle: 'How fast the Live animation moves, from a quarter of its pace to twice as fast.',
+          title: 'Live background speed',
+        },
+        {
+          key: 'windowGlassLiveBrightness',
+          subtitle: 'How bright the Live animation glows behind the glass. Lower keeps it a subtle glow.',
+          title: 'Live background brightness',
         },
         {
           key: 'windowGlassSidebarOpacityDark',
@@ -641,12 +690,12 @@ export function getSettingsSearchSectionDefinitions() {
         {
           key: 'showActivePaneOutline',
           subtitle: 'Show an outline around the currently focused pane.',
-          title: 'Show Active Pane Outline',
+          title: 'Show active pane outline',
         },
         {
           key: 'workspaceActivePaneBorderColor',
           subtitle: 'Color of the outline around the currently focused pane.',
-          title: 'Active Pane Border',
+          title: 'Active pane outline colour',
         },
       ],
     },
@@ -891,8 +940,8 @@ export function getSettingsSearchSectionDefinitions() {
         },
         {
           key: 'showQuickModelPickerInTerminal',
-          subtitle: `Use the model picker shortcut (${formatSidebarHotkeyLabel('alt+p')} by default) in Claude and Codex terminal sessions. Turn off to use terminal bindings.`,
-          title: 'Show quick model & effort picker for Claude and Codex in terminal view',
+          subtitle: `Show a model button in the terminal bar and open the model picker with its shortcut (${formatSidebarHotkeyLabel('alt+p')} by default) in agent terminal sessions. Turn off to use terminal bindings.`,
+          title: 'Model picker in terminal view',
         },
         {
           key: 'showSessionIdInTerminalPanes',

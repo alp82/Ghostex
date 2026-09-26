@@ -22,9 +22,9 @@ pub(crate) const GPUI_SESSION_CHAT_DRAFT_TRANSFER_TIMEOUT: Duration = Duration::
 CDXC:SessionChat 2026-08-21:
 The terminal view's "Queued: N" chip needs the queue size for the handful of
 sessions actually on screen in terminal mode. gxserver publishes the same count
-as `queuedPromptCount` on its presentation snapshot, which the sidebar runtime
-already receives; when that field reaches Rust through the focus-state tab
-sessions this read should be deleted rather than kept beside it. Until then the
+as `queuedPromptCount` on its presentation snapshot, which the Rust store
+already receives (gx_store/sidebar_snapshot.rs); when the terminal view reads
+that field from the store this read should be deleted rather than kept beside it. Until then the
 poll stays deliberately narrow: Agents mode only, visible panes only, the active
 tab only, chat-capable sessions only — never a per-session sweep of the project.
 */
@@ -292,10 +292,6 @@ pub(crate) const TITLEBAR_TOOLTIP_LINE_HEIGHT: f32 = 18.0;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 pub(crate) const TITLEBAR_WINDOW_BUTTON_WIDTH: f32 = 46.0;
 
-pub(crate) const TITLEBAR_DROPDOWN_TIPS_PANEL_WIDTH: f32 = 556.0;
-
-pub(crate) const TITLEBAR_DROPDOWN_READING_PANEL_HEIGHT: f32 = 650.0;
-
 pub(crate) const TITLEBAR_PROJECT_LABEL_FALLBACK: &str = "Ghostex";
 
 pub(crate) const GPUI_PROJECT_IS_QUICK_ENV: &str = "GHOSTEX_GPUI_PROJECT_IS_QUICK";
@@ -321,11 +317,6 @@ pub(crate) const GPUI_TITLEBAR_GIT_MENU_BRANCH_MAX_CHARS: usize = 200;
 
 pub(crate) const GPUI_TITLEBAR_GIT_MENU_MAX_ROWS: usize = 16;
 
-pub(crate) const GPUI_SIDEBAR_TITLEBAR_GIT_ACTION_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_TITLEBAR_GIT_ACTION_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.titlebarGitAction";
-
 pub(crate) const GPUI_TITLEBAR_GIT_ACTION_REFRESH_SELECTOR: &str = "refresh";
 
 pub(crate) const GPUI_SIDEBAR_COMMAND_ACTION_MESSAGE_VERSION: u64 = 1;
@@ -333,20 +324,10 @@ pub(crate) const GPUI_SIDEBAR_COMMAND_ACTION_MESSAGE_VERSION: u64 = 1;
 pub(crate) const GPUI_SIDEBAR_COMMAND_ACTION_MESSAGE_TYPE: &str =
     "ghostex.gpui.sidebar.commandAction";
 
-pub(crate) const GPUI_SIDEBAR_COMMAND_RUN_END_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_COMMAND_RUN_END_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.commandRunEnd";
-
 pub(crate) const GPUI_SIDEBAR_GXSERVER_FOCUS_STATE_MESSAGE_VERSION: u64 = 1;
 
 pub(crate) const GPUI_SIDEBAR_GXSERVER_FOCUS_STATE_MESSAGE_TYPE: &str =
     "ghostex.gpui.sidebar.gxserverPresentationFocusState";
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_FOCUS_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_FOCUS_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceTerminalFocus";
 
 pub(crate) const GPUI_SIDEBAR_CREATE_PROJECT_AGENT_MESSAGE_VERSION: u64 = 1;
 
@@ -365,80 +346,23 @@ pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_RENAME_COMMAND_MESSAGE_TYPE: &s
 
 pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_RENAME_COMMAND_TITLE_MAX_CHARS: usize = 120;
 
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_ENTER_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_ENTER_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceTerminalEnter";
-
 pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_LIFECYCLE_REQUEST_MESSAGE_VERSION: u64 = 1;
 
 pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_LIFECYCLE_REQUEST_MESSAGE_TYPE: &str =
     "ghostex.gpui.sidebar.workspaceTerminalLifecycleRequest";
 
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_LIFECYCLE_RESULT_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_LIFECYCLE_RESULT_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceTerminalLifecycleResult";
-
 pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_LIFECYCLE_REQUEST_ID_MAX: u64 =
     9_007_199_254_740_991;
 
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_BELL_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_BELL_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceTerminalBell";
-
-#[cfg(target_os = "windows")]
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_TITLE_CHANGED_MESSAGE_VERSION: u64 = 1;
-
-#[cfg(target_os = "windows")]
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_TITLE_CHANGED_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceTerminalTitleChanged";
-
 #[cfg(target_os = "windows")]
 pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_TITLE_MAX_CHARS: usize = 512;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_ESCAPE_PRESSED_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_ESCAPE_PRESSED_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceTerminalEscapePressed";
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_FIRST_PROMPT_TITLE_CANCEL_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_FIRST_PROMPT_TITLE_CANCEL_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceFirstPromptTitleGenerationCancel";
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_SESSION_ATTENTION_ACKNOWLEDGE_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_SESSION_ATTENTION_ACKNOWLEDGE_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceSessionAttentionAcknowledge";
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_RUNTIME_ACTION_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TERMINAL_RUNTIME_ACTION_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceTerminalRuntimeAction";
-
-pub(crate) const GPUI_SIDEBAR_SESSION_COMPLETION_SOUND_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_SESSION_COMPLETION_SOUND_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.sessionCompletionSound";
-
-pub(crate) const GPUI_SIDEBAR_SESSION_COMPLETION_SOUND_MAX_CHARS: usize = 64;
 
 pub(crate) const GPUI_SIDEBAR_OPEN_BROWSER_URL_MESSAGE_VERSION: u64 = 1;
 
 pub(crate) const GPUI_SIDEBAR_OPEN_BROWSER_URL_MESSAGE_TYPE: &str =
     "ghostex.gpui.sidebar.openBrowserUrl";
 
-pub(crate) const GPUI_SIDEBAR_BROWSER_TAB_FOCUS_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.browserTabFocus";
-
 pub(crate) const GPUI_SIDEBAR_OPEN_BROWSER_URL_MAX_CHARS: usize = 16 * 1024;
-
-pub(crate) const GPUI_SIDEBAR_PROJECT_BOARD_CONVERSATION_REQUEST_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_PROJECT_BOARD_CONVERSATION_REQUEST_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.projectBoardConversationRequest";
 
 pub(crate) const GPUI_SIDEBAR_PROJECT_BOARD_CONVERSATION_RESPONSE_MESSAGE_VERSION: u64 = 1;
 
@@ -498,58 +422,6 @@ Actions past the cap stay runnable from Settings and Ghostex Quick Access.
 */
 pub(crate) const GPUI_TAB_STRIP_MAX_GLOBAL_ACTIONS: usize = 8;
 
-pub(crate) const GPUI_SIDEBAR_STATUS_PET_ACTIVATION_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_STATUS_PET_ACTIVATION_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.statusPetActivation";
-
-pub(crate) const GPUI_SIDEBAR_MENU_BAR_PROJECT_ACTIVATION_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_MENU_BAR_PROJECT_ACTIVATION_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.menuBarProjectActivation";
-
-pub(crate) const GPUI_SIDEBAR_MENU_BAR_SESSION_ACTIVATION_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_MENU_BAR_SESSION_ACTIVATION_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.menuBarSessionActivation";
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TAB_SESSION_SELECTED_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_WORKSPACE_TAB_SESSION_SELECTED_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.workspaceTabSessionSelected";
-
-pub(crate) const GPUI_SIDEBAR_COMMAND_PALETTE_SESSION_FOCUS_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_COMMAND_PALETTE_SESSION_FOCUS_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.commandPaletteSessionFocus";
-
-pub(crate) const GPUI_SIDEBAR_STASHED_PROMPT_SESSION_JUMP_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_STASHED_PROMPT_SESSION_JUMP_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.stashedPromptSessionJump";
-
-pub(crate) const GPUI_SIDEBAR_COMMAND_PALETTE_RUN_COMMAND_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_COMMAND_PALETTE_RUN_COMMAND_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.commandPaletteRunSidebarCommand";
-
-pub(crate) const GPUI_SIDEBAR_NATIVE_APP_SHOT_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_NATIVE_APP_SHOT_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.nativeAppShotCaptured";
-
-pub(crate) const GPUI_SIDEBAR_NATIVE_APP_SHOT_PROMPT_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_NATIVE_APP_SHOT_PROMPT_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.nativeAppShotPrompt";
-
-pub(crate) const GPUI_SIDEBAR_NATIVE_APP_SHOT_PROMPT_RESULT_MESSAGE_VERSION: u64 = 1;
-
-pub(crate) const GPUI_SIDEBAR_NATIVE_APP_SHOT_PROMPT_RESULT_MESSAGE_TYPE: &str =
-    "ghostex.gpui.sidebar.nativeAppShotPromptResult";
-
-pub(crate) const GPUI_SIDEBAR_REMOTE_EVENT_NAME: &str = "ghostex-gpui-sidebar-remote-event";
-
 pub(crate) const GPUI_PROJECT_CONTRACT_STRING_MAX_CHARS: usize = 512;
 
 pub(crate) const GPUI_PROJECT_CONTRACT_PATH_MAX_CHARS: usize = 4096;
@@ -561,8 +433,6 @@ pub(crate) const GPUI_TITLEBAR_OPEN_TARGET_SELECTIONS_SETTINGS_KEY: &str =
 
 pub(crate) const GPUI_TITLEBAR_ACTION_SELECTIONS_SETTINGS_KEY: &str =
     "gpuiTitlebarActionCommandByProject";
-
-pub(crate) const GPUI_NATIVE_APP_SHOT_PROMPT_MAX_CHARS: usize = 24 * 1024;
 
 pub(crate) const GPUI_SIDEBAR_VISIBLE_SESSION_IDS_MAX: usize = 64;
 
@@ -706,8 +576,6 @@ pub(crate) const TITLEBAR_ICON_ARROWS_DIAGONAL: &str = "titlebar/arrows-diagonal
 pub(crate) const TITLEBAR_ICON_ARROWS_DIAGONAL_MINIMIZE: &str =
     "titlebar/arrows-diagonal-minimize.svg";
 
-pub(crate) const TITLEBAR_TIPS_READ_STORAGE_KEY: &str = "ghostex.titlebar.tips.readIds";
-
 pub(crate) const TITLEBAR_TIP_IDS: &[&str] = &[
     "command-palette-all-actions",
     "customize-sidebar-layout-and-tools",
@@ -755,7 +623,7 @@ pub(crate) const FIND_BAR_CLOSE_BUTTON_WIDTH: f32 = 41.0;
 pub(crate) const BROWSER_TOOLBAR_HEIGHT: f32 = 35.0;
 
 /// CDXC:Browser 2026-09-21 DECISION:
-/// User: the address bar's buttons match the look of the view tab strip's buttons above them and line up with them. They use the strip's panel-toggle metrics (`TITLEBAR_CONTROL_HEIGHT` tall, `TITLEBAR_BUTTON_HORIZONTAL_PADDING` either side of an 18px icon, `TITLEBAR_BUTTON_RADIUS` corners, a 2px gap), start at the strip's 6px leading inset and end at `WORKAREA_HEADER_EDGE_PADDING`. The Docs header mirrors the same numbers in `apps/desktop/views/manage/styles.ts`.
+/// User: the address bar's buttons match the look of the view tab strip's buttons above them and line up with them. They use the strip's panel-toggle metrics (`TITLEBAR_CONTROL_HEIGHT` tall, `TITLEBAR_BUTTON_HORIZONTAL_PADDING` either side of an 18px icon, `TITLEBAR_BUTTON_RADIUS` corners, a 2px gap), start at the strip's 6px leading inset and end where the strip's panel toggles end (`WORKAREA_HEADER_EDGE_PADDING` plus `WORKAREA_HEADER_PINNED_GAP`, 2026-09-24). The Docs header mirrors the same numbers in `apps/desktop/views/manage/styles.ts`.
 pub(crate) const BROWSER_TOOLBAR_BUTTON_ICON_SIZE: f32 = TITLEBAR_SIDEBAR_COLLAPSE_ICON_SIZE;
 
 pub(crate) const BROWSER_TOOLBAR_BUTTON_WIDTH: f32 =
@@ -838,20 +706,6 @@ pub(crate) const GHOSTEX_TUTORIAL_VIDEO_URL: &str = "https://www.youtube.com/wat
 /// main-frame load-end before its player has installed keyboard shortcuts, so
 /// the host-side fullscreen key press waits this long after that edge.
 pub(crate) const GPUI_TUTORIAL_VIDEO_FULLSCREEN_KEY_DELAY: Duration = Duration::from_millis(1500);
-
-pub(crate) const TITLEBAR_TIPS_PANEL_CEF_PROFILE_ID: &str = "titlebar-tips-panel";
-
-pub(crate) const TITLEBAR_TIPS_PANEL_ID: &str = "ghostex-gpui-titlebar-tips-panel";
-
-pub(crate) const TITLEBAR_RESOURCES_PANEL_CEF_PROFILE_ID: &str = "titlebar-resources-panel";
-
-pub(crate) const TITLEBAR_RESOURCES_PANEL_ID: &str = "ghostex-gpui-titlebar-resources-panel";
-
-pub(crate) const TITLEBAR_DROPDOWN_RESOURCES_PANEL_WIDTH: f32 = 656.0;
-
-pub(crate) const GPUI_TITLEBAR_NATIVE_PROCESS_REQUEST_ID_MAX_CHARS: usize = 256;
-
-pub(crate) const GPUI_TITLEBAR_NATIVE_PROCESS_REJECTED_EXIT_CODE: i32 = 126;
 
 pub(crate) const APP_MODAL_HOST_WINDOW_WIDTH: f32 = 1080.0;
 
@@ -1027,7 +881,9 @@ pub(crate) const TITLEBAR_POPUP_READING_MENU_MAX_HEIGHT: f32 = 650.0;
 
 pub(crate) const TITLEBAR_DROPDOWN_SCROLLBAR_WIDTH: f32 = 5.0;
 
-pub(crate) const TITLEBAR_POPUP_MENU_GAP: f32 = 6.0;
+/// CDXC:Theming 2026-09-25 DECISION:
+/// User: "For all these menus that drop down from the headers, we need to have a 4px gap. Right now, they are touching. We need to have a 4px gap vertically between the button itself and the menu that pops up." Every menu or panel that drops from a header button (the work area header's split buttons, ⋯ menu and panels, the sidebar's ☰ and project header buttons) opens exactly this far below the button, or this far above it when it flips upward. Supersedes the sidebar menu's 5px and the project header menus' 6px.
+pub(crate) const HEADER_MENU_TRIGGER_GAP: f32 = 4.0;
 
 pub(crate) const TITLEBAR_POPUP_MENU_ROW_HEIGHT: f32 = 34.0;
 
@@ -1051,8 +907,6 @@ pub(crate) const TITLEBAR_POPUP_READING_HEADER_BUTTON_TEXT_SIZE: f32 = 12.0;
 
 pub(crate) const TITLEBAR_POPUP_READING_HEADER_BUTTON_ICON_SIZE: f32 = 16.0;
 
-pub(crate) const TITLEBAR_POPUP_VERTICAL_OFFSET: f32 = 6.0;
-
 /*
 CDXC:ContextMenus 2026-09-16 WHY:
 Popup windows are sized before rendering, so these measurements must match the shared menu appearance: 6px panel padding plus 1px borders (14px chrome), 2px row gaps, and 1px separators with 6px vertical margins (13px).
@@ -1073,19 +927,6 @@ pub(crate) const TITLEBAR_POPUP_ACTION_PREVIEW_TEXT_SIZE: f32 = 11.0;
 pub(crate) const GPUI_TITLEBAR_TIPS_READ_IDS_SETTINGS_KEY: &str = "gpuiTitlebarTipsReadIds";
 
 pub(crate) const TITLEBAR_ACTION_UNCONFIGURED_PREVIEW: &str = "Set the command";
-
-pub(crate) const TITLEBAR_TIPS_TOOLTIP: &str = "Tips";
-
-pub(crate) const TITLEBAR_RESOURCES_TOOLTIP: &str = "Resources Monitor";
-
-pub(crate) const TITLEBAR_MORE_TOOLTIP: &str = "More";
-
-pub(crate) const TITLEBAR_GIT_TOOLTIP: &str = "Git actions";
-
-pub(crate) const TITLEBAR_ACTIONS_TOOLTIP: &str = "Quick Actions. Right click for more options";
-
-pub(crate) const TITLEBAR_OPEN_TARGETS_TOOLTIP: &str =
-    "Open in an app. Right click for more options";
 
 pub(crate) const TITLEBAR_UPDATE_AVAILABLE_TOOLTIP: &str =
     "Update Ghostex! All your sessions will continue running.";
@@ -1134,10 +975,9 @@ pub(crate) const BROWSER_ICON_WORLD: &str = "titlebar/world.svg";
 pub(crate) const BROWSER_ICON_TOOLS: &str = "titlebar/tools.svg";
 
 /*
-GPUI Tips uses the same gpui-component PopupMenu child-window path as the
-other titlebar dropdowns. The legacy React titlebar host remains available to
-the macOS app, while these first-party URLs stay bounded before they enter a
-GPUI Browser pane.
+GPUI Tips uses the same child-window path as the other titlebar dropdowns.
+Its Docs and Updates actions open only these first-party URLs in a GPUI
+Browser pane.
 */
 pub(crate) const GHOSTEX_CHANGELOG_URL: &str = "https://github.com/maddada/ghostex/releases";
 

@@ -33,7 +33,7 @@ handshake can hold for 16s, and it leaves no Saved Prompts residue.
 SEE-ALSO: session_chat_send.rs (interrupt endpoint, last-send registry calls),
 session_chat_queue_runtime.rs (registry, `sendCancelled`), session_chat_follower.rs
 and session_chat_read.rs (row filter, `returnedPrompt` carriage),
-packages/core-ui/chat/session-chat-returned-prompt.ts (client apply-once).
+packages/gx-chat-core/src/composer/storage.rs (client apply-once).
 */
 
 use std::{
@@ -339,6 +339,15 @@ pub fn filter_session_chat_returned_prompts(
     {
         *lifecycle = Some(interrupted_lifecycle(&entry));
     }
+}
+
+/// The transcript row of the prompt Claude handed back, for as long as the
+/// chat readers hide it.
+pub(crate) fn session_chat_returned_prompt_row(
+    project_id: &str,
+    session_id: &str,
+) -> Option<String> {
+    current(project_id, session_id)?.message_id
 }
 
 /// The retraction a follower still owes its clients, once.

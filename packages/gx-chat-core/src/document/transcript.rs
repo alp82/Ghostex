@@ -1,6 +1,6 @@
 //! The transcript list the renderer walks: one entry per drawn card group.
 //!
-//! The producer is `projectChatTranscript` plus `NativeChatPresentation.update`
+//! The producer was `projectChatTranscript` plus `NativeChatPresentation.update`
 //! (`packages/shared/session-chat-controller/native-presentation.ts`). The consumer dispatches on
 //! `kind` alone (`apps/desktop/src/app/native_chat/transcript.rs`), so the discriminant spelling
 //! is part of the contract.
@@ -31,8 +31,19 @@ pub enum TranscriptItem {
         /// The turn's reply, or `null` while the turn is still running.
         #[serde(rename = "final")]
         final_message: Option<ProjectedMessage>,
+        /// The replies before `final` in the same turn, oldest first: one per stretch a harness
+        /// row (a background task finishing) broke the turn into. Drawn above `final`.
+        #[serde(default)]
+        earlier_replies: Vec<ProjectedMessage>,
         active: bool,
         work: Vec<ProjectedMessage>,
+        /// What ended a turn the agent wrote no reply to: a slash command's output ("Set effort
+        /// level to High") or the "Interrupted" marker. Drawn under the prompt without a fold.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        outcome: Vec<ProjectedMessage>,
+        /// The newest turn that has a reply: its "Agent reply" fold starts open.
+        #[serde(default)]
+        latest_reply: bool,
     },
     /// A finished turn in verbose mode: its file changes collapse into one fold.
     #[serde(rename = "completed-work", rename_all = "camelCase")]

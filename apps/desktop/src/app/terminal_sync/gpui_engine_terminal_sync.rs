@@ -4,7 +4,6 @@ use crate::app::terminal_sync::GpuiTerminalViewerRecipe;
 // modules; pure move, no logic changes. Cluster: GPUI-engine terminal reconciliation (agents + command), startup spawn, and engine terminal view/agent action event handling.
 
 use std::sync::atomic::Ordering;
-use std::time::Instant;
 
 use gpui::AppContext as _;
 
@@ -648,7 +647,6 @@ impl GhostexGpuiApp {
         );
         let font = terminal_gpui_engine::gpui_engine_terminal_font_config(&engine_config);
         let (sink, event_rx) = terminal_element::TerminalView::event_channel();
-        let spawn_started = Instant::now();
         let argument_utf16_length = spawn_config
             .args
             .iter()
@@ -672,13 +670,6 @@ impl GhostexGpuiApp {
                 return None;
             }
         };
-        support_logs::append_temporary(
-            support_logs::GpuiSupportLog::TerminalFocus,
-            "TEMP.remoteNewTerminal.engineProcessSpawned",
-            serde_json::json!({
-                "durationMs": spawn_started.elapsed().as_millis() as u64,
-            }),
-        );
         model.set_option_as_alt(engine_config.option_as_alt);
         if let Some(colors) = &engine_config.colors {
             model
@@ -790,17 +781,6 @@ impl GhostexGpuiApp {
         };
         match event {
             TerminalViewEvent::TitleChanged(title) => {
-                if title == TEMP_REMOTE_LOCAL_READY_TITLE || title == TEMP_REMOTE_SSH_READY_TITLE {
-                    support_logs::append_temporary(
-                        support_logs::GpuiSupportLog::TerminalFocus,
-                        if title == TEMP_REMOTE_LOCAL_READY_TITLE {
-                            "TEMP.remoteNewTerminal.localWrapperReady"
-                        } else {
-                            "TEMP.remoteNewTerminal.remoteCommandReady"
-                        },
-                        serde_json::json!({ "engine": "gpui" }),
-                    );
-                }
                 osc_states.entry(runtime_session_id).or_default().title = if title.is_empty() {
                     None
                 } else {
@@ -850,7 +830,7 @@ impl GhostexGpuiApp {
                 let _ = self.paste_image_or_send_control_v(cx);
             }
             TerminalViewEvent::PathsDropped(paths) => {
-                self.insert_paths_into_gpui_engine_terminal(target, paths, cx);
+                self.insert_paths_into_gpui_engine_terminal(target, runtime_session_id, paths, cx);
             }
             TerminalViewEvent::AttachPathsRequested => {
                 if let Some(attachment_target) =
@@ -868,25 +848,11 @@ impl GhostexGpuiApp {
             }
             TerminalViewEvent::EscapePressed => {
                 if let Some(shell_session_id) = agents_shell_session_id {
-                    support_logs::append_temporary(
-                        support_logs::GpuiSupportLog::TerminalFocus,
-                        "TEMP.gpui.sessionInterrupt.compositedEscapeRouted",
-                        serde_json::json!({
-                            "shellSessionId": format!("{:?}", shell_session_id),
-                        }),
-                    );
                     self.dispatch_gpui_workspace_terminal_escape_pressed(shell_session_id, cx);
                 }
             }
             TerminalViewEvent::FirstPromptTitleGenerationCancelRequested => {
                 if let Some(shell_session_id) = agents_shell_session_id {
-                    support_logs::append_temporary(
-                        support_logs::GpuiSupportLog::TerminalFocus,
-                        "TEMP.gpui.sessionInterrupt.titleCancelRouted",
-                        serde_json::json!({
-                            "shellSessionId": format!("{:?}", shell_session_id),
-                        }),
-                    );
                     self.dispatch_gpui_workspace_first_prompt_title_generation_cancel(
                         shell_session_id,
                         cx,
@@ -980,7 +946,21 @@ impl GhostexGpuiApp {
             TerminalAgentActionRequest::CloseAfterDone => {
                 let _ = self.toggle_gpui_close_after_done_for_agents_session(session_id, cx);
             }
+            // The chat's and the terminal bar's Fork run the store's fork, the one the sidebar
+            // row's Fork runs, so both switch to the fork the same way (CDXC:SessionFork
+            // 2026-09-24 in gx_store/sidebar_lifecycle.rs). A fork the store declines goes on to
+            // the session action route (gx_store/terminal_lifecycle/runtime_actions.rs), which runs
+            // the same store fork; until 2026-09-25 the runtime took the forks the store declined.
             TerminalAgentActionRequest::Fork => {
+                let key = self
+                    .local_workspace_session_mappings
+                    .iter()
+                    .find_map(|(key, mapped)| (*mapped == session_id).then(|| key.clone()));
+                if key.is_some_and(|key| {
+                    self.gx_store_run_workspace_session_fork(&key.project_id, &key.session_id, cx)
+                }) {
+                    return;
+                }
                 let _ = self.dispatch_gpui_workspace_terminal_runtime_action(
                     "forkSession",
                     session_id,
@@ -998,10 +978,11 @@ impl GhostexGpuiApp {
             CDXC:TranscriptExport 2026-08-20:
             The transcript file only exists on the machine that runs the agent,
             so the export is a daemon call, not a local read. Route it through
-            the same sidebar-runtime lifecycle path Fork uses: the runtime owns
-            the gxserver client for the local daemon and the authenticated
-            tunnel for remote machines, and it opens the result dialog once the
-            daemon answers with the written path.
+            the same session action path Fork uses: the store
+            (gx_store/git/export_transcript.rs; the sidebar runtime until
+            2026-09-25) owns the gxserver client for the local daemon and the
+            authenticated tunnel for remote machines, and it opens the result
+            dialog once the daemon answers with the written path.
             */
             TerminalAgentActionRequest::ExportTranscript => {
                 let _ = self.dispatch_gpui_workspace_terminal_runtime_action(

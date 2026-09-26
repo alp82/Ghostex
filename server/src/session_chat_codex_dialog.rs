@@ -47,6 +47,9 @@ fn row(line: &str) -> Option<TerminalDialogRow> {
 }
 
 const DIRECTORY_TRUST_ID_PREFIX: &str = "codex-directory-trust:";
+/// Codex 0.156's "Folder access" trust dialog. A separate prefix because it
+/// is answered differently from the onboarding one (see `payload`).
+const FOLDER_ACCESS_TRUST_ID_PREFIX: &str = "codex-folder-access-trust:";
 const UPDATE_PROMPT_ID_PREFIX: &str = "codex-update-prompt:";
 
 /// CDXC:AgentScreenDetection 2026-09-11 DECISION:
@@ -266,11 +269,73 @@ fn directory_trust_dialog(content: &[&str]) -> Option<TerminalDialog> {
     })
 }
 
+/// CDXC:AgentScreenDetection 2026-09-26 WHY:
+/// Codex 0.156 replaced the onboarding trust screen with a "Folder access" list (a folder path, a "Trust this folder?" sentence, rows "Trust and continue" and "Quit", footer "enter continue · esc quit"). Unrecognized, it surfaced as a generic Codex dialog, so chat never treated it as a trust prompt.
+/// Its list wraps, so the onboarding answer (Up, then Enter) would land on Quit: rows are reached by moving from the captured highlight like the other numbered menus.
+fn folder_access_trust_dialog(content: &[&str]) -> Option<TerminalDialog> {
+    let heading = content.iter().position(|line| !clean(line).is_empty())?;
+    if clean(content[heading]) != "Folder access" {
+        return None;
+    }
+    let path_end = (heading + 1..content.len()).find(|&i| clean(content[i]).is_empty())?;
+    let folder = content[heading + 1..path_end]
+        .iter()
+        .map(|line| clean(line))
+        .collect::<String>();
+    if folder.is_empty() {
+        return None;
+    }
+    let first_row = content.iter().position(|line| row(line).is_some())?;
+    let mut rows: Vec<_> = content.iter().filter_map(|line| row(line)).collect();
+    if rows.len() != 2
+        || rows[0].number != 1
+        || rows[0].label != "Trust and continue"
+        || rows[1].number != 2
+        || rows[1].label != "Quit"
+        || rows.iter().filter(|row| row.selected).count() != 1
+        || path_end >= first_row
+    {
+        return None;
+    }
+    let context = content[path_end..first_row]
+        .iter()
+        .map(|line| clean(line))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    // In a subfolder of a repository Codex adds a note that trust applies to
+    // the repository root before this sentence.
+    if !context.contains("Trust this folder?") {
+        return None;
+    }
+    let identity = serde_json::to_string(&(&folder, &context, &rows)).ok()?;
+    rows[1].label = "Quit Codex".to_string();
+    let name = folder
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()?;
+    Some(TerminalDialog {
+        id: format!(
+            "{FOLDER_ACCESS_TRUST_ID_PREFIX}{:x}",
+            Sha256::digest(identity.as_bytes())
+        ),
+        title: format!("Trust folder \"{name}\"?"),
+        body: format!("{folder}\n\n{context}"),
+        footer: "Choose an option to continue.".to_string(),
+        rows,
+        input: None,
+        input_value: String::new(),
+        actions: Vec::new(),
+    })
+}
+
 /// CDXC:AgentScreenDetection 2026-09-05 DECISION:
 /// User: expose the "Implement this plan?" picker in chat so switching to the terminal is unnecessary.
 /// User: audit every Codex command and make its messages and interactions usable in chat, using the existing UX and improving it where needed.
 /// Numbered selectors, searchable menus, checkbox settings, and text forms retain their own selection, navigation, toggle, save, and cancel actions.
-/// SEE-ALSO: packages/core-ui/chat/session-chat-terminal-dialog.tsx and Codex tui/src/bottom_pane/list_selection_view.rs.
+/// SEE-ALSO: apps/desktop/src/app/native_chat/terminal_dialog.rs and Codex tui/src/bottom_pane/list_selection_view.rs.
 pub fn detect_codex_dialog(text: &str) -> Option<TerminalDialog> {
     if let Some(pager) = crate::session_chat_codex_pager::detect_codex_transcript_pager(text) {
         return Some(pager);
@@ -314,7 +379,16 @@ pub fn detect_codex_dialog(text: &str) -> Option<TerminalDialog> {
         .unwrap_or(0);
     // Onboarding and text-entry views use a single empty line above their
     // heading, unlike the standard list selection view's two-line band.
-    if let Some(named) = (start..footer_index).rev().find(|&i| {
+    // Blank paragraphs in a textarea are content, not a boundary before its title.
+    let named_start = if clean(&lines[footer_index]).contains("submit") {
+        (0..footer_index)
+            .rev()
+            .find(|&i| crate::session_chat_codex_blocking::is_codex_modal_footer(clean(&lines[i])))
+            .map_or(0, |i| i + 1)
+    } else {
+        start
+    };
+    if let Some(named) = (named_start..footer_index).rev().find(|&i| {
         clean(&lines[i]).starts_with("Tell us more (")
             || matches!(
                 clean(&lines[i]),
@@ -344,6 +418,24 @@ pub fn detect_codex_dialog(text: &str) -> Option<TerminalDialog> {
             .rposition(|line| clean(line).starts_with("> You are in "))
         {
             if let Some(dialog) = directory_trust_dialog(
+                &lines[trust_heading..footer_index]
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+            ) {
+                return Some(dialog);
+            }
+        }
+    }
+    if clean(&lines[footer_index])
+        .to_ascii_lowercase()
+        .starts_with("enter continue")
+    {
+        if let Some(trust_heading) = lines[..footer_index]
+            .iter()
+            .rposition(|line| clean(line) == "Folder access")
+        {
+            if let Some(dialog) = folder_access_trust_dialog(
                 &lines[trust_heading..footer_index]
                     .iter()
                     .map(String::as_str)
@@ -464,11 +556,32 @@ pub fn detect_codex_dialog(text: &str) -> Option<TerminalDialog> {
         }
         Some(index)
     });
+    // CDXC:AgentScreenDetection 2026-09-25 WHY:
+    // Native Windows Codex renders text dialogs with a composer chevron instead of the block gutter. Restrict that marker to text-dialog headings so a selected list row cannot become an editable field.
+    let chevron_input = matches!(
+        title.as_str(),
+        "Name thread"
+            | "Rename thread"
+            | "Edit goal"
+            | "Save conversation"
+            | "Add marketplace"
+            | "Custom review instructions"
+            | "Export filename"
+            | "Save transcript"
+    ) || title.starts_with("Tell us more (");
+    let chevron_input = chevron_input
+        .then(|| {
+            content
+                .iter()
+                .position(|line| line.trim_start().starts_with('›'))
+        })
+        .flatten();
     let input = if title == "Remap Shortcut" {
         Some("key".to_string())
     } else if search_index.is_some() {
         Some("search".to_string())
-    } else if content.iter().any(|line| line.trim().starts_with('▌'))
+    } else if chevron_input.is_some()
+        || content.iter().any(|line| line.trim().starts_with('▌'))
         || lower.contains("type a name")
     {
         Some("text".to_string())
@@ -486,6 +599,24 @@ pub fn detect_codex_dialog(text: &str) -> Option<TerminalDialog> {
         } else {
             left_column(content[index]).trim().to_string()
         }
+    } else if let Some(index) = chevron_input {
+        content[index..]
+            .iter()
+            .enumerate()
+            .map(|(line_index, line)| {
+                if line_index == 0 {
+                    line.trim_start()
+                        .strip_prefix('›')
+                        .unwrap_or(line)
+                        .trim_start()
+                } else {
+                    line.trim()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string()
     } else if input.as_deref() == Some("text") {
         let input_start = content
             .iter()
@@ -544,6 +675,7 @@ pub fn detect_codex_dialog(text: &str) -> Option<TerminalDialog> {
 impl TerminalDialog {
     pub(crate) fn is_codex_directory_trust(&self) -> bool {
         self.id.starts_with(DIRECTORY_TRUST_ID_PREFIX)
+            || self.id.starts_with(FOLDER_ACCESS_TRUST_ID_PREFIX)
     }
 
     pub(crate) fn is_codex_update_prompt(&self) -> bool {
@@ -557,7 +689,7 @@ impl TerminalDialog {
         };
         if let Some(index) = params.get("choiceIndex").and_then(Value::as_u64) {
             let row = self.rows.get(index as usize).ok_or_else(invalid)?;
-            if self.is_codex_directory_trust() {
+            if self.id.starts_with(DIRECTORY_TRUST_ID_PREFIX) {
                 return Ok(match row.number {
                     1 => "\x1b[A\r",
                     2 => "2",
@@ -601,14 +733,10 @@ impl TerminalDialog {
                 return Err(invalid());
             }
             return Ok(if self.input.as_deref() == Some("search") {
-                "\x7f".repeat(self.input_value.chars().count()) + text
+                "\x7f".repeat(self.input_value.chars().count())
+                    + &crate::session_chat_send::sanitize_bracketed_paste_text(text)
             } else {
-                let clear = crate::session_chat_send::build_agent_tui_clear_input_for_text(
-                    &self.input_value,
-                )
-                .replace('\u{15}', "\x1b[117;5u")
-                .replace('\u{b}', "\x1b[107;5u");
-                format!("{clear}\x1b[200~{text}\x1b[201~\r")
+                crate::session_chat_send::wrap_terminal_bracketed_paste_text(text)
             });
         }
         if action == "key" && self.input.as_deref() == Some("key") {
@@ -689,6 +817,7 @@ impl TerminalDialog {
             "pageDown" => "\x1b[6~",
             "home" => "\x1b[H",
             "end" => "\x1b[F",
+            "cancel" if self.footer.starts_with("Browsing transcript · ") => "\x1b[27u",
             "cancel"
                 if self.id == crate::session_chat_codex_pager::CODEX_TRANSCRIPT_PAGER_ID
                     || self.footer.contains("q to quit") =>
@@ -718,25 +847,42 @@ pub(crate) async fn answer_codex_dialog(
         return Err(stale());
     }
     let payload = dialog.payload(params)?;
+    let submitting_text = params.get("dialogAction").and_then(Value::as_str) == Some("submit")
+        && dialog.input.as_deref() == Some("text");
+    let mut steps = vec![
+        SessionChatSendStep::BeginLocalCommandOutput {
+            agent: Some("codex".to_string()),
+            command: dialog.title.clone(),
+            durable_id: None,
+        },
+        SessionChatSendStep::VerifyTerminalDialog {
+            agent: "codex".to_string(),
+            id: dialog.id.clone(),
+        },
+    ];
+    if submitting_text {
+        // CDXC:SessionChat 2026-09-25 WHY:
+        // Codex's paste detector swallowed Enter into the rename value when clear, paste and submit shared one write. Text dialogs need the same separate bursts as the main composer.
+        let clear =
+            crate::session_chat_send::build_agent_tui_clear_input_for_text(&dialog.input_value)
+                .replace('\u{15}', "\x1b[117;5u")
+                .replace('\u{b}', "\x1b[107;5u");
+        steps.push(SessionChatSendStep::Write(clear));
+        steps.push(SessionChatSendStep::SleepMs(100));
+    }
+    steps.push(SessionChatSendStep::Write(payload));
+    steps.push(SessionChatSendStep::SleepMs(150));
+    if submitting_text {
+        steps.push(SessionChatSendStep::Write("\r".to_string()));
+        steps.push(SessionChatSendStep::SleepMs(150));
+    }
+    steps.push(SessionChatSendStep::FinishLocalCommandOutput);
     execute_session_chat_send(
         &target.project_id,
         &target.session_id,
         &target.zmx_name,
         "session-chat-dialog",
-        vec![
-            SessionChatSendStep::BeginLocalCommandOutput {
-                agent: Some("codex".to_string()),
-                command: dialog.title,
-                durable_id: None,
-            },
-            SessionChatSendStep::VerifyTerminalDialog {
-                agent: "codex".to_string(),
-                id: dialog.id.clone(),
-            },
-            SessionChatSendStep::Write(payload),
-            SessionChatSendStep::SleepMs(150),
-            SessionChatSendStep::FinishLocalCommandOutput,
-        ],
+        steps,
     )
     .await
     .map_err(|error| DomainStateError {
@@ -752,7 +898,9 @@ pub(crate) async fn answer_codex_dialog(
         && capture_session_terminal_text(&target.zmx_name)
             .await
             .and_then(|screen| detect_codex_dialog(&screen))
-            .is_some_and(|current| current.id == dialog.id)
+            .is_some_and(|current| {
+                current.id == dialog.id || (submitting_text && current.title == dialog.title)
+            })
     {
         return Err(DomainStateError {
             code: "invalidState",

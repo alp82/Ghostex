@@ -50,6 +50,12 @@ pub(super) fn register(cx: &mut gpui::App) {
             ("alt-up", "up"),
             ("down", "down"),
             ("shift-down", "down"),
+            // Line commands (`composer_line_command` in `edit_shortcuts.rs`).
+            ("alt-down", "down"),
+            ("alt-shift-up", "up"),
+            ("alt-shift-down", "down"),
+            ("secondary-l", "l"),
+            ("secondary-shift-k", "k"),
             ("tab", "tab"),
             ("shift-tab", "tab"),
             ("escape", "escape"),
@@ -111,7 +117,7 @@ impl NativeChatView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // React drops a pending pill open on any key press (`onKeyDownCapture` on its composer).
+        // React dropped a pending pill open on any key press (`onKeyDownCapture` on its composer).
         self.cancel_composer_reference_open();
         // The search field owns Enter, the arrows and Escape while it has focus.
         if self.search_key_down(event, window, cx) {
@@ -121,7 +127,7 @@ impl NativeChatView {
         }
         /*
         CDXC:SessionChat 2026-09-18 WHY:
-        React's image viewer closes on Escape from a capture listener on the whole chat surface
+        React's image viewer closed on Escape from a capture listener on the whole chat surface
         (session-chat-image-viewer.tsx), ahead of the composer's interrupt. The native viewer is a
         child window over the same pane, so the pane answers Escape for it too and the picture
         closes whichever of the two windows the keystroke reached.
@@ -136,7 +142,7 @@ impl NativeChatView {
             return;
         }
         // The subagent transcript is modal: Escape closes it and nothing behind it takes a
-        // keystroke, the focus trap React's dialog applies. Application chords still pass.
+        // keystroke, the focus trap React's dialog applied. Application chords still pass.
         if self.snapshot["subagent"].is_object() && !event.keystroke.modifiers.platform {
             if event.keystroke.key == "escape" && !event.is_held {
                 self.invoke(json!({"type":"subagentClose"}), cx);
@@ -163,7 +169,7 @@ impl NativeChatView {
             }
         }
         if key.key == "enter" && !key.modifiers.shift {
-            let focused = |input: &gpui::Entity<gpui_component::input::InputState>| {
+            let focused = |input: &gpui::Entity<gpui_component::input::TextareaState>| {
                 input.read(cx).focus_handle(cx).is_focused(window)
             };
             let command = if this
@@ -315,9 +321,15 @@ impl NativeChatView {
             && !event.is_held
         {
             let notice = &this.snapshot["terminalNotice"];
+            let position = if primary {
+                Some(0)
+            } else {
+                notice["secondaryChoice"].as_u64().map(|index| index as usize)
+            };
             let choice = notice["choices"]
                 .as_array()
-                .and_then(|choices| choices.get(if primary { 0 } else { 1 }));
+                .zip(position)
+                .and_then(|(choices, position)| choices.get(position));
             // Trust and Remember is click-only, like the host's
             // `terminalNoticeActionShortcutEligible` says.
             let has_action = primary
@@ -371,6 +383,10 @@ impl NativeChatView {
             this.invoke(json!({"type":"recallHistory","direction":key.key}), cx);
             cx.stop_propagation();
             window.prevent_default();
+        } else if let Some(command) = super::edit_shortcuts::composer_line_command(key) {
+            this.composer_line_edit(command, window, cx);
+            cx.stop_propagation();
+            window.prevent_default();
         } else if key.key == "tab"
             && !key.modifiers.shift
             && !key.modifiers.alt
@@ -382,7 +398,8 @@ impl NativeChatView {
             this.send(true, window, cx);
             cx.stop_propagation();
             window.prevent_default();
-        } else if key.key == "escape" {
+        } else if key.key == "escape" && !key.modifiers.shift {
+            // Shift+Esc is Focus Chat Box (chat_hotkeys.rs), never an interrupt.
             if this.maximized_window.is_some() {
                 this.close_maximized(cx);
             } else {

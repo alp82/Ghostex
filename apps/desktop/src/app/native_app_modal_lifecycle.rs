@@ -23,17 +23,22 @@ pub(crate) struct NativeAppModal {
 }
 
 impl GhostexGpuiApp {
-    /// The modal palette for the current appearance and sidebar theme.
+    /// The modal palette for the current appearance and sidebar theme, frosted under window glass,
+    /// where the modal's window blurs what is behind it (`open_native_app_modal`).
     pub(crate) fn gpui_native_modal_palette(&self) -> ModalPalette {
         let settings = shared_settings::shared_sidebar_settings_snapshot();
-        ModalPalette::resolve(
+        let palette = ModalPalette::resolve(
             CHROME_LIGHT_APPEARANCE.load(std::sync::atomic::Ordering::Relaxed),
             settings
                 .object()
                 .get("sidebarTheme")
                 .and_then(serde_json::Value::as_str),
         )
-        .tinted(titlebar_background().into())
+        .tinted(titlebar_background().into());
+        if !window_glass_active() {
+            return palette;
+        }
+        palette.frosted(frosted_menu_fill(palette.surface.into()).into())
     }
 
     /// Opens `kind` as a native window whose content is built by `build`.
@@ -51,6 +56,8 @@ impl GhostexGpuiApp {
         let window_size = size(px(width), px(initial_height));
         let options = WindowOptions {
             kind: crate::app::window::popup_frame::child_window_kind(),
+            #[cfg(target_os = "linux")]
+            x11_parent: self.main_window_handle,
             window_bounds: Some(WindowBounds::Windowed(gpui::Bounds::centered_at(
                 self.main_window_bounds.center(),
                 window_size,
@@ -67,12 +74,17 @@ impl GhostexGpuiApp {
             )
             .or(self.main_window_display_id),
             titlebar: None,
+            // Under window glass the modal draws the frosted palette over what its window blurs.
+            window_background: window_glass_background_appearance(),
             ..Default::default()
         };
         let view_slot: Rc<RefCell<Option<AnyEntity>>> = Rc::new(RefCell::new(None));
         let view_out = view_slot.clone();
+        let window_border = self.gpui_native_modal_palette().window_border();
         let window = cx
             .open_window(options, move |window, cx| {
+                crate::app::window::popup_frame::frame_app_modal_window(window, window_border);
+                apply_frosted_menu_blur(window);
                 window.set_window_title(if cfg!(any(target_os = "windows", target_os = "linux")) {
                     kind.window_title()
                 } else {
@@ -263,7 +275,8 @@ impl GhostexGpuiApp {
         self.resume_deferred_gpui_portless_setup_prompt(cx);
     }
 
-    /// The sidebar runtime's `close` bridge message for a modal that is native
+    /// The app's `close` bridge message (`close_app_modal_from_bridge`, sent by the
+    /// store; the sidebar runtime sent it until 2026-09-25) for a modal that is native
     /// now (a relocated project folder, a finished flow): remove the window and
     /// give the command pane its focus back like the React host's close did.
     pub(crate) fn close_native_app_modal_from_bridge(
@@ -291,7 +304,7 @@ impl GhostexGpuiApp {
         if modal.kind == GpuiAppModalKind::ExportTranscriptResult {
             self.pending_export_transcript_reveal_path = None;
         }
-        // Quick Access keeps a live controller in the sidebar runtime; tell it to
+        // Quick Access keeps a live controller (quick_access/host.rs); tell it to
         // stop publishing when its window is replaced or dismissed.
         if crate::app::window::quick_access::QuickAccessTabId::from_modal_kind(modal.kind).is_some()
         {

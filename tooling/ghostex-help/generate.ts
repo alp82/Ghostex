@@ -105,6 +105,7 @@ type Catalog = {
     description: string;
     defaultKey: string;
     windowsLinuxDefaultKey?: string;
+    retiredDefaultKeys?: readonly string[];
   }>;
 };
 
@@ -319,6 +320,41 @@ const SUPPLEMENTAL_SETTING_ROWS: Record<string, SupplementalRow> = {
     ...viewRows,
     title: 'Hide GitHub view',
     subtitle: 'Hide the automatic repository view from the view picker and tab menus.',
+  },
+  sentryViewTabHidden: {
+    ...viewRows,
+    title: 'Hide Sentry view',
+    subtitle: 'Enable Sentry in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.',
+  },
+  figmaViewTabHidden: {
+    ...viewRows,
+    title: 'Hide Figma view',
+    subtitle: 'Enable Figma in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.',
+  },
+  vercelViewTabHidden: {
+    ...viewRows,
+    title: 'Hide Vercel view',
+    subtitle: 'Enable Vercel in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.',
+  },
+  supabaseViewTabHidden: {
+    ...viewRows,
+    title: 'Hide Supabase view',
+    subtitle: 'Enable Supabase in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.',
+  },
+  githubActionsViewTabHidden: {
+    ...viewRows,
+    title: 'Hide GitHub Actions view',
+    subtitle: 'Enable GitHub Actions in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.',
+  },
+  posthogViewTabHidden: {
+    ...viewRows,
+    title: 'Hide PostHog view',
+    subtitle: 'Enable PostHog in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.',
+  },
+  customWebsiteViewTabHidden: {
+    ...viewRows,
+    title: 'Hide Custom Website view',
+    subtitle: 'Enable Custom Website in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.',
   },
   storybookViewTabHidden: {
     ...viewRows,
@@ -754,6 +790,8 @@ function buildCatalog(): Catalog {
     description: definition.description,
     defaultKey: definition.defaultKey,
     ...(definition.windowsLinuxDefaultKey ? { windowsLinuxDefaultKey: definition.windowsLinuxDefaultKey } : {}),
+    // `ghostex settings hotkeys` resolves a saved map exactly like normalizeghostexHotkeySettings.
+    ...(definition.retiredDefaultKeys?.length ? { retiredDefaultKeys: definition.retiredDefaultKeys } : {}),
   }));
 
   return {
@@ -872,7 +910,7 @@ function renderHotkeysMarkdown(catalog: Catalog): string {
   );
   lines.push('');
   lines.push(
-    'Default bindings are listed for macOS (`cmd`) with the Windows/Linux default where it differs. Users rebind them in Settings > Hotkeys; open it with `ghostex settings open --tab hotkeys`. Hotkey bindings are a structured setting, so agents cannot change them with `ghostex settings set`.'
+    'Default bindings are listed for macOS (`cmd`) with the Windows/Linux default where it differs. Users rebind them in Settings > Hotkeys, and agents change them with `ghostex settings hotkeys list`, `ghostex settings hotkeys set <id> <keys>` (`none` unassigns) and `ghostex settings hotkeys reset <id>|--all`; use the Id column below.'
   );
   lines.push('');
   lines.push('| Action | Default | Windows/Linux | What it does | Id |');

@@ -122,7 +122,7 @@ impl GhostexGpuiApp {
                 placement
             };
         // The marks moved above, in this same frame, for this same key, so the tab's focus below
-        // must not send the runtime a second, identical tab selection.
+        // must not send the store a second, identical tab selection.
         if self.focus_existing_gpui_remote_attach_terminal(&key, true, cx) {
             return;
         }
@@ -245,11 +245,6 @@ impl GhostexGpuiApp {
         intent: GpuiRemoteAttachOpenIntent,
         cx: &mut gpui::Context<Self>,
     ) {
-        support_logs::append_temporary(
-            support_logs::GpuiSupportLog::TerminalFocus,
-            "TEMP.remoteNewTerminal.tabMaterializeStarted",
-            serde_json::json!({}),
-        );
         let key = GpuiRemoteAttachSessionKey::from(&reference);
         /*
         SSH plan preparation runs in the background, so by the time it
@@ -500,11 +495,6 @@ impl GhostexGpuiApp {
                 "mode": "createdRunningAttachTab",
                 "sessionId": key.session_id,
             }),
-        );
-        support_logs::append_temporary(
-            support_logs::GpuiSupportLog::TerminalFocus,
-            "TEMP.remoteNewTerminal.tabMaterialized",
-            serde_json::json!({}),
         );
         cx.notify();
     }

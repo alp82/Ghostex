@@ -2,27 +2,19 @@
 //! `packages/shared/session-chat-controller/working-strip.ts`.
 //!
 //! CDXC:SessionChat 2026-09-17 SEE-ALSO:
-//! React's working strip and the native chat share stint words and activity precedence here;
-//! visual dimensions and spark artwork live in session-chat-presentation/working-strip.json.
+//! Stint words and activity precedence live here; visual dimensions and spark artwork live in
+//! packages/gx-chat-core/visual/working-strip.json.
 
 use crate::document::WorkingStrip;
 use crate::extras::activity::compute_activity_at;
 use crate::extras::working_words::pick_working_word;
 use crate::state::{ChatContext, ChatState, WorkingWordState};
 
-/// How long a session must stay continuously non-working before a transcript settles (folds its
-/// newest turn into "Worked for Xs").
-///
-/// The live status flaps around turn boundaries and each false blip would flash the fold in and
-/// out, so the rule lives here and both transcripts read it: React through
-/// `use-session-chat-working-hold.ts`, the native chat through the subagent viewer.
-pub const SETTLE_HOLD_MS: f64 = 8_000.0;
-
 /// Re-draws the stint word the way `useState(pick)` plus `useEffect(..., [working])` does.
 ///
 /// The initializer's draw is made once and then immediately replaced whenever the first
 /// computation already sees a working session, which is why the two draws come off the context in
-/// order: the replay's recorded `Math.random()` queue has both.
+/// order, the same two `Math.random()` reads the TypeScript made.
 pub fn settle_working_word(word: &mut WorkingWordState, working: bool, context: &ChatContext) {
     let mut slot = 0usize;
     if word.last_working.is_none() {

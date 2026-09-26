@@ -1,6 +1,6 @@
 //! The reference links a message's Markdown carries, parsed once when the message changes.
 //!
-//! Ported from `packages/shared/session-chat-presentation/markdown-links.ts`. The TypeScript parses
+//! Ported from `packages/shared/session-chat-presentation/markdown-links.ts`. The TypeScript parsed
 //! with `mdast-util-from-markdown` and no extensions, which is plain CommonMark; the Rust side uses
 //! `markdown::to_mdast` with `ParseOptions::default()`, the same author's port of the same parser
 //! with the same default. GFM is deliberately off on both sides, which is why the autolink scan
@@ -10,7 +10,7 @@ use markdown::mdast::Node;
 use markdown::ParseOptions;
 use serde_json::{Map, Value};
 
-use crate::composer::reference_pills::reference_kind;
+use crate::composer::reference_pills::{reference_kind, reference_path_label};
 use crate::transcript::file_position::file_position_suffix;
 use crate::transcript::jsstr::{is_js_space, js_trim};
 use crate::transcript::links::{classify_link_href, file_position_from_href, LinkTarget};
@@ -50,23 +50,23 @@ pub fn markdown_reference(href: &str, label: &str) -> Option<Value> {
     } else {
         trimmed
     };
+    let kind = reference_kind(source_label, &path);
+    let shown =
+        reference_path_label(source_label, &path, kind).unwrap_or_else(|| source_label.to_string());
     let mut entry = Map::new();
     entry.insert("href".to_string(), href.into());
     entry.insert("sourceLabel".to_string(), label.into());
     entry.insert(
         "label".to_string(),
-        if !suffix.is_empty() && !source_label.ends_with(&suffix) {
-            format!("{source_label}{suffix}")
+        if !suffix.is_empty() && !shown.ends_with(&suffix) {
+            format!("{shown}{suffix}")
         } else {
-            source_label.to_string()
+            shown
         }
         .into(),
     );
     entry.insert("title".to_string(), format!("{path}{suffix}").into());
-    entry.insert(
-        "kind".to_string(),
-        reference_kind(source_label, &path).as_str().into(),
-    );
+    entry.insert("kind".to_string(), kind.as_str().into());
     entry.insert("path".to_string(), path.into());
     // `position` is `undefined` when there is none, which `JSON.stringify` drops.
     if let Some(position) = position {

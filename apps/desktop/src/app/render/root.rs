@@ -184,6 +184,10 @@ impl Render for GhostexGpuiApp {
         self.main_window_bounds = window.bounds();
         self.main_window_handle = Some(gpui::Window::window_handle(window));
         self.sync_main_window_glass(window, cx);
+        crate::app::window::frosted_host::sync_frosted_tooltip_presenter(window, cx);
+        self.native_docs_drop_unseen_drawer(cx);
+        self.native_docs_drop_unseen_format_bar(cx);
+        self.native_docs_drop_unseen_notes_windows(cx);
         self.main_window_display_id = window.display(cx).map(|display| display.id());
         #[cfg(target_os = "windows")]
         if self.windows_first_run_setup_state != GpuiWindowsFirstRunSetupState::Ready {
@@ -210,10 +214,9 @@ impl Render for GhostexGpuiApp {
             current_sidebar_max_width(window, self.active_mode),
         );
         self.sample_panel_motion(window, cx);
-        self.refresh_gpui_sidebar_browser_tabs_if_changed(cx);
-        // The displayed set crosses the bridge to the sidebar runtime; while the selection is still moving it would do so once per tab step. The settle repaints, so the set is reported for the tab the user landed on.
+        // The shown sessions are reported to gxserver's Auto Sleep; while the selection is still moving that would happen once per tab step. The settle repaints, so the set is reported for the tab the user landed on.
         if !self.gx_store_selection_is_settling() {
-            self.refresh_gpui_sidebar_displayed_sessions_if_changed(cx);
+            self.gx_store_report_shown_sessions(cx);
         }
         self.prepare_focus_bounds_for_render(window.scale_factor(), cx);
         #[cfg(target_os = "macos")]
@@ -225,6 +228,15 @@ impl Render for GhostexGpuiApp {
         self.sync_session_chat_pane_focus(window, cx);
         self.refresh_zmx_persistence_focused_terminal_if_changed(cx);
         let sidebar_chrome_visible = gpui_sidebar_chrome_visible(self.sidebar_collapsed);
+        // The sidebar's peeking usage strip draws in a frosted window of its own, which outlives a
+        // docked sidebar that is no longer drawn unless it is taken down here.
+        if !sidebar_chrome_visible {
+            crate::app::window::frosted_host::hide_frosted_host_over(
+                crate::app::window::frosted_host::FrostedHostKind::SidebarUsage,
+                gpui::Window::window_handle(window),
+                cx,
+            );
+        }
         // Collapsing or expanding, the sidebar and its divider slide at their full width inside a
         // clip that tweens (panel_motion.rs).
         let sidebar_frame = self.panel_motion.sidebar.frame();
@@ -237,6 +249,11 @@ impl Render for GhostexGpuiApp {
             }))
             .on_action(cx.listener(|this, action: &crate::app::native_sidebar::actions::NativeSidebarAction, window, cx| {
                 this.handle_native_sidebar_action(action, window, cx);
+            }))
+            // CDXC:Hotkeys 2026-09-25 DECISION:
+            // User: hotkeys go to the Code editor only while it is focused, not whenever it is open. A CEF page keeps AppKit's first responder until something takes it, so clicking the sidebar, a header or the tab strip left Code (or a browser page) receiving every chord. Clicks inside a CEF page never reach GPUI, so a GPUI mouse-down is always a click outside it and hands the keyboard back to the window.
+            .capture_any_mouse_down(cx.listener(|app, _: &MouseDownEvent, _window, _cx| {
+                app.reclaim_gpui_root_for_chrome_input_focus();
             }))
             .relative()
             .size_full()
@@ -280,41 +297,6 @@ impl Render for GhostexGpuiApp {
                             let outside_extension_popup = app
                                 .titlebar_extension_popup_bounds(window)
                                 .is_some_and(|bounds| !bounds.contains(&event.position));
-                            let popup_kind = app
-                                .titlebar_popup_menu
-                                .as_ref()
-                                .map(|state| state.kind.diagnostic_label())
-                                .or_else(|| {
-                                    app.titlebar_extension_popup
-                                        .as_ref()
-                                        .map(|_| "extension")
-                                });
-                            let trigger_bounds = app
-                                .titlebar_popup_menu
-                                .as_ref()
-                                .map(|state| {
-                                    gpui_titlebar_popup_bounds_diagnostic(Some(
-                                        state.trigger_bounds,
-                                    ))
-                                })
-                                .or_else(|| {
-                                    app.titlebar_extension_popup.as_ref().map(|state| {
-                                        gpui_titlebar_popup_bounds_diagnostic(Some(
-                                            state.trigger_bounds,
-                                        ))
-                                    })
-                                });
-                            log_gpui_titlebar_popup_repro(
-                                "gpui.titlebarPopup.mainWindowMouseCapture",
-                                serde_json::json!({
-                                    "kind": popup_kind,
-                                    "mainWindowActive": window.is_window_active(),
-                                    "outsideTrigger": outside_popup_menu_trigger || outside_extension_trigger,
-                                    "pointerX": event.position.x.as_f32(),
-                                    "pointerY": event.position.y.as_f32(),
-                                    "triggerBounds": trigger_bounds,
-                                }),
-                            );
                             if outside_popup_menu_trigger {
                                 app.close_gpui_titlebar_popup(None, window, cx);
                             } else if outside_extension_trigger && outside_extension_popup {
@@ -507,10 +489,6 @@ impl Render for GhostexGpuiApp {
                     this.cancel_gpui_titlebar_popup(window, cx);
                 } else if this.titlebar_extension_popup.is_some() {
                     this.close_titlebar_extension_popup(window, cx);
-                } else if this.titlebar_resources_panel_open {
-                    this.set_gpui_titlebar_resources_panel_open(false, window, cx);
-                } else if this.titlebar_tips_panel_open {
-                    this.set_gpui_titlebar_tips_panel_open(false, window, cx);
                 } else {
                     cx.propagate();
                 }
@@ -1314,16 +1292,6 @@ impl Render for GhostexGpuiApp {
                     }),
             )
             .child(self.render_gpui_status_pet_presentation(cx))
-            /*
-            gpui-component's `Root` does not draw its dialog layer; the app view
-            must render it. Without this every `open_alert_dialog` (the paste
-            protection confirmation, the terminal close confirmation) still
-            pushed an active dialog and moved keyboard focus onto it, but drew
-            nothing: the pending paste was silently held, Cmd+V and typing
-            went dead until focus moved elsewhere. Last child so it paints
-            above the workspace.
-            */
-            .children(gpui_component::Root::render_dialog_layer(window, cx))
             // Last child, so a resize drag in progress sees each mouse move
             // before the panes it is dragged across do.
             .child(self.render_resize_drag_pointer_tracker(cx))

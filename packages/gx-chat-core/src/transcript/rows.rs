@@ -29,7 +29,7 @@ pub fn rows(state: &ChatState, context: &ChatContext) -> Vec<TranscriptItem> {
 /// The open set is reported by `Event::Measured(Measurement::OpenRowDetails)`, so only the rows on
 /// screen ever build their diff lines or tool output.
 ///
-/// `native-host.ts:424` is `presentation.rowDetail(...) ?? subagentViewer.rowDetail(...)`: a row
+/// `native-host.ts:424` was `presentation.rowDetail(...) ?? subagentViewer.rowDetail(...)`: a row
 /// opened INSIDE the subagent viewer belongs to the child transcript, whose messages the session's
 /// own projection has never seen, so the viewer answers for it.
 pub fn row_details(state: &ChatState, context: &ChatContext) -> RowDetails {
@@ -62,6 +62,14 @@ pub fn refresh(state: &mut ChatState, context: &ChatContext) {
     // back the SAME result object otherwise, which is what `take`'s identity comparison reads. The
     // core has no identities, so the five inputs are remembered here and the revision below stands
     // in for "this is a new array".
+    // `update()` runs the sticky fold before its change check, so a working blip over an unchanged
+    // transcript rebuilds nothing.
+    let live = crate::session::working::transcript_working(state);
+    crate::transcript::turns::sticky_transcript_working(
+        &state.messages.composed,
+        live,
+        &mut state.transcript_view.fold_settled_at,
+    );
     let inputs = ProjectionInputs {
         composed: Vec::new(),
         composition_identity: state.messages.compose_generation,
@@ -70,6 +78,7 @@ pub fn refresh(state: &mut ChatState, context: &ChatContext) {
         detail_revision: state.transcript_view.detail_revision,
         backfill_revision: state.transcript_view.backfill_revision,
         queue: state.session.queue_prompts.clone(),
+        line_breaks: presentation::line_breaks(state),
     };
     if state.transcript_view.projection_inputs.as_ref() == Some(&inputs) {
         return;
@@ -99,7 +108,8 @@ pub fn refresh(state: &mut ChatState, context: &ChatContext) {
     // `this.scheduleBackfill()` at the end of `update`: the zero-delay timer is armed by the
     // publish that queued the placeholders, so the very next `tick` promotes them. Arming it
     // from the settle instead waited for the NEXT event's settle, so on every real chat the first
-    // transcript shipped its older rows as placeholders one document longer than the live brain.
+    // transcript shipped its older rows as placeholders one document longer than the TypeScript
+    // brain did.
     if state.transcript_view.has_pending_backfill() {
         state.core.timers.arm_once(
             crate::transcript::settle::BACKFILL_TIMER,

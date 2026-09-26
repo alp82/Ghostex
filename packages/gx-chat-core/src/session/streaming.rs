@@ -47,6 +47,74 @@ pub fn derive_streaming_text(
     Some(text.to_string())
 }
 
+fn is_fence_line(line: &str) -> bool {
+    let trimmed = line.trim_start_matches(' ');
+    line.len() - trimmed.len() <= 3 && (trimmed.starts_with("```") || trimmed.starts_with("~~~"))
+}
+
+/// An ATX heading. It ends the paragraph above it even with no blank line between them.
+fn is_atx_heading(line: &str) -> bool {
+    let trimmed = line.trim_start_matches(' ');
+    let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
+    line.len() - trimmed.len() <= 3
+        && (1..=6).contains(&hashes)
+        && trimmed[hashes..]
+            .chars()
+            .next()
+            .is_none_or(|ch| ch == ' ' || ch == '\t')
+}
+
+/// A line of only bold text, which models often use as a heading. Right under a paragraph line it
+/// continues that paragraph instead.
+fn is_bold_title(line: &str) -> bool {
+    let trimmed = line.trim_matches(is_js_space);
+    let bold = trimmed.strip_suffix(':').unwrap_or(trimmed);
+    bold.len() > 4
+        && bold.starts_with("**")
+        && bold.ends_with("**")
+        && !bold[2..bold.len() - 2].contains("**")
+}
+
+/// The streaming bubble's text with the section titles at its end held back.
+///
+/// CDXC:SessionChat 2026-09-26 DECISION:
+/// User: a streamed section title must not land alone and sit above a block that is still streaming; it waits for the text under it and ships with its paragraph, its first list item, or its table or code block. Only the GPUI chat view on the Rust chat core does this, and a title is recognised from its Markdown only: gxserver writes the rows Claude paints fully bold as `**Title**` so the stream carries it. A run of titles (`# Plan` then `## Setup`) is held together, and a title inside an open code fence is code. This supersedes the 2026-09-25 version that also guessed titles from short unpunctuated lines.
+/// SEE-ALSO: `render_agent_stream` in server/src/session_chat_terminal_activity.rs.
+pub fn without_trailing_section_titles(text: &str) -> &str {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut titles = vec![false; lines.len()];
+    let mut in_fence = false;
+    for (index, line) in lines.iter().enumerate() {
+        if is_fence_line(line) {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        // A stream whose top scrolled off starts with `… `.
+        let line = if index == 0 {
+            line.trim_start_matches("… ")
+        } else {
+            line
+        };
+        let alone = index == 0 || lines[index - 1].trim_matches(is_js_space).is_empty();
+        titles[index] = is_atx_heading(line) || (alone && is_bold_title(line));
+    }
+    let mut keep = lines.len();
+    while keep > 0 && (titles[keep - 1] || lines[keep - 1].trim_matches(is_js_space).is_empty()) {
+        keep -= 1;
+    }
+    if keep == lines.len() {
+        return text;
+    }
+    let end = lines[..keep]
+        .iter()
+        .map(|line| line.len() + 1)
+        .sum::<usize>();
+    text[..end.saturating_sub(1)].trim_end_matches(is_js_space)
+}
+
 /// The bubble itself.
 pub fn streaming_message(text: &str) -> ChatMessage {
     ChatMessage {

@@ -312,6 +312,7 @@ enum CatalogOptions {
         agent: Box<CatalogAgent>,
         catalog: Box<AgentModelCatalog>,
     },
+    OpenCode { agent: Box<CatalogAgent>, catalog: Box<AgentModelCatalog> },
     /// Read-only mirrors: the same list whatever the model is.
     Fixed(Vec<OptionDescriptor>),
 }
@@ -370,6 +371,15 @@ impl SessionOptionCatalog {
                     _ => Vec::new(),
                 }
             }
+            CatalogOptions::OpenCode {agent, catalog} => {
+                let mut options = Vec::new();
+                let efforts = agent.efforts_for_model(model_value);
+                if !efforts.is_empty() { options.push(reasoning_effort_picker(catalog, &efforts)); }
+                let mut mode = OptionDescriptor::new("mode", MODES_SECTION_LABEL, OptionCategory::Mode, OptionDispatch::ModelPicker);
+                mode.choices = Some(vec![OptionChoice {value:"build".into(), label:"Build".into(), ..Default::default()}, OptionChoice {value:"plan".into(), label:"Plan".into(), ..Default::default()}]);
+                options.push(mode);
+                options
+            }
             CatalogOptions::Fixed(descriptors) => descriptors.clone(),
         }
     }
@@ -400,6 +410,19 @@ impl SessionOptionCatalog {
     /// reads as `catalog.pickerEffortFor?.(...)`.
     pub fn has_picker_effort(&self) -> bool {
         matches!(self.options, CatalogOptions::Codex { .. })
+    }
+
+    /// Whether a model pick may leave the effort out and let the agent keep its own level.
+    ///
+    /// CDXC:SessionChat 2026-09-25 WHY:
+    /// Claude Code keeps one saved effort level across model switches, including through a model
+    /// with no levels (Haiku), and gxserver types no `/effort` for an empty effort. When the chat
+    /// does not know a level the new model offers (none is detected on Haiku), a model pick sends
+    /// no effort rather than the model's first level: falling back to the first level sent
+    /// `/effort low` on the way back from Haiku to Sonnet and overwrote the Medium the user had
+    /// picked. Codex's picker needs an effort with every model, so it keeps the fallback.
+    pub fn agent_keeps_effort(&self) -> bool {
+        matches!(self.options, CatalogOptions::Claude { .. })
     }
 }
 
@@ -599,6 +622,14 @@ fn build_codex_catalog(catalog: &AgentModelCatalog, agent: &CatalogAgent) -> Ses
 // ---------------------------------------------------------------------------
 // Cursor Agent
 // ---------------------------------------------------------------------------
+
+fn build_opencode_catalog(catalog: &AgentModelCatalog, agent: &CatalogAgent) -> SessionOptionCatalog {
+    let mut result = build_cursor_catalog(catalog, agent);
+    result.model_icon = "opencode".into();
+    result.model.dispatch = OptionDispatch::ModelPicker;
+    result.options = CatalogOptions::OpenCode {agent: Box::new(agent.clone()), catalog: Box::new(catalog.clone())};
+    result
+}
 
 fn build_cursor_catalog(catalog: &AgentModelCatalog, agent: &CatalogAgent) -> SessionOptionCatalog {
     let choices = model_choices(agent);
@@ -814,6 +845,7 @@ pub fn session_option_catalog(
         fn(&AgentModelCatalog, &CatalogAgent) -> SessionOptionCatalog,
     ) = match agent_id {
         "claude" | "openclaude" => ("claude", build_claude_catalog),
+        "opencode" => ("opencode", build_opencode_catalog),
         "codex" => ("codex", build_codex_catalog),
         "cursor" | "cursor-cli" => ("cursor", build_cursor_catalog),
         "grok" | "grok-build" => ("grok", build_grok_catalog),

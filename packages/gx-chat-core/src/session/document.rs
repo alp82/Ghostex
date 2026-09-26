@@ -8,7 +8,7 @@ use ghostex_gx_protocol::Tri;
 
 use crate::document::Document;
 use crate::session::view_state::select_view_state;
-use crate::session::working::{is_working, publish_status, working_signal};
+use crate::session::working::{is_working, publish_status, transcript_working};
 use crate::state::{ChatContext, ChatState};
 
 /// Writes family a's keys into `into`.
@@ -18,7 +18,6 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     // A locally accepted send owns the working presentation immediately. It stays pending until
     // the authoritative transcript advances past that user turn, bridging the gap before host or
     // server activity arrives.
-    let signal = working_signal(state);
     let working = is_working(state);
 
     // `ChatCore::republish` composes the list into `state.messages.composed` before any document
@@ -30,7 +29,7 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     into.view = select_view_state(&status, composed_rows, session.error.as_deref());
     into.status = status.as_str().to_string();
     into.working = working;
-    into.working_signal = signal && !session.interrupted;
+    into.transcript_working = transcript_working(state);
     into.session_working = session.session_activity_working || session.external_working;
     into.error = tri_string(session.error.clone());
     into.lifecycle = match &session.lifecycle {
@@ -47,19 +46,14 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     into.has_more = state.messages.has_more;
     into.earlier_page_cursor = state.messages.before_offset as i64;
     into.loading_earlier = state.messages.loading_earlier;
-    // Omitted, not `null`: the TypeScript writes `operationError` straight from a
-    // `string | undefined`, so `JSON.stringify` drops the key whenever there is no refusal. Its
-    // `operationErrorCode` sibling is written as `?? null` and is therefore always present.
+    // Omitted, not `null`: the TypeScript wrote `operationError` straight from a
+    // `string | undefined`, so `JSON.stringify` dropped the key whenever there was no refusal. Its
+    // `operationErrorCode` sibling was written as `?? null` and is therefore always present.
     into.operation_error = match state.core.operation_error.clone() {
         Some(message) => Tri::Value(message),
         None => Tri::Absent,
     };
     into.operation_error_code = state.core.operation_error_code.clone();
-    into.preview_settings = state
-        .core
-        .preview_settings
-        .as_ref()
-        .and_then(|value| serde_json::from_value(value.clone()).ok());
     let _ = context;
 }
 

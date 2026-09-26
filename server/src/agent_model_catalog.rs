@@ -10,9 +10,10 @@
 //! copy it holds to each socket as it connects. The same copy is what screen
 //! detection maps footer names through and what the Cursor, Grok and
 //! Antigravity picker drivers accept, so a model added to the file is
-//! selectable and recognised without a release. Clients still poll GitHub
-//! themselves (`packages/shared/agent-model-catalog-state.ts`), so an older
-//! gxserver on a remote machine never holds a client back.
+//! selectable and recognised without a release. Until 2026-09-25 the
+//! TypeScript clients also polled GitHub themselves (the deleted
+//! `packages/shared/agent-model-catalog-state.ts`); the Rust chat clients take
+//! the catalog from gxserver and the build's bundled snapshot only.
 //!
 //! WHY: raw.githubusercontent.com serves the file with a five-minute cache,
 //! so polling faster than that finds nothing new. The request carries the
@@ -20,8 +21,8 @@
 //! GHOSTEX_AGENT_MODEL_CATALOG_REMOTE=off turns the network path off, and
 //! unit tests never fetch.
 //!
-//! SEE-ALSO: `packages/shared/agent-model-catalog.ts` (the parser this
-//! validation mirrors), `packages/gx-chat-core/src/menus/catalog.rs`.
+//! SEE-ALSO: `packages/gx-chat-core/src/menus/catalog.rs` (the parser this
+//! validation mirrors).
 
 use std::{
     fs,
@@ -100,6 +101,24 @@ pub fn catalog_model(agent: &str, value: &str) -> Option<Value> {
     agent_models(&current(), agent)
         .into_iter()
         .find(|row| row.get("value").and_then(Value::as_str) == Some(value))
+}
+
+/// The catalog's own name for a model the terminal printed with a " (1M context)" suffix, when
+/// the catalog labels its 1M row with the bare name: "Opus 5.5 (1M context)" is the `opus[1m]` row
+/// labelled "Opus 5.5", even beside its 200K `opus` twin. A 1M model the catalog does not list
+/// under that name keeps its suffix (`None`).
+pub fn long_context_label(agent: &str, name: &str) -> Option<String> {
+    let base = name.trim().strip_suffix(" (1M context)")?;
+    agent_models(&current(), agent)
+        .into_iter()
+        .any(|row| {
+            row.get("label").and_then(Value::as_str) == Some(base)
+                && row
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.ends_with("[1m]"))
+        })
+        .then(|| base.to_string())
 }
 
 /// The dispatch value of the row whose `label`, `pickerLabel` or one of its
@@ -242,7 +261,10 @@ fn poll_once(
             .map_err(|_| "catalog state poisoned".to_string())?;
         state.etag = etag;
         state.published = true;
-        let changed = *state.catalog != catalog;
+        // A published copy older than the one in effect (this build's bundle, before main has
+        // caught up) never rolls the lineup back; `updatedAt` orders every copy.
+        let changed =
+            *state.catalog != catalog && updated_at(&catalog) >= updated_at(&state.catalog);
         if changed {
             state.catalog = Arc::new(catalog.clone());
         }

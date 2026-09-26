@@ -55,7 +55,19 @@ pub struct DeliveredDraft {
 
 /// A row is one line. Show the first line that has any content: a prompt that opens with a blank
 /// line, a heading, or a fenced block would otherwise render an empty row and look broken.
+/// A message from another agent names its sender and shows the body instead of its header line.
 pub fn queue_row_preview(text: &str) -> String {
+    if let Some(message) = crate::transcript::agent_message::parse_inter_agent_message(text) {
+        return format!(
+            "From {}: {}",
+            message.agent_name,
+            first_content_line(&message.body)
+        );
+    }
+    first_content_line(text)
+}
+
+fn first_content_line(text: &str) -> String {
     for line in text.split('\n') {
         let trimmed = line.trim();
         if !trimmed.is_empty() {
@@ -104,9 +116,9 @@ pub struct TransportQueueMethods {
     pub set_draft: bool,
 }
 
-/// Every endpoint present, which is what `startController`'s transport defines
-/// (`native-host.ts`). React gates these by only passing the handler it has, so a host whose
-/// transport is narrower clears the ones it cannot serve; the desktop's serves all six.
+/// Every endpoint present, which is what `startController`'s transport defined
+/// (`native-host.ts`). A host whose transport is narrower clears the ones it cannot serve; the
+/// desktop's serves all six.
 impl Default for TransportQueueMethods {
     fn default() -> Self {
         Self {

@@ -33,13 +33,15 @@ impl GhostexGpuiApp {
         refresh_gpui_visual_settings(&shared_settings::shared_sidebar_settings_snapshot());
         apply_gpui_component_theme(cx);
         let parent = cef_parent_native_view(window)?;
+        let main_window_handle =
+            cfg!(target_os = "linux").then(|| gpui::Window::window_handle(window));
         let project_name = titlebar_project_label_from_latest_sidebar_snapshot(None);
         let shared_settings_snapshot = shared_settings::shared_sidebar_settings_snapshot();
         let sidebar_runtime_settings_snapshot =
             sidebar_runtime_settings_snapshot_from_shared_settings(&shared_settings_snapshot);
         /*
         Restore eagerness (Decision #3, 2026-07-02): the persisted presentation
-        focus state seeds the first sidebar bootstrap so the runtime can
+        focus state seeds the first sidebar bootstrap so the store can
         re-materialize the previously focused running session after its first
         presentation hydrate.
         */
@@ -151,7 +153,7 @@ impl GhostexGpuiApp {
                 command_pane_project_id: shell_layout_state.command_pane_project_id,
                 parked_command_panes_by_project: shell_layout_state.parked_command_panes_by_project,
                 command_pane_project_epoch: 0,
-                main_window_handle: None,
+                main_window_handle,
                 project_editor_shell: shell_layout_state.project_editor_shell,
                 project_editor_auto_sleep_epochs: ProjectEditorAutoSleepEpochs::default(),
                 project_editor_auto_sleep_policy,
@@ -162,11 +164,10 @@ impl GhostexGpuiApp {
                 parked_browser_runtimes_by_project: HashMap::new(),
                 browser_tabs_project_epoch: 0,
                 browser_tabs_runtime_key: 0,
-                sidebar_browser_tabs_snapshot: String::new(),
-                sidebar_displayed_sessions_snapshot: String::new(),
                 pending_export_transcript_reveal_path: None,
                 latest_sidebar_project_snapshot: None,
                 navigation_history_state: navigation_history::GpuiNavigationHistoryState::default(),
+                navigation_history: Default::default(),
                 notification_feed_state: notification_feed::GpuiNotificationFeedState::default(),
                 titlebar_notification_bell_bounds: Rc::new(std::cell::Cell::new(None)),
                 titlebar_git_menu_state: None,
@@ -259,6 +260,7 @@ impl GhostexGpuiApp {
                     .local_workspace_session_mappings,
                 local_workspace_attach_pending: HashSet::new(),
                 agents_chat_mode_sessions: shell_layout_state.agents_chat_mode_sessions,
+                terminal_agent_bar_sessions: HashSet::new(),
                 agents_terminal_action_bar_menu_session: None,
                 agents_terminal_action_bar_account_submenu_open: false,
                 agents_chat_auto_switch_observed_sessions: HashMap::new(),
@@ -268,15 +270,13 @@ impl GhostexGpuiApp {
                 session_chat_diagnostics: Default::default(),
                 agents_chat_prewarm_scheduled: false,
                 native_chat_visible_sessions: HashSet::new(),
-                session_chat_subscribe_requests: HashMap::new(),
                 session_chat_paused_generations: HashSet::new(),
                 native_chat_pool_pass_scheduled: false,
                 agent_launch_placeholders: Default::default(),
+                untouched_agent_chats: Vec::new(),
                 agents_chat_reconcile_scheduled: false,
                 native_chat_views: HashMap::new(),
                 session_chat_broker_endpoints: HashMap::new(),
-                session_chat_broker_epoch: None,
-                session_chat_shared_snapshots: Vec::new(),
                 session_chat_presentations: Vec::new(),
                 account_switch_progress: HashMap::new(),
                 session_chat_composer_ready_sessions: HashSet::new(),
@@ -294,8 +294,8 @@ impl GhostexGpuiApp {
                 local_app_shot_session_mappings: HashMap::new(),
                 sidebar_command_pane_sessions_snapshot: String::new(),
                 sidebar_agents_delayed_sends_snapshot: String::new(),
-                sidebar_timer_presentations_replayed_after_ready: false,
-                sidebar_primary_agent_launcher_id: None,
+                sidebar_primary_agent_launcher_id:
+                    crate::app::gx_store::read_primary_agent_launcher_id(),
                 native_app_modal: None,
                 native_automate: None,
                 new_thread_picker_window: None,
@@ -441,6 +441,10 @@ impl GhostexGpuiApp {
                 app_modal_window_id: app_modal_window_id_for_app,
                 app_modal_open_attempt_id: 0,
                 app_modal_ready_retry_used: false,
+                app_modal_spare: None,
+                app_modal_spare_preload_generation: 0,
+                app_modal_gxserver_hydrate: None,
+                app_modal_gxserver_hydrate_refreshing: false,
                 app_modal_command_return_focus_target: None,
                 plugins_modal_window: None,
                 plugin_settings_action_progress: HashMap::new(),
@@ -489,23 +493,17 @@ impl GhostexGpuiApp {
                 titlebar_more_button_bounds: Rc::new(std::cell::Cell::new(None)),
                 titlebar_extension_popup_generation: 0,
                 titlebar_extension_popup: None,
-                titlebar_tips_panel_open: false,
-                titlebar_tips_panel: None,
-                titlebar_resources_panel_open: false,
-                titlebar_resources_panel_ready: false,
-                titlebar_resources_panel_open_generation: 0,
-                titlebar_resources_panel: None,
-                titlebar_resources_presentation_groups: Vec::new(),
                 titlebar_tips_cli_status: None,
                 titlebar_tips_agent_hook_status: None,
                 titlebar_tips_sidebar_agent_ids: None,
                 agent_hook_status_request_in_flight: false,
-                sidebar: None,
                 native_sidebar: Default::default(),
+                native_docs: Default::default(),
                 native_kanban: Default::default(),
                 floating_reveal: Default::default(),
                 panel_motion: Default::default(),
                 gx_store: Default::default(),
+                quick_access: Default::default(),
                 browser_surfaces: HashMap::new(),
                 browser_address_inputs: HashMap::new(),
                 browser_address_input_subscriptions: HashMap::new(),

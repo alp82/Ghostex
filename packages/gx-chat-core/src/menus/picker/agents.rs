@@ -1,7 +1,7 @@
 //! The five quick-picker agents' names and icons.
 //!
 //! `packages/shared/session-chat-controller/native-model-picker.ts` and
-//! `session-chat-presentation/model-menu.ts` both call `getDefaultSidebarAgentById(provider)` and
+//! `session-chat-presentation/model-menu.ts` both called `getDefaultSidebarAgentById(provider)` and
 //! read only `name` and `icon`. The whole default agent list belongs to the sidebar, not to chat,
 //! so only those two fields for the five providers a picker can open are here.
 //!
@@ -20,6 +20,7 @@ pub struct PickerAgent {
 /// `getDefaultSidebarAgentById(provider)`, narrowed to the fields chat reads.
 pub fn picker_agent(provider: ModelPickerProvider) -> PickerAgent {
     match provider {
+        ModelPickerProvider::OpenCode => PickerAgent { name:"OpenCode", icon:"opencode" },
         ModelPickerProvider::Codex => PickerAgent {
             name: "Codex",
             icon: "codex",

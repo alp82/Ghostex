@@ -5,7 +5,7 @@ use gpui::{
     AnyElement, AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
-use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::input::{InputEvent, Textarea, TextareaState};
 use serde_json::json;
 
 impl NativeChatView {
@@ -98,6 +98,26 @@ impl NativeChatView {
                 p,
                 cx,
             ));
+            // The mockup Claude shows beside the option, under the row that picks it.
+            let preview = text(option, "preview");
+            if !preview.is_empty() {
+                choices = choices.child(
+                    div()
+                        .id(format!("question-option-preview:{index}:{option_index}"))
+                        .ml(px(12.0 * s))
+                        .max_h(px(160.0 * s))
+                        .overflow_y_scroll()
+                        .px(px(10.0 * s))
+                        .py(px(8.0 * s))
+                        .rounded(px(6.0 * s))
+                        .bg(p.input)
+                        .font_family(super::fonts::CHAT_MONO)
+                        .text_size(px(12.6 * s))
+                        .line_height(px(18.0 * s))
+                        .text_color(p.muted)
+                        .child(preview),
+                );
+            }
         }
         body.push(choices.into_any_element());
         if index > 0 {
@@ -123,8 +143,7 @@ impl NativeChatView {
                 .is_none_or(|(previous, _)| previous != &key)
             {
                 let input = cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .multi_line(true)
+                    TextareaState::new(window, cx)
                         .submit_on_enter(true)
                         .auto_grow(1, 4)
                         .placeholder("Write a custom answer…")
@@ -139,7 +158,7 @@ impl NativeChatView {
                 self.answer_input = Some((key, input));
             }
             actions.push(
-                Input::new(&self.answer_input.as_ref().unwrap().1)
+                Textarea::new(&self.answer_input.as_ref().unwrap().1)
                     .aria_label("Your answer")
                     .disabled(self.snapshot["questionCard"]["busy"] == true)
                     .placeholder_color(p.muted.opacity(0.6))
@@ -157,6 +176,7 @@ impl NativeChatView {
         } else {
             actions.push(div().min_w_0().flex_1().into_any_element());
         }
+        // CDXC:SessionChat 2026-09-16 DECISION: User: the question's X was the interrupt, an action rather than a dismiss, and sat beside the collapse chevron; it is a Cancel button in the footer instead. The approval keeps its circled X since it has no chevron (approval.rs).
         actions.push(
             self.question_button(
                 "question-cancel",
@@ -185,6 +205,10 @@ impl NativeChatView {
         );
         let collapse_key = format!("question:{}", prompt);
         let collapsed = self.collapsed.contains(&collapse_key);
+        let collapse_key_name = collapse_key.clone();
+        let motion = self.disclosure_frame(&collapse_key_name, !collapsed, cx);
+        // The header keeps its open spacing until the body has eased away.
+        let shut = collapsed && motion.is_none();
         let header = div()
             .id("question-header")
             .role(gpui::Role::Button)
@@ -199,10 +223,10 @@ impl NativeChatView {
             .chat_cursor_pointer()
             .mx(px(-16.0 * s))
             .mt(px(-12.0 * s))
-            .mb(px(if collapsed { -12.0 } else { -2.0 } * s))
+            .mb(px(if shut { -12.0 } else { -2.0 } * s))
             .px(px(16.0 * s))
             .pt(px(12.0 * s))
-            .pb(px(if collapsed { 12.0 } else { 6.0 } * s))
+            .pb(px(if shut { 12.0 } else { 6.0 } * s))
             // The footer's buttons always follow, so only the top corners meet the card's rounding.
             .rounded_t(px((12.0 * s - 1.0).max(0.0)))
             .hover(|style| style.bg(super::cards::card_hover_fill(p)))
@@ -264,9 +288,15 @@ impl NativeChatView {
                 cx.notify();
             }))
             .into_any_element();
-        Some(self.status_card_with_header(
+        Some(self.status_card_with_header_motion(
+            super::cards::CardBodyMotion {
+                key: &collapse_key_name,
+                frame: motion,
+                shut_body: false,
+                shut: collapsed,
+            },
             header,
-            if collapsed { vec![] } else { body },
+            if shut { vec![] } else { body },
             actions,
             p,
         ))

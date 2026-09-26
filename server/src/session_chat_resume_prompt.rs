@@ -200,6 +200,7 @@ row is never stale.
 pub const SESSION_CHAT_PERMISSION_PROMPT_KIND: &str = "permissionPrompt";
 
 const PERMISSION_PROMPT_HEADING: &str = "Do you want to proceed?";
+const PERMISSION_PROMPT_HEADING_LEAD: &str = "Do you want to ";
 const PERMISSION_PROMPT_YES_PREFIX: &str = "Yes";
 const PERMISSION_PROMPT_NO_PREFIX: &str = "No";
 
@@ -257,6 +258,30 @@ pub struct SessionChatTerminalPicker {
 }
 
 impl SessionChatTerminalPicker {
+    /*
+    CDXC:SessionChat 2026-09-26 DECISION:
+    User: "no need to say (1M context) for Opus 5.5, just keep it Opus 5.5" on the chat's model switch card.
+    The card names the model the way the model catalog labels its 1M row, so Opus 5.5 stays "Opus 5.5" beside its 200K twin (restored 2026-09-26); a 1M model the catalog does not list under the bare name keeps Claude's suffix.
+    Only the card's copy changes: rows are answered by index against a fresh capture, and the /model job matches the raw rows.
+    */
+    pub fn with_catalog_model_names(mut self) -> Self {
+        if self.kind != SessionChatTerminalPickerKind::SwitchModel {
+            return self;
+        }
+        let Some((printed, short)) = self.rows.iter().find_map(|row| {
+            let printed = row.label.strip_prefix(SWITCH_CONFIRM_YES_PREFIX)?;
+            let short = crate::agent_model_catalog::long_context_label("claude", printed)?;
+            Some((printed.to_string(), short))
+        }) else {
+            return self;
+        };
+        for row in &mut self.rows {
+            row.label = row.label.replace(&printed, &short);
+        }
+        self.detail = self.detail.map(|detail| detail.replace(&printed, &short));
+        self
+    }
+
     /*
     The keystrokes that pick row `target`. For the number-driven pickers that
     is the row's printed number, as one digit. For the permission prompt it is
@@ -550,9 +575,15 @@ fn permission_prompt_run_kind(
     let heading = first_row_line
         .checked_sub(1)
         .map(|line| strip_box_border(&window[line]))?;
-    heading
-        .contains(PERMISSION_PROMPT_HEADING)
+    is_permission_prompt_heading(&heading)
         .then_some(SessionChatTerminalPickerKind::PermissionPrompt)
+}
+
+/// CDXC:AgentScreenDetection 2026-09-26 WHY: a file write or edit asks "Do you want to create approve.txt?" or "Do you want to make this edit to notes.md?" over the same Yes / "Yes, allow all edits during this session" / No rows, so matching only "Do you want to proceed?" left those prompts with the hook card's Allow and Deny alone and no way to pick the session-wide row from chat. Any "Do you want to …?" heading counts; the Yes and No rows are still required.
+fn is_permission_prompt_heading(heading: &str) -> bool {
+    let heading = heading.trim();
+    heading.contains(PERMISSION_PROMPT_HEADING)
+        || (heading.starts_with(PERMISSION_PROMPT_HEADING_LEAD) && heading.ends_with('?'))
 }
 
 /// `Some` only when a known Claude picker is live on screen and its highlight

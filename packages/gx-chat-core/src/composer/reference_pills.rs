@@ -1,7 +1,7 @@
 //! The composer's reference pills: what a `[label](path)` in the draft is, and how wide it draws.
 //!
-//! Port of `packages/shared/session-chat-presentation/reference-pills.ts`. The TypeScript scans
-//! with `String.matchAll`; the regexes it uses have no alternation a hand scanner cannot follow,
+//! Port of `packages/shared/session-chat-presentation/reference-pills.ts`. The TypeScript scanned
+//! with `String.matchAll`; the regexes it used have no alternation a hand scanner cannot follow,
 //! so the scan below is the same walk without a regex engine.
 //!
 //! CDXC:SessionChat 2026-09-18 DECISION:
@@ -80,18 +80,14 @@ pub struct ComposerReference {
     pub start: usize,
 }
 
+/// CDXC:SessionChat 2026-09-25 WHY:
+/// Markdown only escapes ASCII punctuation. Unescaping every backslash turns a Windows image path into `C:Users...`, which is rejected as a URI scheme instead of becoming a reference pill.
 fn unescape_markdown(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
-    let mut chars = value.chars();
+    let mut chars = value.chars().peekable();
     while let Some(character) = chars.next() {
-        if character == '\\' {
-            if let Some(next) = chars.next() {
-                out.push(next);
-            }
-            // A trailing backslash has nothing to unescape, and `/\\(.)/g` leaves it in place.
-            else {
-                out.push('\\');
-            }
+        if character == '\\' && chars.peek().is_some_and(char::is_ascii_punctuation) {
+            out.push(chars.next().unwrap());
         } else {
             out.push(character);
         }
@@ -134,6 +130,58 @@ pub fn ends_with_image_extension(path: &str) -> bool {
         .any(|extension| lowered.ends_with(extension))
 }
 
+const VIDEO_EXTENSIONS: &[&str] = &[
+    ".3gp", ".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".mts",
+    ".ogv", ".webm", ".wmv",
+];
+const AUDIO_EXTENSIONS: &[&str] = &[
+    ".aac", ".aif", ".aiff", ".flac", ".m4a", ".mp3", ".oga", ".ogg", ".opus", ".wav", ".wma",
+];
+
+/// Files that only a system app can play or show; opening them in Code is never right.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaKind {
+    Audio,
+    Pdf,
+    Video,
+}
+
+/// CDXC:SessionChat 2026-09-24 DECISION:
+/// User: a pasted video reads "Video #1" instead of "File #1", its menu names what it is, and clicking it opens it normally with the OS default app on macOS, Windows, and Linux instead of the code editor. Audio and PDFs follow the same rule.
+/// SEE-ALSO: `open_session_chat_file_for_session` in `apps/desktop/src/app/session_chat.rs` keeps the same extension list for the click.
+pub fn media_kind(path: &str) -> Option<MediaKind> {
+    let lowered = crate::transcript::jsstr::ascii_lower(without_position(path));
+    let has = |extensions: &[&str]| {
+        extensions
+            .iter()
+            .any(|extension| lowered.ends_with(extension))
+    };
+    if has(VIDEO_EXTENSIONS) {
+        Some(MediaKind::Video)
+    } else if has(AUDIO_EXTENSIONS) {
+        Some(MediaKind::Audio)
+    } else if lowered.ends_with(".pdf") {
+        Some(MediaKind::Pdf)
+    } else {
+        None
+    }
+}
+
+/// The noun a reference to `path` is named with: `Video` in "[Video #1](clip.mp4)", "Open Video
+/// Location".
+pub fn path_noun(path: &str) -> &'static str {
+    match media_kind(path) {
+        Some(MediaKind::Audio) => "Audio",
+        Some(MediaKind::Pdf) => "PDF",
+        Some(MediaKind::Video) => "Video",
+        None => match reference_kind("", path) {
+            ReferenceKind::Image => "Image",
+            ReferenceKind::Folder => "Folder",
+            _ => "File",
+        },
+    }
+}
+
 /// `/(?:^|[\\/])SKILL\.md$/i`.
 fn is_skill_file(path: &str) -> bool {
     let lowered = crate::transcript::jsstr::ascii_lower(path);
@@ -149,7 +197,7 @@ pub fn is_web_url(path: &str) -> bool {
     lowered.starts_with("http://") || lowered.starts_with("https://")
 }
 
-/// `/^Image #\d+$/`, `/^File #\d+$/`, `/^Folder #\d+$/`.
+/// `/^Image #\d+$/`, `/^(?:Audio|File|PDF|Video) #\d+$/`, `/^Folder #\d+$/`.
 fn numbered_label(label: &str, prefix: &str) -> bool {
     let Some(rest) = label.strip_prefix(prefix) else {
         return false;
@@ -164,7 +212,10 @@ fn explicit_reference_kind(label: &str) -> Option<ReferenceKind> {
     if numbered_label(label, "Image #") {
         return Some(ReferenceKind::Image);
     }
-    if numbered_label(label, "File #") {
+    if ["Audio #", "File #", "PDF #", "Video #"]
+        .iter()
+        .any(|prefix| numbered_label(label, prefix))
+    {
         return Some(ReferenceKind::File);
     }
     if numbered_label(label, "Folder #") {
@@ -176,27 +227,89 @@ fn explicit_reference_kind(label: &str) -> Option<ReferenceKind> {
     None
 }
 
+/// A label that spells out its own destination, shown as its parent folder and name.
+///
+/// `None` when the label is anything else (`Image #1`, prose, a URL), which keeps its own words.
+/// A label with no more than the two segments kept comes back unchanged, and a line suffix the label
+/// carries (`:123`, `:12-40`, `:12:5`) stays on the end.
+///
+/// CDXC:SessionChat 2026-09-26 DECISION:
+/// User: file and folder pills always show `…/parent folder/file name.ts:123`, "because it's enough this way", and a label that still has to shorten loses its start, never the file name. The desktop GPUI chat and the React Native chat both draw this label, so they cannot differ.
+/// SEE-ALSO: `markdown_reference` in `transcript/markdown_links.rs` for the transcript, `reference_display_label` below for the composer, and `truncate_start` in `apps/desktop/src/app/native_chat/markdown_links.rs` for a pill still wider than the line.
+pub fn reference_path_label(label: &str, path: &str, kind: ReferenceKind) -> Option<String> {
+    if matches!(kind, ReferenceKind::Skill | ReferenceKind::Url) {
+        return None;
+    }
+    let (label_path, _) = crate::composer::links::split_file_position(label);
+    let position = &label[label_path.len()..];
+    let normalized = label_path.replace('\\', "/");
+    let named = normalized.strip_prefix("./").unwrap_or(&normalized);
+    let (destination, _) = crate::composer::links::split_file_position(path);
+    let destination = destination.replace('\\', "/");
+    let destination = destination.strip_prefix("file://").unwrap_or(&destination);
+    let spells_destination = !named.is_empty()
+        && destination.ends_with(named)
+        && (named.starts_with('/')
+            || destination.len() == named.len()
+            || destination[..destination.len() - named.len()].ends_with('/'));
+    if !spells_destination {
+        return None;
+    }
+    let segments: Vec<&str> = named
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if segments.len() <= 2 {
+        return Some(label.to_string());
+    }
+    let separator = if label_path.contains('/') { '/' } else { '\\' };
+    let trailing = if named.ends_with('/') {
+        separator.to_string()
+    } else {
+        String::new()
+    };
+    let (parent, name) = (segments[segments.len() - 2], segments[segments.len() - 1]);
+    Some(format!(
+        "\u{2026}{separator}{parent}{separator}{name}{trailing}{position}"
+    ))
+}
+
 /// The compact label shared by every editable reference-pill backend.
-pub fn reference_display_label(label: &str, kind: ReferenceKind) -> String {
+///
+/// A path label past the cap drops its parent folder, then its start, so the file name stays.
+pub fn reference_display_label(label: &str, path: &str, kind: ReferenceKind) -> String {
     if kind == ReferenceKind::Skill {
         return label.to_string();
     }
-    let characters: Vec<char> = label.chars().collect();
+    let path_label = reference_path_label(label, path, kind);
+    let shown = path_label.as_deref().unwrap_or(label);
+    let characters: Vec<char> = shown.chars().collect();
     if characters.len() <= REFERENCE_PILL_MAX_LABEL_CHARACTERS {
-        return label.to_string();
+        return shown.to_string();
     }
-    let mut out: String = characters[..REFERENCE_PILL_MAX_LABEL_CHARACTERS - 1]
-        .iter()
-        .collect();
-    out.push('\u{2026}');
+    let keep = REFERENCE_PILL_MAX_LABEL_CHARACTERS - 1;
+    if path_label.is_none() {
+        let mut out: String = characters[..keep].iter().collect();
+        out.push('\u{2026}');
+        return out;
+    }
+    let named = shown.trim_end_matches(['/', '\\']);
+    if let Some(separator) = named.rfind(['/', '\\']) {
+        let name_only = format!("\u{2026}{}", &shown[separator..]);
+        if name_only.chars().count() <= REFERENCE_PILL_MAX_LABEL_CHARACTERS {
+            return name_only;
+        }
+    }
+    let mut out = String::from('\u{2026}');
+    out.extend(&characters[characters.len() - keep..]);
     out
 }
 
 /// Visible text whose measured width owns the pill icon and label.
-pub fn reference_pill_text(label: &str, kind: ReferenceKind) -> String {
+pub fn reference_pill_text(label: &str, path: &str, kind: ReferenceKind) -> String {
     format!(
         "{REFERENCE_PILL_ICON_SPACE}{}{REFERENCE_PILL_TRAILING_SPACE}",
-        reference_display_label(label, kind).replace(' ', "\u{a0}")
+        reference_display_label(label, path, kind).replace(' ', "\u{a0}")
     )
 }
 
@@ -308,6 +421,25 @@ struct Destination {
 
 /// The `(...)` half of a Markdown link, angle-bracketed or nested-paren form.
 fn linked_destination(text: &Utf16Text, destination_start: usize) -> Option<Destination> {
+    let path_start = destination_start + usize::from(text.at(destination_start) == Some('<'));
+    // Native paste writes literal Windows paths. A single drive separator (or a two-slash UNC
+    // leader) must also survive before punctuation, such as `C:\_images\photo.png`.
+    // Doubled Markdown separators still use the ordinary escape decoder.
+    let literal_windows = (text.at(path_start).is_some_and(|c| c.is_ascii_alphabetic())
+        && text.at(path_start + 1) == Some(':')
+        && text.at(path_start + 2) == Some('\\')
+        && text.at(path_start + 3) != Some('\\'))
+        || (text.at(path_start) == Some('\\')
+            && text.at(path_start + 1) == Some('\\')
+            && text.at(path_start + 2) != Some('\\'));
+    let decode = |start, end| {
+        let source = text.slice(start, end);
+        if literal_windows {
+            source
+        } else {
+            unescape_markdown(&source)
+        }
+    };
     if text.at(destination_start) == Some('<') {
         let mut index = destination_start + 1;
         while index < text.len() {
@@ -315,14 +447,17 @@ fn linked_destination(text: &Utf16Text, destination_start: usize) -> Option<Dest
             if character == '\n' || character == '\r' {
                 return None;
             }
-            if character == '\\' {
+            if !literal_windows
+                && character == '\\'
+                && text.at(index + 1).is_some_and(|c| c.is_ascii_punctuation())
+            {
                 index += 2;
                 continue;
             }
             if character == '>' && text.at(index + 1) == Some(')') {
                 return Some(Destination {
                     end: index + 2,
-                    path: unescape_markdown(&text.slice(destination_start + 1, index)),
+                    path: decode(destination_start + 1, index),
                 });
             }
             index += 1;
@@ -337,7 +472,10 @@ fn linked_destination(text: &Utf16Text, destination_start: usize) -> Option<Dest
         if character == '\n' || character == '\r' {
             return None;
         }
-        if character == '\\' {
+        if !literal_windows
+            && character == '\\'
+            && text.at(index + 1).is_some_and(|c| c.is_ascii_punctuation())
+        {
             index += 2;
             continue;
         }
@@ -354,12 +492,25 @@ fn linked_destination(text: &Utf16Text, destination_start: usize) -> Option<Dest
         if depth == 0 {
             return Some(Destination {
                 end: index + 1,
-                path: unescape_markdown(&text.slice(destination_start, index)),
+                path: decode(destination_start, index),
             });
         }
         index += 1;
     }
     None
+}
+
+/// Read a link destination after its opening `(`, returning the path and consumed byte length.
+/// The transcript uses the composer's decoder so escaped and angle-bracketed image paths agree.
+pub(crate) fn markdown_destination(source: &str) -> Option<(String, usize)> {
+    let source = source.split(['\r', '\n']).next()?;
+    let destination = linked_destination(&Utf16Text::new(source), 0)?;
+    let consumed = source
+        .chars()
+        .take(destination.end)
+        .map(char::len_utf8)
+        .sum();
+    Some((destination.path, consumed))
 }
 
 /// `/\[((?:\\.|[^\]\\\r\n])+)]\(/g` from `start`, as one leftmost match.

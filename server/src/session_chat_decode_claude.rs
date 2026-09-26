@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{Map, Value};
 
 use crate::session_chat::*;
@@ -48,11 +49,70 @@ fn claude_content_is_reasoning_only(content: Option<&Value>) -> bool {
     };
     !items.is_empty()
         && items.iter().all(|item| {
-            item.as_object()
-                .and_then(|record| record.get("type"))
-                .and_then(Value::as_str)
-                == Some("thinking")
+            item.as_object().is_some_and(|record| {
+                record.get("type").and_then(Value::as_str) == Some("thinking")
+                    && !claude_thinking_is_narration(record)
+            })
         })
+}
+
+/// CDXC:SessionChat 2026-09-26 WHY:
+/// Claude Code (2.1.281 with Opus 5.5) saves the prose it writes between tool calls as a `thinking` block whose signature the API tags `narration`, and its terminal paints that block as an ordinary reply. Decoded as reasoning, the row never retired the reply chat had already streamed off the terminal (`terminal_stream_retired` in gx-chat-core matches assistant and system rows only), so the same paragraph showed twice: a collapsed thinking row and a reply. The tag is read the way Claude Code's own classifier reads it (signature envelope field 2, then 1, then 8), and a narration block without text stays ordinary thinking, as Claude Code documents.
+fn claude_thinking_is_narration(record: &Map<String, Value>) -> bool {
+    if extract_string(record.get("thinking")).is_none() {
+        return false;
+    }
+    let Some(signature) = record.get("signature").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(envelope) = BASE64_STANDARD.decode(signature) else {
+        return false;
+    };
+    protobuf_bytes_field(&envelope, 2)
+        .and_then(|inner| protobuf_bytes_field(inner, 1))
+        .and_then(|inner| protobuf_bytes_field(inner, 8))
+        == Some(b"narration".as_slice())
+}
+
+/// The last length-delimited value of `field` in a protobuf message; `None` when the field is
+/// absent or the message does not parse.
+fn protobuf_bytes_field(message: &[u8], field: u64) -> Option<&[u8]> {
+    let mut found = None;
+    let mut rest = message;
+    while !rest.is_empty() {
+        let key;
+        (key, rest) = protobuf_varint(rest)?;
+        match key & 7 {
+            0 => (_, rest) = protobuf_varint(rest)?,
+            1 => rest = rest.get(8..)?,
+            2 => {
+                let length;
+                (length, rest) = protobuf_varint(rest)?;
+                let length = usize::try_from(length)
+                    .ok()
+                    .filter(|length| *length <= rest.len())?;
+                let (value, tail) = rest.split_at(length);
+                if key >> 3 == field {
+                    found = Some(value);
+                }
+                rest = tail;
+            }
+            5 => rest = rest.get(4..)?,
+            _ => return None,
+        }
+    }
+    found
+}
+
+fn protobuf_varint(bytes: &[u8]) -> Option<(u64, &[u8])> {
+    let mut value = 0u64;
+    for (index, byte) in bytes.iter().enumerate().take(10) {
+        value |= u64::from(byte & 0x7f) << (7 * index);
+        if byte & 0x80 == 0 {
+            return Some((value, &bytes[index + 1..]));
+        }
+    }
+    None
 }
 
 /*
@@ -77,6 +137,7 @@ pub(crate) fn claude_content_block(record: &Map<String, Value>) -> Option<Sessio
         Some("tool_use") => Some(SessionChatBlock::ToolCall {
             name: extract_string(record.get("name")).unwrap_or_else(|| "tool".to_string()),
             input: record.get("input").cloned().unwrap_or(Value::Null),
+            call_id: extract_string(record.get("id")),
         }),
         Some("tool_result") => Some(SessionChatBlock::ToolResult {
             output: tool_result_output(record.get("content")),
@@ -85,6 +146,7 @@ pub(crate) fn claude_content_block(record: &Map<String, Value>) -> Option<Sessio
             } else {
                 None
             },
+            call_id: extract_string(record.get("tool_use_id")),
         }),
         Some("image" | "input_image") => image_ref_block(record),
         _ => None,
@@ -211,7 +273,26 @@ finally submitted). Whitespace folding is the narrowest normalization that
 makes them agree.
 */
 fn queued_prompt_key(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let text = strip_claude_pasted_content_envelopes(text);
+    cross_session_queue_key(&text)
+        .unwrap_or(text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// CDXC:SessionChat 2026-09-25 WHY:
+/// Claude writes a peer message's `hop-chain` attribute on its enqueue row only; the removal row and the delivered row drop it. Keyed by its opening tag, the queued copy never matched its release and stayed on screen next to the delivered message, so a `<cross-session-message>` envelope is keyed by its body.
+fn cross_session_queue_key(text: &str) -> Option<String> {
+    let rest = text.trim().strip_prefix(CLAUDE_CROSS_SESSION_OPEN)?;
+    if !rest.starts_with([' ', '>']) {
+        return None;
+    }
+    let body = rest
+        .split_once('>')?
+        .1
+        .strip_suffix(CLAUDE_CROSS_SESSION_CLOSE)?;
+    Some(format!("{CLAUDE_CROSS_SESSION_OPEN}>{body}"))
 }
 
 /// CDXC:SessionChat 2026-09-08 DECISION:
@@ -228,7 +309,14 @@ fn claude_delivered_queue_keys(record: &Map<String, Value>) -> Vec<String> {
         return Vec::new();
     }
     let content = as_record(record.get("message")).and_then(|message| message.get("content"));
-    claude_content_blocks(content)
+    let blocks = claude_content_blocks(content);
+    // A peer message was queued as its bare envelope; the delivered row wraps it in Claude's preamble.
+    if record.get("isMeta") == Some(&Value::Bool(true)) {
+        if let Some(envelope) = claude_cross_session_envelope(&blocks) {
+            return vec![queued_prompt_key(&envelope)];
+        }
+    }
+    blocks
         .into_iter()
         .filter_map(|block| match block {
             SessionChatBlock::Text { text } => {
@@ -320,7 +408,7 @@ fn decode_claude_queued_prompt(
     if record.get("operation").and_then(Value::as_str) != Some("enqueue") {
         return None;
     }
-    let content = extract_string(record.get("content"))?;
+    let content = strip_claude_pasted_content_envelopes(&extract_string(record.get("content"))?);
     if content.trim().is_empty() {
         return None;
     }
@@ -335,6 +423,31 @@ fn decode_claude_queued_prompt(
         async_questions: None,
         queued: true,
     })
+}
+
+const CLAUDE_CROSS_SESSION_OPEN: &str = "<cross-session-message";
+const CLAUDE_CROSS_SESSION_CLOSE: &str = "</cross-session-message>";
+
+/// CDXC:SessionChat 2026-09-25 WHY:
+/// A message another Claude session sent renders as chat's message-from-another-agent card. When it reaches an idle session Claude writes a meta user row: a one-line preamble ("Another Claude session sent a message:"), the `<cross-session-message>` envelope, then trust instructions meant for the model. The meta filter dropped the whole row, so chat never showed the message. Only the envelope is kept, the same text a mid-turn delivery's `queued_command` carries, so both deliveries render alike. Anything longer than one line before the envelope (a compaction summary quoting one) is not a delivery.
+/// SEE-ALSO: packages/gx-chat-core/src/transcript/agent_message.rs parses the envelope into the card.
+fn claude_cross_session_envelope(blocks: &[SessionChatBlock]) -> Option<String> {
+    let text = blocks
+        .iter()
+        .filter_map(|block| match block {
+            SessionChatBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let start = text.find(CLAUDE_CROSS_SESSION_OPEN)?;
+    if text[..start].trim().contains('\n')
+        || !text[start + CLAUDE_CROSS_SESSION_OPEN.len()..].starts_with([' ', '>'])
+    {
+        return None;
+    }
+    let end = text.rfind(CLAUDE_CROSS_SESSION_CLOSE)? + CLAUDE_CROSS_SESSION_CLOSE.len();
+    (end > start).then(|| text[start..end].to_string())
 }
 
 pub fn decode_claude_transcript_line(line: &str, fallback_id: &str) -> Option<SessionChatMessage> {
@@ -415,7 +528,13 @@ pub fn decode_claude_transcript_line(line: &str, fallback_id: &str) -> Option<Se
         && (record.get("isMeta") == Some(&Value::Bool(true))
             || record.get("isSynthetic") == Some(&Value::Bool(true))
             || record.get("isCompactSummary") == Some(&Value::Bool(true)));
-    let blocks: Vec<SessionChatBlock> = if is_injected_user_turn {
+    let cross_session_envelope = (role == "user"
+        && record.get("isMeta") == Some(&Value::Bool(true)))
+    .then(|| claude_cross_session_envelope(&decoded_blocks))
+    .flatten();
+    let blocks: Vec<SessionChatBlock> = if let Some(envelope) = cross_session_envelope {
+        vec![text_block(envelope)]
+    } else if is_injected_user_turn {
         decoded_blocks
             .into_iter()
             .filter(is_tool_result_block)
@@ -533,7 +652,7 @@ fn leading_tag_name(normalized: &str) -> Option<&str> {
     }
 }
 
-fn is_known_harness_injected_user_turn_text(text: &str) -> bool {
+pub(crate) fn is_known_harness_injected_user_turn_text(text: &str) -> bool {
     let normalized = text.trim().to_lowercase();
     if normalized.is_empty() {
         return false;

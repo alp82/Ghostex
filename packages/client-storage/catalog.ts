@@ -81,13 +81,6 @@ export const storageCatalog = Object.freeze({
     'ghostex.gitCommitModal.diffPreferences.v1',
     objectCodec
   ),
-  themeHistory: define(
-    'themeHistory',
-    'Recent project colors',
-    core + 'workspace-theme-color-history.ts',
-    'ghostex-workspace-theme-color-history',
-    stringListCodec
-  ),
   hiddenItems: define(
     'hiddenItems',
     'Sidebar visibility',
@@ -118,13 +111,6 @@ export const storageCatalog = Object.freeze({
     textCodec,
     { policy: 'protected' }
   ),
-  importIntro: define(
-    'importIntro',
-    'Import introduction',
-    core + 'sidebar-app/import-sessions-card.tsx',
-    'ghostex.sidebar.import-sessions-intro-seen.v1',
-    boolean
-  ),
   machineTab: define(
     'machineTab',
     'Selected machine',
@@ -151,7 +137,7 @@ export const storageCatalog = Object.freeze({
   verbose: define(
     'verbose',
     'Chat verbose preference',
-    chat + 'session-chat-verbose-override.ts',
+    'packages/gx-chat-core/src/composer/storage.rs',
     'ghostex.sessionChat.verbose.',
     binary,
     disk
@@ -159,7 +145,7 @@ export const storageCatalog = Object.freeze({
   summary: define(
     'summary',
     'Chat summary preference',
-    chat + 'session-chat-summary-override.ts',
+    'packages/gx-chat-core/src/composer/storage.rs',
     'ghostex.sessionChat.summary.',
     binary,
     disk
@@ -167,42 +153,42 @@ export const storageCatalog = Object.freeze({
   tasksCollapsed: define(
     'tasksCollapsed',
     'Chat task panel',
-    chat + 'session-chat-agent-tasks-panel.tsx',
+    'packages/gx-chat-core/src/extras/panels.rs',
     'ghostex.chat.agentTasks.collapsed',
     binary
   ),
   terminalExpanded: define(
     'terminalExpanded',
     'Chat terminal output',
-    chat + 'session-chat-terminal-tool-row.tsx',
+    'retired React chat (deleted 2026-09-25)',
     'ghostex.sessionChat.terminalToolExpanded',
     boolean
   ),
   claudeContext: define(
     'claudeContext',
     'Claude context display',
-    chat + 'session-chat-context-details.ts',
+    'packages/gx-chat-core/src/menus/context/preferences.rs',
     'ghostex.chat.context-details.v1',
     objectCodec
   ),
   codexContext: define(
     'codexContext',
     'Codex context display',
-    chat + 'session-chat-context-details.ts',
+    'packages/gx-chat-core/src/menus/context/preferences.rs',
     'ghostex.chat.context-details.codex.v1',
     objectCodec
   ),
   cursorContext: define(
     'cursorContext',
     'Cursor context display',
-    chat + 'session-chat-context-details.ts',
+    'packages/gx-chat-core/src/menus/context/preferences.rs',
     'ghostex.chat.context-details.cursor.v1',
     objectCodec
   ),
   notices: define(
     'notices',
     'Dismissed chat notices',
-    chat + 'session-chat-terminal-notice-card.tsx',
+    'packages/gx-chat-core/src/questions/drafts.rs',
     'ghostex.sessionChat.noticeDismissed.',
     textCodec,
     disk
@@ -210,7 +196,7 @@ export const storageCatalog = Object.freeze({
   sessionOptions: define(
     'sessionOptions',
     'Session model options',
-    chat + 'session-chat-session-options.ts',
+    'packages/gx-chat-core/src/menus/option_storage.rs',
     'ghostex.sessionChat.options.',
     objectCodec,
     cache
@@ -218,14 +204,14 @@ export const storageCatalog = Object.freeze({
   modelFavorites: define(
     'modelFavorites',
     'Starred models in the chat model picker',
-    'packages/shared/session-chat-controller/model-favorites.ts',
+    'packages/gx-chat-core/src/menus/picker/favorites.rs',
     'ghostex.model-favorites',
     stringListCodec
   ),
   modelOutbox: define(
     'modelOutbox',
     'Pending model selections',
-    chat + 'session-chat-model-picker-launcher.tsx',
+    'packages/gx-chat-core/src/menus/picker/selection.rs',
     'ghostex.model-selection-outbox.',
     objectCodec,
     protectedDisk
@@ -233,7 +219,7 @@ export const storageCatalog = Object.freeze({
   retiredQuestions: define(
     'retiredQuestions',
     'Answered question receipts',
-    chat + 'session-chat-async-questions.tsx',
+    'packages/gx-chat-core/src/questions/drafts.rs',
     'ghostex:async-questions:',
     stringListCodec,
     protectedDisk
@@ -241,7 +227,7 @@ export const storageCatalog = Object.freeze({
   questionDrafts: define(
     'questionDrafts',
     'Unsent question answers',
-    chat + 'session-chat-question-drafts.ts',
+    'packages/gx-chat-core/src/questions/drafts.rs',
     'ghostex.sessionChat.questionDraft.',
     objectCodec,
     protectedDisk
@@ -257,7 +243,7 @@ export const storageCatalog = Object.freeze({
   composerSelection: define(
     'composerSelection',
     'Parked composer selection',
-    chat + 'session-chat-composer-parking.ts',
+    'retired React chat (deleted 2026-09-25)',
     'ghostex.sessionChat.composerSelection.',
     objectCodec,
     protectedDisk
@@ -265,7 +251,7 @@ export const storageCatalog = Object.freeze({
   chatClient: define(
     'chatClient',
     'Chat client identity',
-    chat + 'session-chat-queue.ts',
+    chat + 'session-chat-client-id.ts',
     'ghostex.sessionChat.clientId',
     textCodec,
     { policy: 'protected' }
@@ -273,7 +259,7 @@ export const storageCatalog = Object.freeze({
   returnedPrompts: define(
     'returnedPrompts',
     'Returned prompt receipts',
-    chat + 'session-chat-returned-prompt.ts',
+    'packages/gx-chat-core/src/composer/storage.rs',
     'ghostex.sessionChat.returnedPrompts.applied',
     stringListCodec,
     { policy: 'protected' }
@@ -329,7 +315,7 @@ export const storageCatalog = Object.freeze({
   chatSnapshots: define(
     'chatSnapshots',
     'Recent conversation cache',
-    desktop + 'sidebar/session-chat-runtime/persistence.ts',
+    desktop + 'src/app/gx_chat/retained.rs',
     'ghostex.sessionChat.snapshot.',
     objectCodec,
     {
@@ -343,7 +329,7 @@ export const storageCatalog = Object.freeze({
   workspaceGroups: define(
     'workspaceGroups',
     'Workspace session groups',
-    desktop + 'sidebar/workspace-session-groups.ts',
+    desktop + 'src/app/gx_store/workspace_groups.rs',
     'ghostex-gpui-workspace-session-groups',
     objectCodec,
     { maxEntryBytes: 256 * KiB, maxBytes: 256 * KiB }
@@ -351,7 +337,7 @@ export const storageCatalog = Object.freeze({
   projectLastSession: define(
     'projectLastSession',
     'Last session per project',
-    desktop + 'sidebar/gxserver-runtime/project-activation.ts',
+    'packages/gx-core/src/project_activation.rs',
     'ghostex.gpui.project-last-session.v1:',
     textCodec,
     disk
@@ -359,21 +345,21 @@ export const storageCatalog = Object.freeze({
   closeAfterDone: define(
     'closeAfterDone',
     'Close after done',
-    desktop + 'sidebar/gxserver-runtime/helpers/close-after-done.ts',
+    desktop + 'src/app/gx_store/terminal_lifecycle/close_after_done.rs',
     'ghostex-gpui-close-after-done-session-ids',
     stringListCodec
   ),
   remoteOrder: define(
     'remoteOrder',
     'Remote project ordering',
-    desktop + 'sidebar/gxserver-runtime/helpers/recent-projects.ts',
+    'packages/client-storage-native/src/storage_catalog.rs',
     'ghostex-gpui-remote-group-order',
     objectCodec
   ),
   remoteRecents: define(
     'remoteRecents',
     'Remote recent projects',
-    desktop + 'sidebar/gxserver-runtime/helpers/recent-projects.ts',
+    desktop + 'src/app/gx_store/remote_recent_projects.rs',
     'ghostex-gpui-remote-recent-projects',
     arrayCodec
   ),
@@ -474,14 +460,6 @@ export const storageCatalog = Object.freeze({
     'ghostex.promptAgent.renameSession',
     textCodec
   ),
-  terminalModel: define(
-    'terminalModel',
-    'Terminal model selection',
-    desktop + 'views/model-picker-host.tsx',
-    'ghostex.terminal-model-picker.',
-    objectCodec,
-    cache
-  ),
   openTarget: define(
     'openTarget',
     'Open in target',
@@ -500,7 +478,7 @@ export const storageCatalog = Object.freeze({
   keepAwake: define(
     'keepAwake',
     'Keep Awake runtime',
-    desktop + 'views/titlebar/project-state.ts',
+    desktop + 'src/app/gx_store/sidebar_ui_storage.rs',
     'ghostex.titlebar.keepAwakeRuntime',
     objectCodec
   ),
@@ -536,7 +514,7 @@ export const storageCatalog = Object.freeze({
   modelCatalog: define(
     'modelCatalog',
     'Agent model catalog',
-    'packages/shared/agent-model-catalog-store.ts',
+    'packages/gx-chat-core/src/menus/picker/settle.rs',
     'ghostex.agentModelCatalog.v1',
     objectCodec,
     { ...cache, collection: false, maxEntries: 1 }
@@ -586,65 +564,6 @@ export const storageCatalog = Object.freeze({
     'agentation-',
     textCodec,
     { ...collection, external: true, maxEntries: 500, maxEntryBytes: 64 * KiB, maxBytes: 256 * KiB }
-  ),
-  webSettings: define(
-    'webSettings',
-    'Web settings',
-    'apps/web/src/app/web-settings.ts',
-    'ghostexWeb.settings.v1',
-    objectCodec,
-    { maxEntryBytes: 256 * KiB, maxBytes: 256 * KiB }
-  ),
-  webSidebarWidth: define(
-    'webSidebarWidth',
-    'Web sidebar width',
-    'apps/web/src/routes/__root.tsx',
-    'ghostexWeb.sidebarWidth.v1',
-    textCodec
-  ),
-  webSidebarCollapsed: define(
-    'webSidebarCollapsed',
-    'Web sidebar disclosure',
-    'apps/web/src/routes/__root.tsx',
-    'ghostexWeb.sidebarCollapsed.v1',
-    boolean
-  ),
-  webWorkspace: define(
-    'webWorkspace',
-    'Web workspace',
-    'apps/web/src/workspace/workspace-storage.ts',
-    'ghostexWeb.workspace.v1',
-    objectCodec,
-    { maxEntryBytes: 256 * KiB, maxBytes: 256 * KiB }
-  ),
-  webMachines: define(
-    'webMachines',
-    'Web machine connections',
-    'apps/web/src/machines/machine-catalog.ts',
-    'ghostexWeb.machines.v1',
-    arrayCodec,
-    { policy: 'protected' }
-  ),
-  webCommandHeight: define(
-    'webCommandHeight',
-    'Web command pane height',
-    'apps/web/src/app/command-pane.tsx',
-    'ghostexWeb.commandPaneHeight.v1',
-    textCodec
-  ),
-  webDebugConnections: define(
-    'webDebugConnections',
-    'Web connection debugging',
-    'apps/web/src/connections/gxserver-connection.ts',
-    'ghostexWeb.debugConnections',
-    binary
-  ),
-  webDebugSidebar: define(
-    'webDebugSidebar',
-    'Web sidebar debugging',
-    'apps/web/src/sidebar-runtime/sidebar-runtime.ts',
-    'ghostexWeb.debugSidebar',
-    binary
   ),
 } as const);
 

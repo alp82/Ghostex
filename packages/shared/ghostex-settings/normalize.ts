@@ -1,5 +1,5 @@
 import { normalizeProjectViewTemplates } from './project-views';
-import { normalizeProjectWebsiteSettings } from './project-websites';
+import { normalizeProjectWebsiteSettings, normalizeProjectWebsiteVisibility } from './project-websites';
 import { normalizeContentThemeSetting } from '../appearance';
 import { clampAgentManagerZoomPercent, clampSidebarThemeSetting } from '../session-grid-contract-session';
 import { normalizeSessionChatTheme } from '../session-chat';
@@ -29,7 +29,12 @@ import {
   DEFAULT_CHAT_FILE_OPEN_VIEW,
   DEFAULT_WEB_LINK_OPEN_TARGET,
   KEEP_AWAKE_DURATION_OPTIONS,
+  MAX_WINDOW_GLASS_LIVE_BRIGHTNESS,
+  MAX_WINDOW_GLASS_LIVE_SPEED,
+  MIN_WINDOW_GLASS_LIVE_BRIGHTNESS,
+  MIN_WINDOW_GLASS_LIVE_SPEED,
   WEB_LINK_OPEN_TARGET_SET,
+  WINDOW_GLASS_LIVE_STYLE_OPTIONS,
 } from './option-tables';
 import { SIDEBAR_SETTINGS_PRESET_SETTINGS } from './presets';
 import { clampNumber, isRecord, readBoolean, readLooseString, readNumber, readString } from './primitives';
@@ -61,6 +66,7 @@ import {
   type ChatFileOpenView,
   type CommandsPanelSide,
   type WindowGlassMode,
+  type WindowGlassLiveStyle,
   type WindowGlassSource,
   type WindowGlassImagePlacement,
   type PanelAnimationSpeed,
@@ -71,7 +77,6 @@ import {
   type KeepAwakeDurationMinutes,
   type PortlessProtocol,
   type PreferredAgentInterface,
-  type ChatBrain,
   type PromptEditorBackend,
   type SidebarSpaceSwitchBehavior,
   type SidebarVisibilityMemory,
@@ -288,9 +293,7 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     automateViewTabHidden: readBoolean(source, 'automateViewTabHidden', DEFAULT_ghostex_SETTINGS.automateViewTabHidden),
     docsViewTabHidden: readBoolean(source, 'docsViewTabHidden', DEFAULT_ghostex_SETTINGS.docsViewTabHidden),
     terminalViewTabHidden: readBoolean(source, 'terminalViewTabHidden', DEFAULT_ghostex_SETTINGS.terminalViewTabHidden),
-    linearViewTabHidden: readBoolean(source, 'linearViewTabHidden', DEFAULT_ghostex_SETTINGS.linearViewTabHidden),
-    jiraViewTabHidden: readBoolean(source, 'jiraViewTabHidden', DEFAULT_ghostex_SETTINGS.jiraViewTabHidden),
-    githubViewTabHidden: readBoolean(source, 'githubViewTabHidden', DEFAULT_ghostex_SETTINGS.githubViewTabHidden),
+    ...normalizeProjectWebsiteVisibility(source),
     projectWebsiteViews: normalizeProjectWebsiteSettings(source.projectWebsiteViews),
     storybookViewTabHidden: readBoolean(
       source,
@@ -445,7 +448,6 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     ),
     analyticsEnabled: readBoolean(source, 'analyticsEnabled', DEFAULT_ghostex_SETTINGS.analyticsEnabled),
     debuggingMode: readBoolean(source, 'debuggingMode', DEFAULT_ghostex_SETTINGS.debuggingMode),
-    chatBrain: normalizeChatBrain(source),
     diagnosticLogging: normalizeDiagnosticLoggingSettings(source.diagnosticLogging),
     renameSessionOnDoubleClick: readBoolean(
       source,
@@ -492,16 +494,6 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
       source,
       'hideLastActiveTimeOnSessionCards',
       DEFAULT_ghostex_SETTINGS.hideLastActiveTimeOnSessionCards
-    ),
-    showSessionCommandCopyActions: readBoolean(
-      source,
-      'showSessionCommandCopyActions',
-      DEFAULT_ghostex_SETTINGS.showSessionCommandCopyActions
-    ),
-    showSessionDetailsCopyAction: readBoolean(
-      source,
-      'showSessionDetailsCopyAction',
-      DEFAULT_ghostex_SETTINGS.showSessionDetailsCopyAction
     ),
     sidebarSessionTagListItems: normalizeSidebarSessionTagListItems(source.sidebarSessionTagListItems),
     /**
@@ -666,6 +658,11 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
     ),
     panelAnimationSpeed: normalizePanelAnimationSpeed(
       readString(source, 'panelAnimationSpeed', DEFAULT_ghostex_SETTINGS.panelAnimationSpeed)
+    ),
+    closeSidePanelWithLastTab: readBoolean(
+      source,
+      'closeSidePanelWithLastTab',
+      DEFAULT_ghostex_SETTINGS.closeSidePanelWithLastTab
     ),
     sidebarTooltipDelayMs: clampSidebarTooltipDelayMs(
       readNumber(source, 'sidebarTooltipDelayMs', DEFAULT_ghostex_SETTINGS.sidebarTooltipDelayMs)
@@ -977,6 +974,25 @@ export function normalizeghostexSettings(candidate: unknown): ghostexSettings {
       'windowGlassImageLight',
       DEFAULT_ghostex_SETTINGS.windowGlassImageLight
     ).trim(),
+    windowGlassVideoDark: normalizeWindowGlassVideoPath(
+      readString(source, 'windowGlassVideoDark', DEFAULT_ghostex_SETTINGS.windowGlassVideoDark)
+    ),
+    windowGlassVideoLight: normalizeWindowGlassVideoPath(
+      readString(source, 'windowGlassVideoLight', DEFAULT_ghostex_SETTINGS.windowGlassVideoLight)
+    ),
+    windowGlassVideoOnlyOnPower: readBoolean(
+      source,
+      'windowGlassVideoOnlyOnPower',
+      DEFAULT_ghostex_SETTINGS.windowGlassVideoOnlyOnPower
+    ),
+    windowGlassLiveStyleDark: normalizeWindowGlassLiveSlot(source, 'Dark'),
+    windowGlassLiveStyleLight: normalizeWindowGlassLiveSlot(source, 'Light'),
+    windowGlassLiveSpeed: normalizeWindowGlassLiveSpeed(
+      readNumber(source, 'windowGlassLiveSpeed', DEFAULT_ghostex_SETTINGS.windowGlassLiveSpeed)
+    ),
+    windowGlassLiveBrightness: normalizeWindowGlassLiveBrightness(
+      readNumber(source, 'windowGlassLiveBrightness', DEFAULT_ghostex_SETTINGS.windowGlassLiveBrightness)
+    ),
     windowGlassSidebarOpacityDark: clampWindowGlassSidebarOpacityPercent(
       readNumber(source, 'windowGlassSidebarOpacityDark', DEFAULT_ghostex_SETTINGS.windowGlassSidebarOpacityDark),
       DEFAULT_ghostex_SETTINGS.windowGlassSidebarOpacityDark
@@ -1245,10 +1261,67 @@ function normalizeWindowGlassMode(value: string | undefined): WindowGlassMode {
   return value === 'frosted' || value === 'opaque' ? value : DEFAULT_ghostex_SETTINGS.windowGlass;
 }
 
+/**
+ * CDXC:Theming 2026-09-26 WHY:
+ * Glass shows no longer has a separate Video choice: the user's own video is a Live slot. A settings file saved with
+ * Video becomes Live, and each mode that had a playable file keeps it as its own video (`normalizeWindowGlassLiveSlot`).
+ */
 function normalizeWindowGlassSource(value: string | undefined): WindowGlassSource {
-  return value === 'wallpaper' || value === 'desktopAndWindows' || value === 'customImage'
+  if (value === 'video') {
+    return 'live';
+  }
+  return value === 'wallpaper' || value === 'desktopAndWindows' || value === 'customImage' || value === 'live'
     ? value
     : DEFAULT_ghostex_SETTINGS.windowGlassSource;
+}
+
+/**
+ * CDXC:Theming 2026-09-26 WHY:
+ * A glass video is only a file the user picked. macOS's aerial wallpapers and the Ghostex video library were
+ * removed, so a saved `aerial:<id>` or `library:<id>` is cleared: that mode's Live slot shows its animation instead
+ * (this migrates a removed value; it is not a runtime fallback).
+ */
+function normalizeWindowGlassVideoPath(value: string | undefined): string {
+  const path = (value ?? '').trim();
+  return path.startsWith('aerial:') || path.startsWith('library:') ? '' : path;
+}
+
+/** One mode's Live slot: an animation, or `video` for the user's own file (carried over from the retired Video choice). */
+function normalizeWindowGlassLiveSlot(
+  source: Record<string, unknown>,
+  appearance: 'Dark' | 'Light'
+): WindowGlassLiveStyle {
+  const fallback = DEFAULT_ghostex_SETTINGS[`windowGlassLiveStyle${appearance}`];
+  const saved = readString(source, `windowGlassLiveStyle${appearance}`, fallback);
+  if (readString(source, 'windowGlassSource', '') === 'video') {
+    const video = normalizeWindowGlassVideoPath(readString(source, `windowGlassVideo${appearance}`, ''));
+    if (video) {
+      return 'video';
+    }
+  }
+  if (saved === 'video') {
+    return 'video';
+  }
+  return WINDOW_GLASS_LIVE_STYLE_OPTIONS.some((option) => option.value === saved)
+    ? (saved as WindowGlassLiveStyle)
+    : fallback;
+}
+
+/** Live glass brightness, 10 to 100 percent in whole steps. */
+function normalizeWindowGlassLiveBrightness(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_ghostex_SETTINGS.windowGlassLiveBrightness;
+  }
+  return Math.round(Math.min(MAX_WINDOW_GLASS_LIVE_BRIGHTNESS, Math.max(MIN_WINDOW_GLASS_LIVE_BRIGHTNESS, value)));
+}
+
+/** Live glass speed, 0.25 to 2 in quarter steps. */
+function normalizeWindowGlassLiveSpeed(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_ghostex_SETTINGS.windowGlassLiveSpeed;
+  }
+  const clamped = Math.min(MAX_WINDOW_GLASS_LIVE_SPEED, Math.max(MIN_WINDOW_GLASS_LIVE_SPEED, value));
+  return Math.round(clamped * 4) / 4;
 }
 
 function normalizeWindowGlassImagePlacement(value: string | undefined): WindowGlassImagePlacement {
@@ -1338,14 +1411,6 @@ function normalizeCompletionSoundPreference(source: Record<string, unknown>) {
   return clampCompletionSoundPreference(
     readString(source, 'completionSound', DEFAULT_ghostex_SETTINGS.completionSound)
   );
-}
-
-function normalizeChatBrain(source: Record<string, unknown>): ChatBrain {
-  const brain = readString(source, 'chatBrain', '');
-  if (brain === 'quickjs' || brain === 'rust') {
-    return brain;
-  }
-  return DEFAULT_ghostex_SETTINGS.chatBrain;
 }
 
 function normalizePromptEditorBackend(source: Record<string, unknown>): PromptEditorBackend {

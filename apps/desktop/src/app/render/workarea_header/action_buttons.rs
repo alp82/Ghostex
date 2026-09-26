@@ -1,8 +1,6 @@
 //! The header's trailing half: the Start / Open / Commit split buttons, the ⋯ menu, the two panel
 //! toggles. Platform caption controls belong to the rightmost band region.
 
-use std::time::Duration;
-
 use gpui::AnyElement;
 use gpui::Bounds;
 use gpui::InteractiveElement as _;
@@ -20,25 +18,11 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::px;
 use gpui_component::ElementExt as _;
 use gpui_component::h_flex;
-use gpui_component::tooltip::ManagedTooltipExt as _;
-use gpui_component::tooltip::ManagedTooltipPlacement;
 
 use crate::app::consts::*;
 use crate::app::helpers::*;
 use crate::app::window::*;
 use crate::*;
-
-/// CDXC:Theming 2026-09-20 WHY:
-/// The 2026-09-19 light screens draw Start, Open and Commit as raised white controls, because a
-/// bordered outline alone disappears into a light header the way it does not into a dark one. In
-/// dark mode they keep the header's own surface, which is what those screens draw there.
-fn workarea_header_split_button_background() -> gpui::Hsla {
-    if chrome_uses_light_appearance() {
-        gpui::rgb(0xffffff).into()
-    } else {
-        gpui::transparent_black()
-    }
-}
 
 /// What a press on one half of a split button runs. A plain `fn` pointer so the two halves and the
 /// diagnostics wrapper can share it without boxing.
@@ -59,10 +43,6 @@ pub(crate) struct WorkareaHeaderSplitButton {
     pub(crate) icon: &'static str,
     pub(crate) icon_size: f32,
     pub(crate) label: SharedString,
-    pub(crate) tooltip: &'static str,
-    /// The diagnostic name for a press on the main half, kept identical to the name the old
-    /// titlebar button logged so the popup repro logs stay comparable.
-    pub(crate) primary_intent: &'static str,
     /// Dimmed while the button's primary press is on cooldown.
     pub(crate) dimmed: bool,
     /// Replaces the icon with the shared busy spinner, as the Git button did.
@@ -181,7 +161,6 @@ impl GhostexGpuiApp {
         ownership, not an overlay or synthetic event route.
         */
         let kind = spec.kind;
-        let intent = spec.primary_intent;
         let open = self.titlebar_popup_menu_open(kind);
         let icon_color = if open {
             titlebar_icon_hover_color()
@@ -201,46 +180,32 @@ impl GhostexGpuiApp {
             .items_center()
             .justify_center()
             .gap(px(6.0))
-            .px(px(if compact { 7.0 } else { 9.0 }))
+            .pl(px(if compact { 9.0 } else { 10.0 }))
+            .pr(px(if compact { 7.0 } else { 9.0 }))
+            .rounded_l(titlebar_split_button_segment_radius(
+                TITLEBAR_CONTROL_HEIGHT,
+            ))
             .when(cfg!(target_os = "windows"), |this| this.occlude())
             .text_color(icon_color)
             .text_size(px(12.5))
             .cursor_default()
             .hover(move |this| {
-                this.bg(titlebar_button_hover_color())
-                    .text_color(titlebar_icon_hover_color())
+                this.bg(titlebar_split_button_hover_color())
+                    .text_color(titlebar_split_button_hover_text_color())
             })
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();
-                    log_gpui_titlebar_popup_mouse_down(
-                        kind,
-                        "left",
-                        intent,
-                        open,
-                        trigger_bounds,
-                        event,
-                        window,
-                    );
                     primary(this, trigger_bounds, window, cx);
                 }),
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();
-                    log_gpui_titlebar_popup_mouse_down(
-                        kind,
-                        "right",
-                        "togglePopup",
-                        open,
-                        trigger_bounds,
-                        event,
-                        window,
-                    );
                     menu(this, trigger_bounds, window, cx);
                 }),
             )
@@ -267,42 +232,28 @@ impl GhostexGpuiApp {
             .h_full()
             .items_center()
             .justify_center()
-            .px(px(4.0))
+            .pl(px(5.0))
+            .pr(px(6.0))
+            .rounded_r(titlebar_split_button_segment_radius(
+                TITLEBAR_CONTROL_HEIGHT,
+            ))
             .when(cfg!(target_os = "windows"), |this| this.occlude())
             .cursor_default()
-            .when(open, |this| this.bg(titlebar_active_segment_color()))
-            .hover(move |this| this.bg(titlebar_button_hover_color()))
+            .when(open, |this| this.bg(titlebar_split_button_open_color()))
+            .hover(move |this| this.bg(titlebar_split_button_hover_color()))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();
-                    log_gpui_titlebar_popup_mouse_down(
-                        kind,
-                        "left",
-                        "togglePopup",
-                        open,
-                        trigger_bounds,
-                        event,
-                        window,
-                    );
                     menu(this, trigger_bounds, window, cx);
                 }),
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();
-                    log_gpui_titlebar_popup_mouse_down(
-                        kind,
-                        "right",
-                        "togglePopup",
-                        open,
-                        trigger_bounds,
-                        event,
-                        window,
-                    );
                     menu(this, trigger_bounds, window, cx);
                 }),
             )
@@ -312,35 +263,16 @@ impl GhostexGpuiApp {
                 icon_color,
             ));
 
-        let tooltip = spec.tooltip;
-        h_flex()
-            .id(spec.id)
+        titlebar_split_button_frame(h_flex().id(spec.id), TITLEBAR_CONTROL_HEIGHT)
             .relative()
             .flex_shrink_0()
-            .h(px(TITLEBAR_CONTROL_HEIGHT))
             .ml(px(4.0))
             .items_center()
             .overflow_hidden()
-            .rounded(px(TITLEBAR_BUTTON_RADIUS))
-            .border_1()
-            .border_color(titlebar_split_button_border_color())
-            .bg(workarea_header_split_button_background())
             .when(spec.dimmed, |this| this.opacity(0.5))
             .child(main)
-            .child(
-                div()
-                    .w(px(1.0))
-                    .h(px(TITLEBAR_CONTROL_HEIGHT))
-                    .bg(titlebar_split_button_border_color()),
-            )
+            .child(titlebar_split_button_divider(TITLEBAR_CONTROL_HEIGHT))
             .child(caret)
-            .when(!open, |this| {
-                this.managed_discrete_tooltip_with_placement(
-                    ManagedTooltipPlacement::Left,
-                    Duration::from_millis(300),
-                    move |window, cx| titlebar_tooltip(tooltip, window, cx),
-                )
-            })
             .on_prepaint({
                 let anchor_state = anchor_state.clone();
                 move |bounds, window, cx| {
@@ -352,7 +284,6 @@ impl GhostexGpuiApp {
                         (first_capture, moved)
                     });
                     if first_capture || moved {
-                        log_gpui_titlebar_popup_anchor(kind, bounds, first_capture, moved, window);
                         window.request_animation_frame();
                     }
                 }
@@ -416,8 +347,6 @@ impl GhostexGpuiApp {
                             icon: actions_icon_path,
                             icon_size: 16.0,
                             label: actions_label,
-                            tooltip: TITLEBAR_ACTIONS_TOOLTIP,
-                            primary_intent: "runPrimaryAction",
                             dimmed: self.titlebar_quick_action_button_on_cooldown(),
                             busy: false,
                         },
@@ -439,8 +368,6 @@ impl GhostexGpuiApp {
                             icon: open_target_icon_path,
                             icon_size: 13.0,
                             label: "Open".into(),
-                            tooltip: TITLEBAR_OPEN_TARGETS_TOOLTIP,
-                            primary_intent: "openPrimaryTarget",
                             dimmed: false,
                             busy: false,
                         },
@@ -466,8 +393,6 @@ impl GhostexGpuiApp {
                                 icon: git_icon_path,
                                 icon_size: 16.0,
                                 label: "Commit".into(),
-                                tooltip: TITLEBAR_GIT_TOOLTIP,
-                                primary_intent: "togglePopup",
                                 dimmed: false,
                                 busy: self
                                     .titlebar_git_menu_state
@@ -489,7 +414,7 @@ impl GhostexGpuiApp {
             .flex_shrink_0()
             .h(px(TITLEBAR_CONTROL_HEIGHT))
             .items_center()
-            .gap(px(2.0))
+            .gap(px(WORKAREA_HEADER_PINNED_GAP))
             .ml(px(4.0))
             // Everything occasional lives behind the trailing ⋯ menu.
             .when(self.titlebar_more_menu_visible(), |this| {
@@ -497,7 +422,12 @@ impl GhostexGpuiApp {
             })
             // With a view open the toggles end the view tab strip instead (render_workarea_panel_toggles).
             .when(!self.workarea_header_hosts_view_tab_strip(), |this| {
-                this.child(self.render_workarea_panel_toggles(cx))
+                this.child(
+                    div()
+                        .flex_shrink_0()
+                        .ml(px(self.workarea_header_closing_clearance()))
+                        .child(self.render_workarea_panel_toggles(cx)),
+                )
             })
             .child(self.render_titlebar_extension_popup_panel(window, cx));
         let controls = h_flex()
@@ -506,7 +436,9 @@ impl GhostexGpuiApp {
             .max_w_full()
             .h_full()
             .items_center()
-            .pr(px(WORKAREA_HEADER_EDGE_PADDING))
+            .pr(px(
+                WORKAREA_HEADER_EDGE_PADDING + self.workarea_header_opening_clearance()
+            ))
             .child(
                 h_flex()
                     .id("ghostex-gpui-workarea-header-controls-scroll")

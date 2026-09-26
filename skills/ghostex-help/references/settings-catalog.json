@@ -294,6 +294,20 @@
       "agentWritable": true
     },
     {
+      "key": "closeSidePanelWithLastTab",
+      "title": "Close side panel with its last tab",
+      "subtitle": "Close the side panel when you close its last tab, instead of showing the Open a view picker.",
+      "tab": "settings",
+      "tabTitle": "General",
+      "group": "sidebar",
+      "groupTitle": "Sidebar",
+      "section": "sidebar",
+      "sectionTitle": "Sidebar",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
       "key": "sidebarTooltipDelayMs",
       "title": "Tooltip Delay",
       "subtitle": "Set how long sidebar hover labels wait before appearing. Set to 0 to show them immediately.",
@@ -1454,8 +1468,8 @@
     },
     {
       "key": "showQuickModelPickerInTerminal",
-      "title": "Show quick model & effort picker for Claude and Codex in terminal view",
-      "subtitle": "Use the model picker shortcut (⌥P by default) in Claude and Codex terminal sessions. Turn off to use terminal bindings.",
+      "title": "Model picker in terminal view",
+      "subtitle": "Show a model button in the terminal bar and open the model picker with its shortcut (⌥P by default) in agent terminal sessions. Turn off to use terminal bindings.",
       "tab": "settings",
       "tabTitle": "General",
       "group": "terminal",
@@ -2789,21 +2803,27 @@
       "type": "json",
       "default": {
         "scrollChatToBottom": "ctrl+shift+down",
-        "createSession": "cmd+t",
+        "focusChatComposer": "shift+escape",
+        "copyLastChatCodeBlock": "cmd+shift+;",
+        "copyLastChatReply": "cmd+shift+c",
+        "toggleChatSummaryMode": "cmd+ctrl+s",
+        "createAgentSession": "cmd+shift+o",
+        "createSession": "cmd+shift+t",
         "openCommandPalette": "cmd+shift+p",
         "openSessionSearchPalette": "cmd+p",
-        "openNewThreadPalette": "cmd+shift+t",
-        "openCommandsPanel": "f12",
+        "openProjectSearchPalette": "cmd+alt+shift+o",
+        "openNewThreadPalette": "cmd+n",
+        "openCommandsPanel": "cmd+j",
         "openSettings": "cmd+,",
         "openExtensions": "",
         "openGhostexHelp": "",
-        "openHotkeys": "cmd+.",
+        "openHotkeys": "cmd+/",
         "toggleSidebarCollapsed": "cmd+b",
         "toggleViewPanel": "cmd+alt+b",
         "expandViewPanel": "cmd+ctrl+e",
         "expandViewPanelFully": "cmd+ctrl+shift+e",
         "renameActiveSession": "cmd+r",
-        "openBrowserPane": "cmd+n",
+        "openBrowserPane": "cmd+t",
         "switchAgentsView": "",
         "switchSourceView": "",
         "switchGitHubView": "",
@@ -2837,11 +2857,11 @@
         "scrollTerminalToTop": "",
         "scrollTerminalToBottom": "",
         "splitSessionRight": "alt+shift+d",
-        "forkSession": "ctrl+shift+f",
-        "reloadSession": "ctrl+shift+r",
-        "sleepFocusedSession": "",
+        "forkSession": "cmd+ctrl+shift+f",
+        "reloadSession": "",
+        "sleepFocusedSession": "cmd+shift+a",
         "wakeFocusedSession": "",
-        "closeFocusedSession": "",
+        "closeFocusedSession": "cmd+shift+backspace",
         "popOutPane": "ctrl+shift+o",
         "focusPreviousGroup": "",
         "focusNextGroup": "",
@@ -3023,8 +3043,8 @@
     },
     {
       "key": "darkThemePreset",
-      "title": "Dark theme",
-      "subtitle": "Preset dark chrome for the sidebar and window, or Custom to tune its contrast and tint.",
+      "title": "Dark mode colour",
+      "subtitle": "The colour of the sidebar and window in dark mode: one of sixteen colour squares, or a custom colour under More colour options.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -3035,7 +3055,7 @@
       "default": "gray",
       "options": [
         {
-          "label": "Dark Gray",
+          "label": "Graphite",
           "value": "gray"
         },
         {
@@ -3043,16 +3063,56 @@
           "value": "black"
         },
         {
+          "label": "Slate",
+          "value": "slate"
+        },
+        {
+          "label": "Midnight",
+          "value": "midnight"
+        },
+        {
           "label": "Blue",
           "value": "blue"
+        },
+        {
+          "label": "Indigo",
+          "value": "indigo"
+        },
+        {
+          "label": "Teal",
+          "value": "teal"
         },
         {
           "label": "Green",
           "value": "green"
         },
         {
+          "label": "Forest",
+          "value": "forest"
+        },
+        {
+          "label": "Olive",
+          "value": "olive"
+        },
+        {
+          "label": "Amber",
+          "value": "amber"
+        },
+        {
+          "label": "Orange",
+          "value": "orange"
+        },
+        {
           "label": "Red",
           "value": "red"
+        },
+        {
+          "label": "Rose",
+          "value": "rose"
+        },
+        {
+          "label": "Pink",
+          "value": "pink"
         },
         {
           "label": "Purple",
@@ -3067,8 +3127,8 @@
     },
     {
       "key": "customSidebarTitlebarBackgroundDarknessPercent",
-      "title": "Dark theme background contrast",
-      "subtitle": "Contrast of the dark sidebar and window chrome background while Dark theme is Custom.",
+      "title": "Custom dark mode depth",
+      "subtitle": "How deep the custom dark mode colour is, while Custom colour in dark mode is on.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -3083,8 +3143,8 @@
     },
     {
       "key": "customSidebarTitlebarBackgroundTintColor",
-      "title": "Dark theme background tint",
-      "subtitle": "Subtle tint of the dark sidebar and window chrome background while Dark theme is Custom.",
+      "title": "Custom dark mode tint",
+      "subtitle": "The hue of the custom dark mode colour, while Custom colour in dark mode is on.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -3097,8 +3157,8 @@
     },
     {
       "key": "lightThemePreset",
-      "title": "Light theme",
-      "subtitle": "Preset light chrome for the sidebar and window, or Custom to tune its contrast and tint.",
+      "title": "Light mode colour",
+      "subtitle": "The colour of the sidebar and window in light mode: one of sixteen colour squares, or a custom colour under More colour options.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -3109,7 +3169,7 @@
       "default": "gray",
       "options": [
         {
-          "label": "Light Gray",
+          "label": "Graphite",
           "value": "gray"
         },
         {
@@ -3117,20 +3177,60 @@
           "value": "white"
         },
         {
+          "label": "Slate",
+          "value": "slate"
+        },
+        {
+          "label": "Midnight",
+          "value": "midnight"
+        },
+        {
           "label": "Blue",
           "value": "blue"
+        },
+        {
+          "label": "Indigo",
+          "value": "indigo"
+        },
+        {
+          "label": "Teal",
+          "value": "teal"
         },
         {
           "label": "Green",
           "value": "green"
         },
         {
-          "label": "Pink",
-          "value": "pink"
+          "label": "Forest",
+          "value": "forest"
+        },
+        {
+          "label": "Olive",
+          "value": "olive"
+        },
+        {
+          "label": "Amber",
+          "value": "amber"
         },
         {
           "label": "Orange",
           "value": "orange"
+        },
+        {
+          "label": "Red",
+          "value": "red"
+        },
+        {
+          "label": "Rose",
+          "value": "rose"
+        },
+        {
+          "label": "Pink",
+          "value": "pink"
+        },
+        {
+          "label": "Purple",
+          "value": "purple"
         },
         {
           "label": "Custom",
@@ -3141,8 +3241,8 @@
     },
     {
       "key": "themeSidebarContrast",
-      "title": "Sidebar contrast",
-      "subtitle": "The sidebar's contrast. Higher makes dark backgrounds darker and light backgrounds whiter; 0 is the theme's own.",
+      "title": "Sidebar colourfulness",
+      "subtitle": "How much of the theme colour shows in the sidebar, from Subtle (deeper, nearly neutral) to Vivid (lighter, more colourful). Colourfulness sets the sidebar and work area together.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -3155,8 +3255,8 @@
     },
     {
       "key": "themeWorkAreaContrast",
-      "title": "Work area contrast",
-      "subtitle": "The work area's contrast (chat, terminals and views). Higher makes dark backgrounds darker and light backgrounds whiter; 0 is the theme's own.",
+      "title": "Work area colourfulness",
+      "subtitle": "How much of the theme colour shows in the work area (chat, terminals and views), from Subtle to Vivid. Colourfulness sets the sidebar and work area together.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -3169,8 +3269,8 @@
     },
     {
       "key": "customSidebarTitlebarLightBackgroundLightnessPercent",
-      "title": "Light theme background contrast",
-      "subtitle": "Contrast of the light sidebar and window chrome background while Light theme is Custom.",
+      "title": "Custom light mode depth",
+      "subtitle": "How deep the custom light mode colour is, while Custom colour in light mode is on.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -3183,8 +3283,8 @@
     },
     {
       "key": "customSidebarTitlebarLightBackgroundTintColor",
-      "title": "Light theme background tint",
-      "subtitle": "Subtle tint of the light sidebar and window chrome background while Light theme is Custom.",
+      "title": "Custom light mode tint",
+      "subtitle": "The hue of the custom light mode colour, while Custom colour in light mode is on.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -3261,7 +3361,7 @@
     },
     {
       "key": "terminalGhosttyLightTheme",
-      "title": "Terminal light palette",
+      "title": "Terminal palette in light mode",
       "subtitle": "Uses your configured Ghostty light theme, or GitHub Light when no theme is configured.",
       "tab": "theme",
       "tabTitle": "Theme",
@@ -5221,7 +5321,7 @@
     },
     {
       "key": "terminalGhosttyTheme",
-      "title": "Terminal dark palette",
+      "title": "Terminal palette in dark mode",
       "subtitle": "Uses your configured Ghostty dark theme, or GitHub Dark when no theme is configured.",
       "tab": "theme",
       "tabTitle": "Theme",
@@ -7185,8 +7285,8 @@
     },
     {
       "key": "windowGlass",
-      "title": "Window glass",
-      "subtitle": "Let the blurred desktop show through the window. By default, light mode stays opaque.",
+      "title": "Enable transparency",
+      "subtitle": "Let your desktop show through the window. Use transparency picks Dark only, Always or Never.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -7197,15 +7297,15 @@
       "default": "auto",
       "options": [
         {
-          "label": "Glass in dark mode",
+          "label": "Dark only",
           "value": "auto"
         },
         {
-          "label": "Always glass",
+          "label": "Always",
           "value": "frosted"
         },
         {
-          "label": "Always opaque",
+          "label": "Never",
           "value": "opaque"
         }
       ],
@@ -7213,8 +7313,8 @@
     },
     {
       "key": "windowGlassSource",
-      "title": "Glass shows",
-      "subtitle": "Wallpaper only keeps other windows from showing through the glass. Custom image shows a picture you choose.",
+      "title": "What shows behind the glass",
+      "subtitle": "Desktop and windows, your wallpaper, a picture you choose, or Live: a calm animation in your theme colours or your own video.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -7235,14 +7335,18 @@
         {
           "label": "Custom image",
           "value": "customImage"
+        },
+        {
+          "label": "Live",
+          "value": "live"
         }
       ],
       "agentWritable": true
     },
     {
       "key": "windowGlassImagePlacement",
-      "title": "Glass picture position",
-      "subtitle": "Where the wallpaper or custom picture sits behind the glass. Stays with the desktop can trail the window while you drag it.",
+      "title": "Picture position",
+      "subtitle": "Where the wallpaper, custom picture or your own Live video sits behind the glass. Stays with the desktop can trail the window while you drag it.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -7265,8 +7369,8 @@
     },
     {
       "key": "windowGlassImageDark",
-      "title": "Glass image for dark mode",
-      "subtitle": "The picture the glass blurs in dark mode when Glass shows is Custom image.",
+      "title": "Picture for dark mode",
+      "subtitle": "The picture the glass blurs in dark mode when Picture shows behind the glass.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -7279,8 +7383,8 @@
     },
     {
       "key": "windowGlassImageLight",
-      "title": "Glass image for light mode",
-      "subtitle": "The picture the glass blurs in light mode when Glass shows is Custom image.",
+      "title": "Picture for light mode",
+      "subtitle": "The picture the glass blurs in light mode when Picture shows behind the glass.",
       "tab": "theme",
       "tabTitle": "Theme",
       "group": "appearance",
@@ -7289,6 +7393,180 @@
       "sectionTitle": "Theme",
       "type": "string",
       "default": "",
+      "agentWritable": true
+    },
+    {
+      "key": "windowGlassVideoDark",
+      "title": "Your video for dark mode",
+      "subtitle": "The video file the glass plays in dark mode when Live is set to Your video.",
+      "tab": "theme",
+      "tabTitle": "Theme",
+      "group": "appearance",
+      "groupTitle": "Theme",
+      "section": "theming",
+      "sectionTitle": "Theme",
+      "type": "string",
+      "default": "",
+      "agentWritable": true
+    },
+    {
+      "key": "windowGlassVideoLight",
+      "title": "Your video for light mode",
+      "subtitle": "The video file the glass plays in light mode when Live is set to Your video.",
+      "tab": "theme",
+      "tabTitle": "Theme",
+      "group": "appearance",
+      "groupTitle": "Theme",
+      "section": "theming",
+      "sectionTitle": "Theme",
+      "type": "string",
+      "default": "",
+      "agentWritable": true
+    },
+    {
+      "key": "windowGlassVideoOnlyOnPower",
+      "title": "Play only when plugged in",
+      "subtitle": "Pause the Live animation or video while your computer runs on battery. It always pauses when Ghostex is in the background.",
+      "tab": "theme",
+      "tabTitle": "Theme",
+      "group": "appearance",
+      "groupTitle": "Theme",
+      "section": "theming",
+      "sectionTitle": "Theme",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "windowGlassLiveStyleDark",
+      "title": "Live background for dark mode",
+      "subtitle": "The animation, or your own video, the glass shows in dark mode when Live shows behind the glass.",
+      "tab": "theme",
+      "tabTitle": "Theme",
+      "group": "appearance",
+      "groupTitle": "Theme",
+      "section": "theming",
+      "sectionTitle": "Theme",
+      "type": "enum",
+      "default": "aurora",
+      "options": [
+        {
+          "label": "Aurora",
+          "value": "aurora"
+        },
+        {
+          "label": "Ink",
+          "value": "ink"
+        },
+        {
+          "label": "Drift",
+          "value": "drift"
+        },
+        {
+          "label": "Nebula",
+          "value": "nebula"
+        },
+        {
+          "label": "Silk",
+          "value": "silk"
+        },
+        {
+          "label": "Bokeh",
+          "value": "bokeh"
+        },
+        {
+          "label": "Waves",
+          "value": "waves"
+        },
+        {
+          "label": "Mesh",
+          "value": "mesh"
+        },
+        {
+          "label": "Your video",
+          "value": "video"
+        }
+      ],
+      "agentWritable": true
+    },
+    {
+      "key": "windowGlassLiveStyleLight",
+      "title": "Live background for light mode",
+      "subtitle": "The animation, or your own video, the glass shows in light mode when Live shows behind the glass.",
+      "tab": "theme",
+      "tabTitle": "Theme",
+      "group": "appearance",
+      "groupTitle": "Theme",
+      "section": "theming",
+      "sectionTitle": "Theme",
+      "type": "enum",
+      "default": "drift",
+      "options": [
+        {
+          "label": "Aurora",
+          "value": "aurora"
+        },
+        {
+          "label": "Ink",
+          "value": "ink"
+        },
+        {
+          "label": "Drift",
+          "value": "drift"
+        },
+        {
+          "label": "Nebula",
+          "value": "nebula"
+        },
+        {
+          "label": "Silk",
+          "value": "silk"
+        },
+        {
+          "label": "Bokeh",
+          "value": "bokeh"
+        },
+        {
+          "label": "Waves",
+          "value": "waves"
+        },
+        {
+          "label": "Mesh",
+          "value": "mesh"
+        },
+        {
+          "label": "Your video",
+          "value": "video"
+        }
+      ],
+      "agentWritable": true
+    },
+    {
+      "key": "windowGlassLiveSpeed",
+      "title": "Live background speed",
+      "subtitle": "How fast the Live animation moves, from a quarter of its pace to twice as fast.",
+      "tab": "theme",
+      "tabTitle": "Theme",
+      "group": "appearance",
+      "groupTitle": "Theme",
+      "section": "theming",
+      "sectionTitle": "Theme",
+      "type": "number",
+      "default": 1,
+      "agentWritable": true
+    },
+    {
+      "key": "windowGlassLiveBrightness",
+      "title": "Live background brightness",
+      "subtitle": "How bright the Live animation glows behind the glass. Lower keeps it a subtle glow.",
+      "tab": "theme",
+      "tabTitle": "Theme",
+      "group": "appearance",
+      "groupTitle": "Theme",
+      "section": "theming",
+      "sectionTitle": "Theme",
+      "type": "number",
+      "default": 45,
       "agentWritable": true
     },
     {
@@ -7302,7 +7580,7 @@
       "section": "theming",
       "sectionTitle": "Theme",
       "type": "number",
-      "default": 80,
+      "default": 88,
       "agentWritable": true
     },
     {
@@ -7316,7 +7594,7 @@
       "section": "theming",
       "sectionTitle": "Theme",
       "type": "number",
-      "default": 88,
+      "default": 81,
       "agentWritable": true
     },
     {
@@ -7330,7 +7608,7 @@
       "section": "theming",
       "sectionTitle": "Theme",
       "type": "number",
-      "default": 88,
+      "default": 93,
       "agentWritable": true
     },
     {
@@ -7344,12 +7622,12 @@
       "section": "theming",
       "sectionTitle": "Theme",
       "type": "number",
-      "default": 93,
+      "default": 86,
       "agentWritable": true
     },
     {
       "key": "showActivePaneOutline",
-      "title": "Show Active Pane Outline",
+      "title": "Show active pane outline",
       "subtitle": "Show an outline around the currently focused pane.",
       "tab": "theme",
       "tabTitle": "Theme",
@@ -7364,7 +7642,7 @@
     },
     {
       "key": "workspaceActivePaneBorderColor",
-      "title": "Active Pane Border",
+      "title": "Active pane outline colour",
       "subtitle": "Color of the outline around the currently focused pane.",
       "tab": "theme",
       "tabTitle": "Theme",
@@ -7422,7 +7700,7 @@
     {
       "key": "debuggingMode",
       "title": "Show debug UI controls",
-      "subtitle": "Show debug-only controls, storage statistics, and enabled routine diagnostic logs.",
+      "subtitle": "Show diagnostic logs, and Copy Resume and Copy Attach in session menus.",
       "tab": "debugging",
       "tabTitle": "Debugging",
       "section": "controls",
@@ -7433,8 +7711,8 @@
     },
     {
       "key": "diagnosticLogging",
-      "title": "Diagnostic disk logging scenarios",
-      "subtitle": "Choose routine repro log areas while Show debug UI controls is on. Important warnings, errors, and crashes remain captured when it is off.",
+      "title": "Diagnostic logs",
+      "subtitle": "Pick the areas to log while you reproduce an issue, and when logging turns off. Warnings, errors, and crashes are always captured.",
       "tab": "debugging",
       "tabTitle": "Debugging",
       "section": "controls",
@@ -7446,386 +7724,46 @@
       },
       "options": [
         {
-          "label": "Desktop performance profiling",
-          "value": "gpui.performance"
-        },
-        {
-          "label": "gpui-performance.jsonl",
-          "value": "gpui-performance.jsonl"
-        },
-        {
-          "label": "Chat draft persistence and recovery",
-          "value": "gpui.sessionChat.drafts"
-        },
-        {
-          "label": "gpui-session-chat-debug.jsonl",
-          "value": "gpui-session-chat-debug.jsonl"
-        },
-        {
-          "label": "gxserver.jsonl",
-          "value": "gxserver.jsonl"
-        },
-        {
-          "label": "Terminal focus and input routing",
+          "label": "Terminals, panes, and keyboard focus",
           "value": "native.terminal.focus"
         },
         {
-          "label": "native-terminal-focus-debug.log",
-          "value": "native-terminal-focus-debug.log"
-        },
-        {
-          "label": "gpui-terminal-focus-debug.log",
-          "value": "gpui-terminal-focus-debug.log"
-        },
-        {
-          "label": "Terminal resize and reflow",
-          "value": "native.terminal.resize"
-        },
-        {
-          "label": "native-terminal-focus-debug.log",
-          "value": "native-terminal-focus-debug.log"
-        },
-        {
-          "label": "Sidebar refresh and hydration",
+          "label": "Sidebar, browser, and editor panes",
           "value": "native.sidebar.refresh"
         },
         {
-          "label": "sidebar-refresh-debug.log",
-          "value": "sidebar-refresh-debug.log"
+          "label": "Chat",
+          "value": "gpui.sessionChat.viewState"
         },
         {
-          "label": "gpui-sidebar-refresh-debug.log",
-          "value": "gpui-sidebar-refresh-debug.log"
+          "label": "Modals and Settings",
+          "value": "gpui.app.modal"
         },
         {
-          "label": "Sidebar collapse state",
-          "value": "native.sidebar.collapse"
-        },
-        {
-          "label": "sidebar-collapse-state-debug.log",
-          "value": "sidebar-collapse-state-debug.log"
-        },
-        {
-          "label": "Pane tabs, resize rails, and sidebar divider",
-          "value": "native.pane.tabs"
-        },
-        {
-          "label": "native-pane-tabs-debug.log",
-          "value": "native-pane-tabs-debug.log"
-        },
-        {
-          "label": "Pane reorder repros",
-          "value": "native.pane.reorder"
-        },
-        {
-          "label": "native-pane-reorder-repro.log",
-          "value": "native-pane-reorder-repro.log"
-        },
-        {
-          "label": "Layout, layering, and hit testing",
-          "value": "native.layout.layering"
-        },
-        {
-          "label": "native-layout-layering-debug.log",
-          "value": "native-layout-layering-debug.log"
-        },
-        {
-          "label": "View switching and header routing",
-          "value": "native.mode.switcher"
-        },
-        {
-          "label": "native-mode-switcher-debug.log",
-          "value": "native-mode-switcher-debug.log"
-        },
-        {
-          "label": "Sidebar and header responsiveness",
-          "value": "native.chrome.responsiveness"
-        },
-        {
-          "label": "native-chrome-responsiveness-debug.log",
-          "value": "native-chrome-responsiveness-debug.log"
-        },
-        {
-          "label": "sidebar-refresh-debug.log",
-          "value": "sidebar-refresh-debug.log"
-        },
-        {
-          "label": "Session titles and auto-rename",
-          "value": "native.session.title"
-        },
-        {
-          "label": "session-title-sync-debug.log",
-          "value": "session-title-sync-debug.log"
-        },
-        {
-          "label": "Agent detection and activity",
-          "value": "native.agent.detection"
-        },
-        {
-          "label": "agent-detection-debug.log",
-          "value": "agent-detection-debug.log"
-        },
-        {
-          "label": "Workspace restore and startup",
-          "value": "native.workspace.restore"
-        },
-        {
-          "label": "workspace-restore-debug.log",
-          "value": "workspace-restore-debug.log"
-        },
-        {
-          "label": "Workspace dock indicator",
-          "value": "native.workspace.dock"
-        },
-        {
-          "label": "workspace-dock-indicator-debug.log",
-          "value": "workspace-dock-indicator-debug.log"
-        },
-        {
-          "label": "Native host lifecycle",
-          "value": "native.host.lifecycle"
-        },
-        {
-          "label": "native-host-lifecycle.log",
-          "value": "native-host-lifecycle.log"
-        },
-        {
-          "label": "gpui-host-lifecycle.log",
-          "value": "gpui-host-lifecycle.log"
-        },
-        {
-          "label": "Menu bar session status dropdown",
-          "value": "native.menuBar.status"
-        },
-        {
-          "label": "native-menu-bar-status-debug.log",
-          "value": "native-menu-bar-status-debug.log"
-        },
-        {
-          "label": "Project board actions",
+          "label": "Project board",
           "value": "native.project.board"
         },
         {
-          "label": "project-board-debug.log",
-          "value": "project-board-debug.log"
+          "label": "Remote machines",
+          "value": "native.remote.gxserver.install"
         },
         {
-          "label": "gpui-project-board-debug.log",
-          "value": "gpui-project-board-debug.log"
-        },
-        {
-          "label": "Ghostty config startup",
-          "value": "native.ghostty.config"
-        },
-        {
-          "label": "native-ghostty-config.log",
-          "value": "native-ghostty-config.log"
-        },
-        {
-          "label": "Terminal link opening",
-          "value": "native.terminal.links"
-        },
-        {
-          "label": "terminal-link-open-debug.log",
-          "value": "terminal-link-open-debug.log"
+          "label": "Agent activity",
+          "value": "gxserver.agentActivity"
         },
         {
           "label": "Prompt editor",
           "value": "native.prompt.editor"
         },
         {
-          "label": "native-prompt-editor-debug.log",
-          "value": "native-prompt-editor-debug.log"
+          "label": "App and server lifecycle",
+          "value": "native.host.lifecycle"
         },
         {
-          "label": "Remote gxserver install",
-          "value": "native.remote.gxserver.install"
-        },
-        {
-          "label": "remote-gxserver-install-debug.log",
-          "value": "remote-gxserver-install-debug.log"
-        },
-        {
-          "label": "gpui-remote-gxserver-install-debug.log",
-          "value": "gpui-remote-gxserver-install-debug.log"
-        },
-        {
-          "label": "App modals and Settings windows",
-          "value": "native.app.modal"
-        },
-        {
-          "label": "app-modal-debug.log",
-          "value": "app-modal-debug.log"
-        },
-        {
-          "label": "app-modal-errors.log",
-          "value": "app-modal-errors.log"
-        },
-        {
-          "label": "GPUI sidebar focus and bouncing",
-          "value": "gpui.sidebar.focus"
-        },
-        {
-          "label": "gpui-sidebar-focus-debug.jsonl",
-          "value": "gpui-sidebar-focus-debug.jsonl"
-        },
-        {
-          "label": "GPUI sidebar renderer lifecycle",
-          "value": "gpui.sidebar.renderer"
-        },
-        {
-          "label": "gpui-sidebar-renderer-debug.jsonl",
-          "value": "gpui-sidebar-renderer-debug.jsonl"
-        },
-        {
-          "label": "GPUI app modals and Settings",
-          "value": "gpui.app.modal"
-        },
-        {
-          "label": "gpui-app-modal-debug.jsonl",
-          "value": "gpui-app-modal-debug.jsonl"
-        },
-        {
-          "label": "GPUI session chat view state",
-          "value": "gpui.sessionChat.viewState"
-        },
-        {
-          "label": "gpui-session-chat-debug.jsonl",
-          "value": "gpui-session-chat-debug.jsonl"
-        },
-        {
-          "label": "Chat recording for reproducing a problem (contains your conversation)",
-          "value": "native.chat.replay"
-        },
-        {
-          "label": "/tmp/gx-chat/*.jsonl",
-          "value": "/tmp/gx-chat/*.jsonl"
-        },
-        {
-          "label": "Chat engine shadow comparison",
-          "value": "native.chat.shadow"
-        },
-        {
-          "label": "gpui-session-chat-debug.jsonl",
-          "value": "gpui-session-chat-debug.jsonl"
-        },
-        {
-          "label": "Daemon lifecycle",
-          "value": "gxserver.lifecycle"
-        },
-        {
-          "label": "gxserver.jsonl",
-          "value": "gxserver.jsonl"
-        },
-        {
-          "label": "API requests",
+          "label": "Server requests",
           "value": "gxserver.requests"
-        },
-        {
-          "label": "gxserver.jsonl",
-          "value": "gxserver.jsonl"
-        },
-        {
-          "label": "Typed operations",
-          "value": "gxserver.typedOperations"
-        },
-        {
-          "label": "gxserver.jsonl",
-          "value": "gxserver.jsonl"
-        },
-        {
-          "label": "Repository cloning",
-          "value": "gxserver.repositoryClone"
-        },
-        {
-          "label": "gxserver.jsonl",
-          "value": "gxserver.jsonl"
-        },
-        {
-          "label": "Portless",
-          "value": "gxserver.portless"
-        },
-        {
-          "label": "gxserver.jsonl",
-          "value": "gxserver.jsonl"
-        },
-        {
-          "label": "Agent activity transitions",
-          "value": "gxserver.agentActivity"
-        },
-        {
-          "label": "gxserver.jsonl",
-          "value": "gxserver.jsonl"
         }
       ],
-      "agentWritable": false
-    },
-    {
-      "key": "chatBrain",
-      "title": "Chat brain",
-      "subtitle": "Which engine runs the chat. Leave this on QuickJS; the Rust engine is still in development.",
-      "tab": "debugging",
-      "tabTitle": "Debugging",
-      "section": "controls",
-      "sectionTitle": "Debug controls",
-      "type": "enum",
-      "default": "quickjs",
-      "options": [
-        {
-          "label": "QuickJS (shipped)",
-          "value": "quickjs"
-        },
-        {
-          "label": "Rust (in development)",
-          "value": "rust"
-        }
-      ],
-      "agentWritable": true
-    },
-    {
-      "key": "showSessionCommandCopyActions",
-      "title": "Show command copy actions",
-      "subtitle": "Show Copy resume and Copy attach command in session context menus.",
-      "tab": "debugging",
-      "tabTitle": "Debugging",
-      "section": "controls",
-      "sectionTitle": "Debug controls",
-      "type": "boolean",
-      "default": false,
-      "agentWritable": true
-    },
-    {
-      "key": "showSessionDetailsCopyAction",
-      "title": "Show Copy Details option",
-      "subtitle": "Show Copy Details in session context menus.",
-      "tab": "debugging",
-      "tabTitle": "Debugging",
-      "section": "controls",
-      "sectionTitle": "Debug controls",
-      "type": "boolean",
-      "default": false,
-      "agentWritable": true
-    },
-    {
-      "key": "storageUsage",
-      "title": "Storage usage",
-      "subtitle": "Inspect browser storage by feature, budgets, pending saves, and disposable caches.",
-      "tab": "debugging",
-      "tabTitle": "Debugging",
-      "section": "storage",
-      "sectionTitle": "Storage",
-      "type": "ui",
-      "agentWritable": false
-    },
-    {
-      "key": "storageStats",
-      "title": "Ghostex folder storage",
-      "subtitle": "View on-disk Ghostex folder sizes and total usage, refresh statistics, or open the data folder.",
-      "tab": "debugging",
-      "tabTitle": "Debugging",
-      "section": "storage",
-      "sectionTitle": "Storage",
-      "type": "ui",
       "agentWritable": false
     },
     {
@@ -8391,8 +8329,8 @@
           "value": "ghostex-embedded-browser-use"
         },
         {
-          "label": "Ghostex Agents Orchestration",
-          "value": "ghostex-agents-orchestration"
+          "label": "Ghostex Agents",
+          "value": "ghostex-agents"
         },
         {
           "label": "Ghostex Auto Rename Session",
@@ -8562,6 +8500,90 @@
       "agentWritable": true
     },
     {
+      "key": "sentryViewTabHidden",
+      "title": "Hide Sentry view",
+      "subtitle": "Enable Sentry in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "viewOrder",
+      "sectionTitle": "Views",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "figmaViewTabHidden",
+      "title": "Hide Figma view",
+      "subtitle": "Enable Figma in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "viewOrder",
+      "sectionTitle": "Views",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "vercelViewTabHidden",
+      "title": "Hide Vercel view",
+      "subtitle": "Enable Vercel in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "viewOrder",
+      "sectionTitle": "Views",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "supabaseViewTabHidden",
+      "title": "Hide Supabase view",
+      "subtitle": "Enable Supabase in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "viewOrder",
+      "sectionTitle": "Views",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "githubActionsViewTabHidden",
+      "title": "Hide GitHub Actions view",
+      "subtitle": "Enable GitHub Actions in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "viewOrder",
+      "sectionTitle": "Views",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "posthogViewTabHidden",
+      "title": "Hide PostHog view",
+      "subtitle": "Enable PostHog in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "viewOrder",
+      "sectionTitle": "Views",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "customWebsiteViewTabHidden",
+      "title": "Hide Custom Website view",
+      "subtitle": "Enable Custom Website in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "viewOrder",
+      "sectionTitle": "Views",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
       "key": "storybookViewTabHidden",
       "title": "Hide Storybook view",
       "subtitle": "Hide the built-in component workshop. When enabled, it appears only in projects with Storybook.",
@@ -8700,7 +8722,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8711,7 +8733,84 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "sentry",
+      "title": "Sentry",
+      "subtitle": "Investigate errors and stack traces beside your code. Choose a home URL for each project or worktree.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "figma",
+      "title": "Figma",
+      "subtitle": "Keep designs and component specs beside your implementation. Choose a home URL for each project or worktree.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "vercel",
+      "title": "Vercel",
+      "subtitle": "Check deployments and preview your changes. Choose a home URL for each project or worktree.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "supabase",
+      "title": "Supabase",
+      "subtitle": "Browse your database, authentication, and project logs. Choose a home URL for each project or worktree.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "github-actions",
+      "title": "GitHub Actions",
+      "subtitle": "Follow workflow runs, build results, and job logs. Choose a home URL for each project or worktree.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "posthog",
+      "title": "PostHog",
+      "subtitle": "Explore product analytics and session replays. Choose a home URL for each project or worktree.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "custom-website",
+      "title": "Custom Website",
+      "subtitle": "Keep any website beside your work. Choose a home URL for each project or worktree.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8722,7 +8821,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8733,7 +8832,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8744,7 +8843,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8755,7 +8854,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8766,7 +8865,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8777,7 +8876,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8788,7 +8887,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8799,7 +8898,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8810,7 +8909,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8821,7 +8920,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8832,7 +8931,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8843,7 +8942,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8854,7 +8953,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8865,7 +8964,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8876,7 +8975,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8887,7 +8986,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8898,18 +8997,7 @@
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Official Extensions",
-      "type": "ui",
-      "agentWritable": false
-    },
-    {
-      "key": "accountTitlebarUsage",
-      "title": "Account usage in the sidebar",
-      "subtitle": "Show or hide usage stats for saved Claude and Codex accounts at the bottom of the desktop sidebar. Star accounts to pin their usage.",
-      "tab": "extensions",
-      "tabTitle": "Extensions",
-      "section": "accountUsage",
-      "sectionTitle": "Account usage in the sidebar",
+      "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
     },
@@ -8934,6 +9022,17 @@
       "sectionTitle": "Your views",
       "type": "json",
       "default": [],
+      "agentWritable": false
+    },
+    {
+      "key": "accountTitlebarUsage",
+      "title": "Account usage in the sidebar",
+      "subtitle": "Show or hide usage stats for saved Claude and Codex accounts at the bottom of the desktop sidebar. Star accounts to pin their usage.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "accountUsage",
+      "sectionTitle": "Account usage in the sidebar",
+      "type": "ui",
       "agentWritable": false
     },
     {
@@ -9755,16 +9854,57 @@
       "windowsLinuxDefaultKey": "cmd+shift+down"
     },
     {
+      "id": "focusChatComposer",
+      "title": "Focus Chat Box",
+      "description": "Move the keyboard to the chat box of the chat session you are in.",
+      "defaultKey": "shift+escape"
+    },
+    {
+      "id": "copyLastChatCodeBlock",
+      "title": "Copy Last Code Block",
+      "description": "Copy the last code block the agent wrote in the chat session you are in.",
+      "defaultKey": "cmd+shift+;"
+    },
+    {
+      "id": "copyLastChatReply",
+      "title": "Copy Last Reply",
+      "description": "Copy the agent's last reply in the chat session you are in.",
+      "defaultKey": "cmd+shift+c"
+    },
+    {
+      "id": "toggleChatSummaryMode",
+      "title": "Toggle Summary Mode",
+      "description": "Turn Summary mode on or off in the chat session you are in.",
+      "defaultKey": "cmd+ctrl+s",
+      "windowsLinuxDefaultKey": "cmd+alt+shift+s"
+    },
+    {
+      "id": "createAgentSession",
+      "title": "New Agent Session",
+      "description": "Start your last-used agent in the active project, in your default interface.",
+      "defaultKey": "cmd+shift+o",
+      "retiredDefaultKeys": [
+        "cmd+t"
+      ]
+    },
+    {
       "id": "createSession",
-      "title": "Create Session",
+      "title": "New Terminal",
       "description": "Create a terminal session.",
-      "defaultKey": "cmd+t"
+      "defaultKey": "cmd+shift+t",
+      "retiredDefaultKeys": [
+        "cmd+n",
+        "cmd+t"
+      ]
     },
     {
       "id": "openCommandPalette",
       "title": "Open Quick Access: Commands",
       "description": "Open Ghostex Quick Access on Commands.",
-      "defaultKey": "cmd+shift+p"
+      "defaultKey": "cmd+shift+p",
+      "retiredDefaultKeys": [
+        "cmd+k"
+      ]
     },
     {
       "id": "openSessionSearchPalette",
@@ -9773,16 +9913,30 @@
       "defaultKey": "cmd+p"
     },
     {
+      "id": "openProjectSearchPalette",
+      "title": "Open Quick Access: Recent Projects",
+      "description": "Open Ghostex Quick Access on Recent Projects.",
+      "defaultKey": "cmd+alt+shift+o"
+    },
+    {
       "id": "openNewThreadPalette",
       "title": "New Thread in Active Project",
       "description": "Pick an agent, Browser, or Terminal to start in the active project.",
-      "defaultKey": "cmd+shift+t"
+      "defaultKey": "cmd+n",
+      "retiredDefaultKeys": [
+        "cmd+shift+t",
+        "cmd+alt+t"
+      ]
     },
     {
       "id": "openCommandsPanel",
       "title": "Open Commands Panel",
-      "description": "Open the project command terminal panel. When the pane is already focused, hide it; press again to show it.",
-      "defaultKey": "f12"
+      "description": "Open the project command terminal panel (F12 always works too). When the pane is already focused, hide it; press again to show it.",
+      "defaultKey": "cmd+j",
+      "windowsLinuxDefaultKey": "f12",
+      "retiredDefaultKeys": [
+        "f12"
+      ]
     },
     {
       "id": "openSettings",
@@ -9806,7 +9960,10 @@
       "id": "openHotkeys",
       "title": "Hotkeys",
       "description": "Open app hotkeys.",
-      "defaultKey": "cmd+."
+      "defaultKey": "cmd+/",
+      "retiredDefaultKeys": [
+        "cmd+."
+      ]
     },
     {
       "id": "toggleSidebarCollapsed",
@@ -9836,43 +9993,63 @@
       "id": "renameActiveSession",
       "title": "Rename Active Session",
       "description": "Rename the focused session.",
-      "defaultKey": "cmd+r"
+      "defaultKey": "cmd+r",
+      "windowsLinuxDefaultKey": "cmd+shift+r"
     },
     {
       "id": "openBrowserPane",
       "title": "Open Browser Pane",
       "description": "Open a browser tab beside the focused tab.",
-      "defaultKey": "cmd+n"
+      "defaultKey": "cmd+t",
+      "retiredDefaultKeys": [
+        "ctrl+shift+b",
+        "cmd+n"
+      ]
     },
     {
       "id": "switchAgentsView",
       "title": "Switch to Agents",
       "description": "Switch to Agents view.",
-      "defaultKey": ""
+      "defaultKey": "",
+      "retiredDefaultKeys": [
+        "alt+1"
+      ]
     },
     {
       "id": "switchSourceView",
       "title": "Switch to Code",
       "description": "Switch to Code view.",
-      "defaultKey": ""
+      "defaultKey": "",
+      "retiredDefaultKeys": [
+        "alt+2"
+      ]
     },
     {
       "id": "switchGitHubView",
       "title": "Switch to Browser",
       "description": "Switch to Browser view.",
-      "defaultKey": ""
+      "defaultKey": "",
+      "retiredDefaultKeys": [
+        "alt+3"
+      ]
     },
     {
       "id": "switchKanbanView",
       "title": "Switch to Kanban",
       "description": "Switch to Kanban view.",
-      "defaultKey": ""
+      "defaultKey": "",
+      "retiredDefaultKeys": [
+        "alt+4"
+      ]
     },
     {
       "id": "switchManageView",
       "title": "Switch to Docs",
       "description": "Switch to Docs view.",
-      "defaultKey": ""
+      "defaultKey": "",
+      "retiredDefaultKeys": [
+        "alt+5"
+      ]
     },
     {
       "id": "switchAutomateView",
@@ -9970,7 +10147,7 @@
     {
       "id": "openModelPicker",
       "title": "Model & Effort Picker",
-      "description": "Choose the chat model and effort with arrow keys, then Enter to save.",
+      "description": "Open the model picker: arrows choose a model and its reasoning, Enter uses it here, Shift+Enter saves it as the default.",
       "defaultKey": "alt+p"
     },
     {
@@ -10003,7 +10180,10 @@
       "title": "Saved Prompts",
       "description": "Open saved prompts for the focused agent session.",
       "defaultKey": "cmd+alt+s",
-      "windowsLinuxDefaultKey": "cmd+shift+s"
+      "windowsLinuxDefaultKey": "cmd+shift+s",
+      "retiredDefaultKeys": [
+        "alt+shift+s"
+      ]
     },
     {
       "id": "exportTranscript",
@@ -10021,13 +10201,22 @@
       "id": "toggleChatView",
       "title": "Toggle Chat View",
       "description": "Toggle between the terminal and chat view for the focused agent session.",
-      "defaultKey": "alt+g"
+      "defaultKey": "alt+g",
+      "retiredDefaultKeys": [
+        "ctrl+shift+j",
+        "cmd+alt+j",
+        "ctrl+shift+g",
+        "cmd+alt+g"
+      ]
     },
     {
       "id": "openFindPrompts",
       "title": "Find Prompts",
       "description": "Search every prompt you have sent to an agent, then resume or fork it.",
-      "defaultKey": "cmd+shift+f"
+      "defaultKey": "cmd+shift+f",
+      "retiredDefaultKeys": [
+        "alt+f"
+      ]
     },
     {
       "id": "scrollTerminalToTop",
@@ -10051,21 +10240,31 @@
       "id": "forkSession",
       "title": "Fork Session",
       "description": "Fork the focused session.",
-      "defaultKey": "ctrl+shift+f",
-      "windowsLinuxDefaultKey": "cmd+alt+f"
+      "defaultKey": "cmd+ctrl+shift+f",
+      "windowsLinuxDefaultKey": "cmd+alt+shift+f",
+      "retiredDefaultKeys": [
+        "ctrl+shift+f",
+        "cmd+alt+f"
+      ]
     },
     {
       "id": "reloadSession",
       "title": "Reload Session",
       "description": "Reload the focused session.",
-      "defaultKey": "ctrl+shift+r",
-      "windowsLinuxDefaultKey": "cmd+alt+r"
+      "defaultKey": "",
+      "retiredDefaultKeys": [
+        "ctrl+shift+r",
+        "cmd+alt+r"
+      ]
     },
     {
       "id": "sleepFocusedSession",
       "title": "Sleep Focused Session",
       "description": "Sleep the focused terminal session.",
-      "defaultKey": ""
+      "defaultKey": "cmd+shift+a",
+      "retiredDefaultKeys": [
+        "alt+shift+s"
+      ]
     },
     {
       "id": "wakeFocusedSession",
@@ -10077,7 +10276,7 @@
       "id": "closeFocusedSession",
       "title": "Close Focused Session",
       "description": "Close the focused pane or session.",
-      "defaultKey": ""
+      "defaultKey": "cmd+shift+backspace"
     },
     {
       "id": "popOutPane",
@@ -10090,27 +10289,41 @@
       "id": "focusPreviousGroup",
       "title": "Previous Group",
       "description": "Focus the previous group.",
-      "defaultKey": ""
+      "defaultKey": "",
+      "retiredDefaultKeys": [
+        "cmd+shift+[",
+        "cmd+["
+      ]
     },
     {
       "id": "focusNextGroup",
       "title": "Next Group",
       "description": "Focus the next group.",
-      "defaultKey": ""
+      "defaultKey": "",
+      "retiredDefaultKeys": [
+        "cmd+shift+]",
+        "cmd+]"
+      ]
     },
     {
       "id": "navigateHistoryBack",
       "title": "Back",
       "description": "Go back to the previously active session or project.",
       "defaultKey": "cmd+[",
-      "windowsLinuxDefaultKey": "cmd+alt+shift+["
+      "windowsLinuxDefaultKey": "cmd+alt+shift+[",
+      "retiredDefaultKeys": [
+        "cmd+alt+["
+      ]
     },
     {
       "id": "navigateHistoryForward",
       "title": "Forward",
       "description": "Go forward again after going back.",
       "defaultKey": "cmd+]",
-      "windowsLinuxDefaultKey": "cmd+alt+shift+]"
+      "windowsLinuxDefaultKey": "cmd+alt+shift+]",
+      "retiredDefaultKeys": [
+        "cmd+alt+]"
+      ]
     },
     {
       "id": "openNotifications",
@@ -10135,14 +10348,22 @@
       "title": "Previous Session",
       "description": "Select the previous session shown in the sidebar.",
       "defaultKey": "ctrl+shift+tab",
-      "windowsLinuxDefaultKey": "cmd+shift+tab"
+      "windowsLinuxDefaultKey": "cmd+shift+tab",
+      "retiredDefaultKeys": [
+        "cmd+[",
+        "cmd+shift+tab"
+      ]
     },
     {
       "id": "focusNextSession",
       "title": "Next Session",
       "description": "Select the next session shown in the sidebar.",
       "defaultKey": "ctrl+tab",
-      "windowsLinuxDefaultKey": "cmd+tab"
+      "windowsLinuxDefaultKey": "cmd+tab",
+      "retiredDefaultKeys": [
+        "cmd+]",
+        "cmd+tab"
+      ]
     },
     {
       "id": "focusPreviousPaneTab",
@@ -10160,25 +10381,37 @@
       "id": "focusUp",
       "title": "Focus Up",
       "description": "Move focus up between the session panes and the Commands pane.",
-      "defaultKey": "cmd+alt+up"
+      "defaultKey": "cmd+alt+up",
+      "retiredDefaultKeys": [
+        "cmd+up"
+      ]
     },
     {
       "id": "focusRight",
       "title": "Focus Right",
       "description": "Move focus right between the session panes and the Commands pane.",
-      "defaultKey": "cmd+alt+right"
+      "defaultKey": "cmd+alt+right",
+      "retiredDefaultKeys": [
+        "cmd+right"
+      ]
     },
     {
       "id": "focusDown",
       "title": "Focus Down",
       "description": "Move focus down between the session panes and the Commands pane.",
-      "defaultKey": "cmd+alt+down"
+      "defaultKey": "cmd+alt+down",
+      "retiredDefaultKeys": [
+        "cmd+down"
+      ]
     },
     {
       "id": "focusLeft",
       "title": "Focus Left",
       "description": "Move focus left between the session panes and the Commands pane.",
-      "defaultKey": "cmd+alt+left"
+      "defaultKey": "cmd+alt+left",
+      "retiredDefaultKeys": [
+        "cmd+left"
+      ]
     },
     {
       "id": "jumpToProject1",

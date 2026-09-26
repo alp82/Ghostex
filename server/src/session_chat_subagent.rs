@@ -111,7 +111,12 @@ fn claude_child(root: &Path, selector: &str) -> anyhow::Result<ChildTranscript> 
     let directory = root.with_extension("").join("subagents");
     if safe_agent_id(selector) {
         let path = directory.join(format!("agent-{selector}.jsonl"));
-        if path.is_file() {
+        let path = if path.is_file() {
+            Some(path)
+        } else {
+            crate::session_chat_claude_workflows::find_workflow_transcript(&directory, selector)?
+        };
+        if let Some(path) = path {
             return Ok(ChildTranscript {
                 id: selector.to_string(),
                 name: selector.to_string(),
@@ -233,11 +238,11 @@ pub(crate) async fn handle_read_subagent(
             .filter(|a| {
                 matches!(
                     a,
-                    SessionChatTranscriptAgent::Codex | SessionChatTranscriptAgent::Claude
+                    SessionChatTranscriptAgent::Codex | SessionChatTranscriptAgent::Claude | SessionChatTranscriptAgent::OpenCode
                 )
             })
             .ok_or_else(|| {
-                anyhow::anyhow!("Subagent transcripts are supported for Codex and Claude.")
+                anyhow::anyhow!("Subagent transcripts are supported for Codex, Claude and OpenCode v2.")
             })?;
         let root_id = read_runtime_text(&session, "agentSessionId")
             .ok_or_else(|| anyhow::anyhow!("The session has no transcript identity yet."))?;
@@ -256,6 +261,12 @@ pub(crate) async fn handle_read_subagent(
             selector
         };
         let child = match family {
+            SessionChatTranscriptAgent::OpenCode => {
+                let info=crate::session_chat_opencode::child(&root_id,&selector).map_err(|e|anyhow::anyhow!(e.message))?;
+                ChildTranscript {id:selector.clone(), name:info["title"].as_str().unwrap_or(&selector).into(),
+                    path:crate::session_chat_opencode::resolve_transcript(&selector).ok_or_else(||anyhow::anyhow!("OpenCode child is unavailable."))?,
+                    agent_type:info["agent"].as_str().map(str::to_string)}
+            },
             SessionChatTranscriptAgent::Codex => codex_child(&root, &root_id, &selector)?,
             _ => claude_child(&root, &selector)?,
         };
@@ -278,7 +289,7 @@ pub(crate) async fn handle_read_subagent(
                     "status": if messages.is_empty() { "empty" } else { "ready" },
                     "messages": messages, "hasMore": has_more, "beforeOffset": before_offset,
                     "epoch": 0, "seq": 0,
-                    "agent": if family == SessionChatTranscriptAgent::Codex { "codex" } else { "claude" },
+                    "agent": if family == SessionChatTranscriptAgent::OpenCode { "opencode" } else if family == SessionChatTranscriptAgent::Codex { "codex" } else { "claude" },
                     "agentSessionId": child.id, "subagent": details,
                 });
                 if let Some(lifecycle) = lifecycle { result["lifecycle"] = serde_json::to_value(lifecycle)?; }

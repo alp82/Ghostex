@@ -174,6 +174,10 @@ impl NativeAutomateView {
         };
         let view = cx.weak_entity();
         let options = WindowOptions {
+            #[cfg(target_os = "linux")]
+            kind: crate::app::window::popup_frame::child_window_kind(),
+            #[cfg(target_os = "linux")]
+            x11_parent: Some(host.window),
             window_bounds: Some(WindowBounds::Windowed(gpui::Bounds::centered_at(
                 host.main_window_bounds.center(),
                 size(px(DIALOG_WIDTH), px(DIALOG_INITIAL_HEIGHT)),
@@ -190,6 +194,8 @@ impl NativeAutomateView {
             )
             .or(host.display_id),
             titlebar: None,
+            // The dialog draws the app modals' palette, frosted under window glass.
+            window_background: crate::app::helpers::window_glass_background_appearance(),
             ..Default::default()
         };
         let dialog_slot = Rc::new(RefCell::new(None));
@@ -197,6 +203,7 @@ impl NativeAutomateView {
         let window = cx
             .open_window(options, move |window, cx| {
                 window.set_window_title("");
+                crate::app::helpers::apply_frosted_menu_blur(window);
                 window.activate_window();
                 let dialog = cx.new(|cx| AutomationDialog::new(config, view, window, cx));
                 *dialog_out.borrow_mut() = Some(dialog.clone());

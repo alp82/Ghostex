@@ -2,16 +2,17 @@
 //!
 //! Ported from `packages/shared/session-chat-presentation/turns.ts`.
 //!
-//! CDXC:SessionChat 2026-09-17 DECISION:
-//! User: keep React as the desktop default, make GPUI chat opt-in, and share behavior, presentation
-//! rules, and settings with the retained React chat. Turn boundaries, completed work, final
-//! replies, and summaries have one implementation consumed by both renderers.
+//! CDXC:SessionChat 2026-09-25 DECISION:
+//! User: delete the TypeScript chat rules and the React chat, so the Rust core is the only chat
+//! brain. Turn boundaries, completed work, final replies, and summaries have this one
+//! implementation, drawn by the GPUI chat and the phone's native chat. Supersedes the 2026-09-17
+//! decision that kept React as the desktop default with GPUI opt-in.
 
 use ghostex_gx_protocol::{ChatBlock, ChatMessage, ChatRole};
 
 use crate::transcript::foreign::STREAMING_ID;
 use crate::transcript::jsstr::js_trim;
-use crate::transcript::noise::{is_command_turn, suppressed_turn_label};
+use crate::transcript::noise::{is_command_output_turn, is_command_turn, suppressed_turn_label};
 
 /// One finished user turn: the prompt, the work under it, and the reply that settled it.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,8 +27,12 @@ pub struct CompletedWorkTurn {
 pub struct SummaryModeTurn {
     pub active: bool,
     pub active_work: Vec<ChatMessage>,
+    /// The replies the agent gave before `final_message` in the same turn, oldest first.
+    pub earlier_replies: Vec<ChatMessage>,
     pub final_message: Option<ChatMessage>,
     pub user: ChatMessage,
+    /// The rows that end a turn the agent wrote no reply to (a command's output, an interruption).
+    pub outcome: Vec<ChatMessage>,
 }
 
 /// One entry of the verbose transcript.
@@ -74,8 +79,10 @@ pub fn summary_mode_turns(
             turns.push(SummaryModeTurn {
                 active: false,
                 active_work: Vec::new(),
+                earlier_replies: Vec::new(),
                 final_message: None,
                 user: message.clone(),
+                outcome: Vec::new(),
             });
         } else if let Some(current) = turns.last_mut() {
             current.active_work.push(message.clone());
@@ -84,12 +91,45 @@ pub fn summary_mode_turns(
             }
         }
     }
+    for turn in &mut turns {
+        if let Some(final_message) = &turn.final_message {
+            turn.earlier_replies = earlier_replies(&turn.active_work, final_message);
+        }
+        turn.outcome = turn
+            .active_work
+            .iter()
+            .filter(|row| {
+                is_command_output_turn(row)
+                    || suppressed_turn_label(row).as_deref() == Some("Interrupted")
+            })
+            .cloned()
+            .collect();
+    }
     if is_working {
         if let Some(newest) = turns.last_mut() {
             newest.active = true;
         }
     }
     turns
+}
+
+/// CDXC:SessionChat 2026-09-26 DECISION: User: in summary mode, expanding "Agent reply" must show all of the agent's replies to that prompt, not only the last one. A turn the harness broke up (a background task finishing, a held prompt) gets one reply per stretch, the same replies verbose mode leaves outside its "Worked for" folds; text before the final reply inside its own stretch is still commentary.
+fn earlier_replies(work: &[ChatMessage], final_message: &ChatMessage) -> Vec<ChatMessage> {
+    let Some(final_at) = work.iter().position(|row| row.id == final_message.id) else {
+        return Vec::new();
+    };
+    let mut replies = Vec::new();
+    let mut reply: Option<&ChatMessage> = None;
+    for row in &work[..final_at] {
+        if row.role == ChatRole::User {
+            if let Some(settled) = reply.take() {
+                replies.push(settled.clone());
+            }
+        } else if has_agent_response_content(row) {
+            reply = Some(row);
+        }
+    }
+    replies
 }
 
 pub fn is_visible_assistant_artifact(message: &ChatMessage) -> bool {
@@ -253,6 +293,31 @@ pub fn completed_work_render_items(
         index = next_user_index;
     }
     items
+}
+
+/// `stickySessionChatTranscriptWorking` in `packages/shared/session-chat-presentation/turns.ts`:
+/// a transcript that settled keeps treating the session as settled until its newest row changes,
+/// so a working blip alone never reopens a landed fold.
+///
+/// `settled_at` is the fold memory, the newest message id at the moment the transcript settled.
+/// Returns the working flag the projection uses and records the settle.
+pub fn sticky_transcript_working(
+    messages: &[ChatMessage],
+    working: bool,
+    settled_at: &mut Option<String>,
+) -> bool {
+    let effective = working && !sticky_fold_holds(messages, settled_at.as_deref());
+    *settled_at = if effective {
+        None
+    } else {
+        messages.last().map(|message| message.id.clone())
+    };
+    effective
+}
+
+/// Whether a recorded settle still stands: the newest row is the one the transcript settled on.
+pub fn sticky_fold_holds(messages: &[ChatMessage], settled_at: Option<&str>) -> bool {
+    settled_at.is_some() && messages.last().map(|message| message.id.as_str()) == settled_at
 }
 
 /// "Worked for 12s", the label on a finished turn's fold.

@@ -240,9 +240,9 @@ pub fn merge_options(current: Option<&Value>, incoming: Option<&Value>) -> Optio
 /// [`merge_options`], plus whether `setSelectedOptions` would have been handed a NEW object.
 ///
 /// React bails out of a state update when `Object.is(next, current)`, so the identity of
-/// `applySelectedOptions`'s result is what decides whether the controller re-renders and therefore
-/// whether `native-options.ts`'s `useLayoutEffect(applyDetected, [.., chat.selectedOptions])` fires
-/// again. The TypeScript returns `current` itself only when the older capture won AND none of the
+/// `applySelectedOptions`'s result decided whether the controller re-rendered and therefore
+/// whether `native-options.ts`'s `useLayoutEffect(applyDetected, [.., chat.selectedOptions])` fired
+/// again. The TypeScript returned `current` itself only when the older capture won AND none of the
 /// three status payloads had to be folded in; every other path builds a fresh object, equal value
 /// or not. Callers that need that distinction (family e1's detection dep, and through it the
 /// `optionWrite` round trip) take the flag; the rest use [`merge_options`].
@@ -270,7 +270,12 @@ pub fn merge_options_detail(
     };
     let mut merged = chosen.clone();
     let mut spread = false;
-    for key in ["codexStatus", "claudeStatus", "contextUsage"] {
+    for key in [
+        "codexStatus",
+        "claudeStatus",
+        "cursorStatus",
+        "contextUsage",
+    ] {
         let value = present(chosen.get(key))
             .or_else(|| present(incoming.get(key)))
             .or_else(|| current.and_then(|current| present(current.get(key))));
@@ -404,7 +409,7 @@ pub fn merge_draft_state(current: Option<&Value>, incoming: &Value) -> Value {
                         let mut entry = Map::new();
                         entry.insert("draftId".to_string(), Value::String(draft_id));
                         // `JSON.stringify(5)` is `5`, not `5.0`: the receipt goes back on the
-                        // wire and is read by the TypeScript brain.
+                        // wire, where an integer stays an integer.
                         entry.insert("revision".to_string(), js_number_value(revision));
                         Value::Object(entry)
                     })
@@ -473,7 +478,7 @@ fn empty_result() -> ReadSessionChatResult {
 /// `onEvent` in `controller.ts` hands `applyAuthoritative` the EVENT; the store's fold, which
 /// carries `selectedOptions`, `appCommands`, the queue and the draft forward when a frame omits
 /// them, is only what is retained. Applying the fold instead re-applied the carried options as a
-/// fresh detection on every replaced frame (an `optionWrite` the live brain never made, which
+/// fresh detection on every replaced frame (an `optionWrite` the TypeScript brain never made, which
 /// then took the acknowledgement a draft write was waiting for), and re-set the carried
 /// `appCommands` as a new array.
 pub fn snapshot_frame_result(frame: &ChatSnapshotFrame) -> ReadSessionChatResult {
@@ -481,6 +486,16 @@ pub fn snapshot_frame_result(frame: &ChatSnapshotFrame) -> ReadSessionChatResult
     result.epoch = frame.base.epoch;
     result.seq = frame.base.seq;
     result
+}
+
+/// Whether a snapshot owns the three read-only draft-agent fields: any of them present, `null`
+/// included (`'sessionAgentId' in event`). Every gxserver socket frame omits all three; a host
+/// that synthesizes snapshots from reads sends all three, `null` for the ones a promoted session's
+/// read no longer carries.
+pub fn snapshot_owns_draft_agents(frame: &ChatSnapshotFrame) -> bool {
+    !frame.session_agent_id.is_absent()
+        || !frame.available_agents.is_absent()
+        || !frame.switchable_agents.is_absent()
 }
 
 fn snapshot_as_result(
@@ -498,14 +513,11 @@ fn snapshot_as_result(
     folded.result.working = frame.working;
     folded.result.agent = frame.agent.clone();
     // `{...previous, ...base}`: a frame that owns the three read-only draft-agent fields sets
-    // them, and one that does not leaves what the previous fold held.
-    if frame.session_agent_id.is_some()
-        || frame.available_agents.is_some()
-        || frame.switchable_agents.is_some()
-    {
-        folded.result.session_agent_id = frame.session_agent_id.clone();
-        folded.result.available_agents = frame.available_agents.clone();
-        folded.result.switchable_agents = frame.switchable_agents.clone();
+    // them (an owned `null` clears one), and one that does not leaves what the previous fold held.
+    if snapshot_owns_draft_agents(frame) {
+        folded.result.session_agent_id = frame.session_agent_id.value().cloned();
+        folded.result.available_agents = frame.available_agents.value().cloned();
+        folded.result.switchable_agents = frame.switchable_agents.value().cloned();
     }
     folded.result.lifecycle = frame.lifecycle.clone();
     folded.result.state = frame.state.clone();
@@ -589,7 +601,7 @@ fn incoming_lifecycle<'a>(
 fn incoming_session_agent_id<'a>(incoming: &'a StateCarrier<'a>) -> Option<&'a String> {
     match incoming {
         StateCarrier::Read(result) => result.session_agent_id.as_ref(),
-        StateCarrier::Snapshot(frame) => frame.session_agent_id.as_ref(),
+        StateCarrier::Snapshot(frame) => frame.session_agent_id.value(),
         _ => None,
     }
 }

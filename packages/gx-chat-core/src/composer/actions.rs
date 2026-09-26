@@ -1,7 +1,7 @@
 //! Family d's user actions: everything the composer does, from a keystroke to a send.
 //!
 //! The arms follow the `action` switch in
-//! `packages/shared/session-chat-controller/native-host.ts`. What the TypeScript does with an
+//! `packages/shared/session-chat-controller/native-host.ts`. What the TypeScript did with an
 //! `await` the core does with an [`Effect`] and a later event, so nothing here performs I/O.
 
 use serde_json::{json, Value};
@@ -64,7 +64,7 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
                 from_history: false,
             }]
         }
-        ActionKind::EditDraft => edit_draft(state, action),
+        ActionKind::EditDraft => edit_draft(state, action, context),
         ActionKind::SaveDraft => save_draft(state, action),
         ActionKind::RecallHistory => recall_history(state, action),
         ActionKind::OpenComposerReference => open_reference(action),
@@ -98,9 +98,11 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
         }
         ActionKind::DismissIncomingDraft => {
             state.composer.incoming_draft = None;
+            crate::composer::draft_sync::answered(state);
             Vec::new()
         }
         ActionKind::UseIncomingDraft => {
+            crate::composer::draft_sync::answered(state);
             let effects = state
                 .composer
                 .incoming_draft
@@ -226,7 +228,7 @@ fn draft_version(action: &UserAction) -> Option<crate::composer::queue::DraftVer
 /// that flag yet.
 fn scroll(state: &mut ChatState, action: &UserAction, context: &ChatContext) -> Vec<Effect> {
     // The subagent transcript is modal: a wheel over it is not a composer gesture
-    // (`native-host.ts`, the first thing `action` checks).
+    // (`native-host.ts`, the first thing `action` checked).
     if crate::extras::subagent::is_open(&state.extras.subagent) {
         return Vec::new();
     }
@@ -426,15 +428,25 @@ fn suggestion_command(state: &mut ChatState, action: &UserAction) -> Vec<Effect>
     }
 }
 
-fn edit_draft(state: &mut ChatState, action: &UserAction) -> Vec<Effect> {
+fn edit_draft(state: &mut ChatState, action: &UserAction, context: &ChatContext) -> Vec<Effect> {
     let text = text_param(action);
     track_draft_attachments(state, text);
+    crate::composer::draft_sync::edited(state, text, action.param("draftVersion"), context);
     let from_history = action.param("history") == Some(&Value::Bool(true));
     let history_changed = !from_history && state.composer.history.index.is_some();
     if !from_history {
         state.composer.history.reset_index();
     }
     state.composer.text = text.to_string();
+    let record = crate::composer::storage::StoredDraftRecord {
+        text: text.to_string(),
+        updated_at: Some(context.now_millis() as f64),
+        version: action.param("draftVersion").and_then(|value| serde_json::from_value(value.clone()).ok()),
+        submitted: false,
+        parked: false,
+    };
+    state.composer.version = record.version.clone();
+    state.composer.stored_draft = Some(record.clone());
     // `if (!clearedError && !historyChanged) return;`: every keystroke writes the draft, and the
     // write answering is not on its own a reason to ship a snapshot.
     if !state.core.cleared_error && !history_changed {
@@ -442,7 +454,7 @@ fn edit_draft(state: &mut ChatState, action: &UserAction) -> Vec<Effect> {
     }
     vec![Effect::WriteStorage {
         key: draft_key(state),
-        value: Some(text.to_string()),
+        value: Some(crate::composer::storage::encode_stored_draft(&record)),
         durable: false,
     }]
 }
@@ -452,17 +464,8 @@ fn save_draft(state: &mut ChatState, action: &UserAction) -> Vec<Effect> {
     track_draft_attachments(state, content);
     // `pushDraft` folds `result.draft` back onto the synced draft, so the write needs an id of its
     // own to be settled by.
-    let request_id = state.core.allocate_request_id();
-    state.composer.draft_pushes.push(request_id);
-    vec![Effect::SendRpc {
-        request_id,
-        method: ChatRpcMethod::SetSessionChatDraft,
-        params: Box::new(json!({
-            "clientId": state.identity.client_id,
-            "content": content,
-            "draftVersion": action.param("draftVersion").cloned().unwrap_or(Value::Null),
-        })),
-    }]
+    let version = action.param("draftVersion").cloned().unwrap_or(Value::Null);
+    vec![crate::composer::draft_sync::push(state, content, version)]
 }
 
 /// `recallHistory`: Up walks back through what this machine has sent, Down walks forward.
@@ -515,8 +518,8 @@ pub(crate) fn apply_recall(state: &mut ChatState, up: bool) -> Vec<Effect> {
     }
 }
 
-/// React's composer opens a pill only when its destination is a local file; a web link pill is
-/// inert.
+/// A pill opens only when its destination is a local file, as React's composer did; a web link
+/// pill is inert.
 fn open_reference(action: &UserAction) -> Vec<Effect> {
     let href = string_param(action, "href");
     match classify_link_href(href) {

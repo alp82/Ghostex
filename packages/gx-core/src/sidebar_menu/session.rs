@@ -1,6 +1,7 @@
 //! A session row's context menu and its hover buttons.
 //!
-//! SEE-ALSO: tooling/gx-core/sidebar-page-frozen/session-menu.ts, ported row for row.
+//! Ported row for row from the sidebar page's session menu (frozen in the deleted
+//! `tooling/gx-core/sidebar-page-frozen/session-menu.ts`; see git history).
 //!
 //! CDXC:ContextMenus 2026-09-19 DECISION:
 //! The user asked for a different pin icon in the sidebar context menu. Pin uses the upright
@@ -171,8 +172,7 @@ fn action_rows(
     let caps = SessionCapabilities::resolve(
         row,
         input.group.is_remote,
-        settings.show_session_command_copy_actions,
-        settings.show_session_details_copy_action,
+        settings.debugging_mode,
         input.group.workspace_focus_bridge,
     );
     let tags = tag_items(input, include_menu);
@@ -557,17 +557,18 @@ fn full_menu(
             MenuCommand::command(message::focus_session_mode(id)),
         ));
     }
-    let mut copy: Vec<MenuItem> = Vec::new();
-    if caps.can_copy_session_details {
-        copy.push(MenuItem::row(
-            "Copy Details",
-            "copy",
-            MenuCommand::command(message::copy_session_details(
-                id,
-                &session_details_text(row, &group.details()),
-            )),
-        ));
-    }
+    /*
+    CDXC:ContextMenus 2026-09-26 DECISION:
+    The user wants Copy Details always there under Advanced so anyone can hand a session to another agent; the Settings opt-in that hid it is gone.
+    */
+    let mut copy: Vec<MenuItem> = vec![MenuItem::row(
+        "Copy Details",
+        "copy",
+        MenuCommand::command(message::copy_session_details(
+            id,
+            &session_details_text(row, &group.details()),
+        )),
+    )];
     if caps.can_copy_resume_command {
         copy.push(MenuItem::row(
             "Copy Resume",

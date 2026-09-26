@@ -98,6 +98,18 @@ impl NativeChatView {
         );
     }
 
+    /// Closes the list's window so the next sync opens a fresh one, attached to the window the chat
+    /// is drawn in now (`child_window_parent`).
+    pub(in crate::app::native_chat) fn close_suggestion_window(&mut self, cx: &mut Context<Self>) {
+        self.suggestions.bounds = None;
+        if let Some(handle) = self.suggestions.handle.take() {
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            });
+        }
+        self.sync_suggestion_window(cx);
+    }
+
     /// CDXC:SessionChat 2026-09-19 WHY:
     /// React draws the `@`, `$` and `/` list inside the composer, so nothing outside the composer
     /// can hide it. This one is a child window and two conditions outside the composer used to be
@@ -125,7 +137,8 @@ impl NativeChatView {
         // app shell's pane-focus flag alone missed every moment it lagged the field (a first
         // responder the shell classifies as `Other`, a companion pane, a pane whose focus border
         // is held elsewhere), which read as the feature being missing.
-        let visible = self.maximized_window.is_none()
+        let visible = !self.pane_hidden
+            && self.maximized_window.is_none()
             && (self.pane_focused || self.composer_focused)
             && projection.is_object()
             && self.snapshot["questionCard"]["visible"] != true
@@ -143,7 +156,7 @@ impl NativeChatView {
             size(anchor.size.width, height),
         );
         let chat = cx.entity();
-        let parent = self.config.parent_native_view;
+        let parent = self.child_window_parent(cx);
         // Under window glass the popup's window blurs what is behind it, rounded to the card.
         let glass = crate::app::helpers::window_glass_active_for(Some(source));
         let corner_radius = px(SPEC.radius_px * p.scale);
@@ -240,6 +253,7 @@ impl NativeChatView {
                         let chat = chat.clone();
                         move |window, cx| {
                             window.set_background_corner_radius(corner_radius);
+                            crate::app::helpers::apply_frosted_menu_blur(window);
                             attach_suggestion_window(window, parent);
                             let panel = cx.new(|cx| {
                                 let subscription = cx.observe(&chat, |_, _, cx| cx.notify());

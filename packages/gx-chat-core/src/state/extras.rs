@@ -129,10 +129,9 @@ pub struct SubagentState {
     pub generation: u64,
     /// When the newest page may be re-read.
     pub poll_at_ms: Option<f64>,
-    /// The settle hold the viewer's list runs under.
+    /// Whether the open child's lifecycle says it is working. The viewer's own projection keeps
+    /// a landed fold sticky through a blip (`view.fold_settled_at`).
     pub working: bool,
-    /// When the hold expires and the list settles, or `None` while nothing is held.
-    pub hold_until_ms: Option<f64>,
     /// The viewer's OWN transcript projection.
     ///
     /// `native-subagent.ts:48` holds a second `NativeChatPresentation`, built fresh by every
@@ -236,9 +235,8 @@ pub struct SaveMarkdownSheet {
 /// `blank`, `indicator` or `retry` while a transcript read is running.
 ///
 /// CDXC:SessionChat 2026-09-18 WHY:
-/// React advances the empty region through the shared loading stages on timers of its own. The
-/// native chat renders whatever the document says, so the same stages have to be computed here to
-/// match.
+/// React advanced the empty region through the shared loading stages on timers of its own. The
+/// native chat renders whatever the document says, so the same stages are computed here.
 pub const LOADING_STAGE_BLANK: &str = "blank";
 pub const LOADING_STAGE_INDICATOR: &str = "indicator";
 pub const LOADING_STAGE_RETRY: &str = "retry";

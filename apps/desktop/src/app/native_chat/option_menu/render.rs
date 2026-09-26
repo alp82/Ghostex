@@ -236,9 +236,11 @@ impl ChatOptionMenuPanel {
 }
 
 impl Render for ChatOptionMenuPanel {
+    /// CDXC:SessionChat 2026-09-13 DECISION: User: chat menus follow light mode, the root menu and both versions of the Switch Account submenu included.
+    /// Every panel reads the chat's `appearance.light` here and in `accounts.rs` (`Colors::new`), because each menu is its own window outside the chat pane.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.model_menu.is_some() {
-            return self.render_model_menu(cx);
+            return self.render_model_menu(window, cx);
         }
         if let Some(setting) = self.rows.first().map(|row| row["modelMenuFlyout"].clone())
             && setting.is_object()
@@ -249,12 +251,7 @@ impl Render for ChatOptionMenuPanel {
         let m = self.menu.read(cx).metrics();
         let scale = appearance.scale;
         let foreground = gpui::rgb(if appearance.light { 0x292929 } else { 0xfcfcfc });
-        let hover = gpui::rgb(if appearance.light { 0xefefef } else { 0x202020 });
-        let border = gpui::rgba(if appearance.light {
-            0x0000001f
-        } else {
-            0xffffff1f
-        });
+        let (hover, border) = menu_ink_washes(appearance.light);
         let mut body = div()
             .id("chat-option-menu-scroll")
             .flex()
@@ -403,7 +400,10 @@ impl Render for ChatOptionMenuPanel {
                         .child(detail.to_owned()),
                 );
             }
-            if children || row.get("checked").is_some() {
+            // An unchecked row with a hotkey drops its empty check slot, so the hotkey sits on the
+            // right edge like the hotkeys of rows that cannot be checked.
+            let empty_check_beside_hotkey = row["checked"] == false && row["detail"].is_string();
+            if children || (row.get("checked").is_some() && !empty_check_beside_hotkey) {
                 item = item.child(div().flex_shrink_0().size(px(m.icon * scale)).when(
                     children || row["checked"] == true,
                     |item| {
@@ -441,4 +441,14 @@ impl Render for ChatOptionMenuPanel {
             .child(body)
             .into_any_element()
     }
+}
+
+/// The hover fill and hairline of the chat's menus: washes of the menu's own ink, like
+/// `titlebar_popup_menu_hover_color` on the sidebar menus. The surface follows the chrome colour
+/// (and is frosted under window glass), so an opaque grey such as `ChatAppearance::border` lands as
+/// a solid slab on it rather than a highlight.
+pub(super) fn menu_ink_washes(light: bool) -> (gpui::Hsla, gpui::Hsla) {
+    let foreground: gpui::Hsla = gpui::rgb(if light { 0x292929 } else { 0xfcfcfc }).into();
+    let border: gpui::Hsla = gpui::rgba(if light { 0x0000001f } else { 0xffffff1f }).into();
+    (foreground.opacity(if light { 0.06 } else { 0.08 }), border)
 }

@@ -95,10 +95,10 @@ import {
   getAccentColorForSettings,
   isDiagnosticLoggingScenarioEnabled,
   SETTINGS_MODAL_NAVIGATION_TABS,
-  type DiagnosticLoggingScenarioId,
 } from "@/packages/shared/ghostex-settings";
 import type { WebviewApi } from "@/packages/core-ui/webview-api";
 import "@/packages/core-ui/styles.css";
+import { installWindowGlassFlag } from "./workarea-theme";
 
 const AddProjectModal = lazyModal(
   async () =>
@@ -528,6 +528,7 @@ type AppModalHostMessage =
       type: "open";
     }
   | { type: "close" }
+  | { modals: string[]; type: "preloadModals" }
   | { type: "completeFirstLaunchSetup" }
   | AppToastRequest
   | { keepOpen?: boolean; type: "toastDismissed" }
@@ -584,6 +585,12 @@ type AppModalHostMessage =
       path: string;
       type: "windowGlassImageFilePicked";
     }
+  | {
+      appearance: "dark" | "light";
+      error?: string;
+      path?: string;
+      type: "windowGlassVideoFilePicked";
+    }
   | { path: string; type: "firstLaunchProjectFolderPicked" }
   | {
       error?: string;
@@ -615,7 +622,7 @@ type AppModalHostMessage =
   | {
       /*
        * CDXC:TranscriptExport 2026-08-24:
-       * The sidebar runtime's answer to `runExportSessionTranscript`: the
+       * The app's answer to `runExportSessionTranscript` (gx_store/git/export_transcript.rs): the
        * export finished (path is on the machine that owns the transcript) or
        * failed with the daemon's structured message. Moves the open Export
        * Transcript dialog from its exporting stage to done/failed.
@@ -642,7 +649,7 @@ type RenameSessionModalState = {
  * CDXC:SessionNotes 2026-08-24:
  * The session-note editor's open payload. `initialNote` is the note the sidebar
  * row was already rendering, so the dialog opens filled in without a round
- * trip; `projectId` is an optional scope hint the runtime may use to route the
+ * trip; `projectId` is an optional scope hint the app's Rust store may use to route the
  * write, and `sessionTitle` is heading copy only.
  */
 type SessionNoteModalState = {
@@ -725,7 +732,7 @@ type StashedPromptsModalState = {
 /*
  * CDXC:TranscriptExport 2026-08-20 / CDXC:TranscriptExport 2026-08-24:
  * The Export Transcript dialog. It opens on its include-toggle options stage;
- * the export runs only when the user confirms it, and the sidebar runtime
+ * the export runs only when the user confirms it, and the app (gx_store/git/export_transcript.rs)
  * answers with `exportSessionTranscriptResult`, which moves `stage` to
  * done/failed. `path` on the done stage is absolute on the machine that owns
  * the transcript, so `canReveal` is false for a remote session's export: the
@@ -871,24 +878,12 @@ function redactAppModalDebugMessage(message: unknown): unknown {
   return message;
 }
 
-function isDiagnosticLoggingEnabledForScenario(
-  scenarioId: DiagnosticLoggingScenarioId,
-): boolean {
+function isAppModalDebugLoggingEnabled(): boolean {
   const settings =
     useSidebarStore.getState().hud.settings ?? DEFAULT_ghostex_SETTINGS;
   return isDiagnosticLoggingScenarioEnabled(
     settings.diagnosticLogging,
-    scenarioId,
-  );
-}
-
-function isAppModalDebugLoggingEnabled(): boolean {
-  return isDiagnosticLoggingEnabledForScenario("native.app.modal");
-}
-
-function isRemoteGxserverInstallDebugLoggingEnabled(): boolean {
-  return isDiagnosticLoggingEnabledForScenario(
-    "native.remote.gxserver.install",
+    "gpui.app.modal",
   );
 }
 
@@ -924,32 +919,6 @@ function postSettingsModalDebugLog(
   details: AppModalDebugDetails,
 ) {
   postAppModalDebugLog(event, details);
-}
-
-function postRemoteGxserverInstallDebugLog(
-  event: string,
-  details: AppModalDebugDetails,
-) {
-  if (!isRemoteGxserverInstallDebugLoggingEnabled()) {
-    return;
-  }
-  /*
-   * CDXC:RemoteMachines 2026-06-30-03:05:
-   * Persist remote install modal-host breadcrumbs under the dedicated scenario
-   * without machine names, hosts, paths, URLs, command text, passwords, tokens,
-   * or raw errors.
-   */
-  postAppModalHostMessage(
-    {
-      details: JSON.stringify({
-        performanceNow: Math.round(performance.now()),
-        ...details,
-      }),
-      event,
-      type: "remoteGxserverInstallDebugLog",
-    },
-    "RemoteGxserverInstall:debug",
-  );
 }
 
 function notifyNativeModalClosed() {
@@ -1189,7 +1158,7 @@ async function requestFirstLaunchInstallSelectedSkills(
 /*
  * CDXC:Onboarding 2026-09-11 WHY:
  * The onboarding's finished screen says "Ghostex is open, <project> is ready", so it may only appear once the
- * sidebar runtime has actually registered the folder and opened its first session. Same waiter shape as the
+ * app has actually registered the folder and opened its first session. Same waiter shape as the
  * Add Project dialog: mint a requestId, post the operation, resolve or reject on the matching
  * `firstLaunchCreateProjectSessionResult`, with the add-project budget as the ceiling.
  */
@@ -2527,41 +2496,13 @@ function AppModalHost() {
         machineName={remoteGxserverInstall?.remoteMachineName ?? "Remote"}
         onApprove={() => {
           if (!remoteGxserverInstall) {
-            postRemoteGxserverInstallDebugLog(
-              "remoteGxserverInstall.approve.missingState",
-              {
-                activeModal: activeModal ?? null,
-                hasRemoteGxserverInstall: false,
-                nativeWindowSurface:
-                  window.__ghostex_APP_MODAL_HOST_SURFACE__ === "nativeWindow",
-              },
-            );
             return;
           }
-          postRemoteGxserverInstallDebugLog(
-            "remoteGxserverInstall.approve.clicked",
-            {
-              activeModal: activeModal ?? null,
-              hasRemoteGxserverInstall: true,
-              installApproved: true,
-              nativeWindowSurface:
-                window.__ghostex_APP_MODAL_HOST_SURFACE__ === "nativeWindow",
-              remoteMachineId: remoteGxserverInstall.remoteMachineId,
-            },
-          );
           vscode.postMessage({
             installApproved: true,
             remoteMachineId: remoteGxserverInstall.remoteMachineId,
             type: "reconnectRemoteMachine",
           });
-          postRemoteGxserverInstallDebugLog(
-            "remoteGxserverInstall.approve.commandPosted",
-            {
-              activeModal: activeModal ?? null,
-              installApproved: true,
-              remoteMachineId: remoteGxserverInstall.remoteMachineId,
-            },
-          );
           closeModal();
         }}
         onCancel={closeModal}
@@ -3180,6 +3121,18 @@ function AppModalHost() {
           setGhostexCliStatusLoading(true);
           vscode.postMessage({ type: "installCuaDriver" });
         }}
+        onReinstallCuaDriver={() => {
+          setGhostexCliStatusLoading(true);
+          vscode.postMessage({ type: "reinstallCuaDriver" });
+        }}
+        onUninstallCuaDriver={() => {
+          setGhostexCliStatusLoading(true);
+          vscode.postMessage({ type: "uninstallCuaDriver" });
+        }}
+        onCheckCuaDriverUpdate={() => {
+          setGhostexCliStatusLoading(true);
+          vscode.postMessage({ type: "checkCuaDriverUpdate" });
+        }}
         onSetOSIntegrationDefaults={(target) => {
           setOSIntegrationStatusLoading(true);
           vscode.postMessage({ target, type: "setOSIntegrationDefaults" });
@@ -3466,8 +3419,12 @@ function AppModalHost() {
         onOpenScreenRecordingPreferences={() => {
           vscode.postMessage({ type: "openScreenRecordingPreferences" });
         }}
-        onOpenSettings={() => {
-          openAppModal({ modal: "settings", type: "open" });
+        onOpenSettings={(tab) => {
+          openAppModal(
+            tab
+              ? { initialTab: tab, modal: "settings", type: "open" }
+              : { modal: "settings", type: "open" },
+          );
         }}
         onPickProjectFolder={() => {
           vscode.postMessage({ type: "pickFirstLaunchProjectFolder" });
@@ -3527,8 +3484,8 @@ function AppModalHost() {
       CDXC:SessionNotes 2026-08-24:
       Saving posts the shared `setSessionNote` sidebar command exactly the way
       Rename posts `renameSession`: the dialog reports the typed text and the
-      session it belongs to, and the sidebar runtime owns the daemon call and
-      the provider-conversation resolution. An empty string is the explicit
+      session it belongs to, and the app's Rust store owns the daemon call and
+      the provider-conversation resolution (gx_store/terminal_lifecycle/session_edits.rs). An empty string is the explicit
       clear, so it is sent rather than suppressed.
       */}
       <SessionNoteModal
@@ -3553,9 +3510,10 @@ function AppModalHost() {
       />
       {/*
       CDXC:Spaces 2026-08-27:
-      New/Edit Space. The dialog reports field values only; the sidebar runtime
-      forwards them to SidebarApp, which is the one place that owns the Space
-      document and can apply an edit to the CURRENT one. That is the same
+      New/Edit Space. The dialog reports field values only; the app applies
+      them in Rust (gx_store/space_editor.rs), the one place that owns the Space
+      document and can apply an edit to the CURRENT one (until 2026-09-21 that
+      was SidebarApp). That is the same
       dialog-reports / host-writes split Rename Session and Session Note use, and
       the reason a Space edit can never clobber a concurrent membership change.
       */}
@@ -3614,8 +3572,8 @@ function AppModalHost() {
       Copy Path is settled inside the dialog; the export itself, Reveal, and
       Start New Conversation are host side effects, so they leave through the
       same sidebarCommand boundary every other modal action uses. Neither
-      carries the exported path back out — the host still holds it from the
-      runtime's own result message.
+      carries the exported path back out: the host still holds it from its
+      own result message (gx_store/git/export_transcript.rs).
       */}
       <ExportTranscriptModal
         agents={agents}
@@ -3896,7 +3854,7 @@ function useModalStateFromNative() {
 
   /*
    * CDXC:TranscriptExport 2026-08-24:
-   * The Export button's stage move. The sidebar runtime answers with
+   * The Export button's stage move. The app (gx_store/git/export_transcript.rs) answers with
    * `exportSessionTranscriptResult`, which lands the dialog on done/failed.
    */
   const beginExportTranscriptExport = useCallback(() => {
@@ -3914,6 +3872,14 @@ function useModalStateFromNative() {
       try {
         const message = (event as CustomEvent<AppModalHostMessage>).detail;
         if (!message || typeof message !== "object") {
+          return;
+        }
+
+        if (message.type === "preloadModals") {
+          // Sent only to the hidden warm spare window (app_modal_spare.rs), so its first Settings open renders without fetching code.
+          if (message.modals.includes("settings")) {
+            SettingsModal.preload();
+          }
           return;
         }
 
@@ -4672,7 +4638,7 @@ function useModalStateFromNative() {
         if (message.type === "exportSessionTranscriptResult") {
           /*
            * CDXC:TranscriptExport 2026-08-24:
-           * Answers only the dialog that asked: the runtime posts this while
+           * Answers only the dialog that asked: the app (gx_store/git/export_transcript.rs) posts this while
            * the Export Transcript dialog sits on its exporting stage, so a
            * result arriving after the user closed it is dropped.
            */
@@ -5335,6 +5301,7 @@ function applySidebarStateMessage(message: unknown) {
 }
 
 document.body.classList.add("app-modal-host-body");
+installWindowGlassFlag();
 if (window.__ghostex_APP_MODAL_HOST_SURFACE__ === "nativeWindow") {
   document.documentElement.classList.add(
     "app-modal-host-native-window-document",

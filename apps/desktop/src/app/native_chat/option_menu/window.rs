@@ -59,6 +59,13 @@ pub(in crate::app::native_chat) struct ChatOptionMenu {
     compact: bool,
     /// How many times this menu has taken key status back (`retake_key`).
     rekeys: u32,
+    /// True for a menu anchored to another surface than the chat's own pane, which today is the
+    /// model pop-up over a terminal session's model pill: the chat view behind it is only its host,
+    /// so the pane going off screen must not take it down.
+    outside_pane: bool,
+    /// The model pop-up's reasoning levels Left and Right (or the Reasoning list) moved to this visit, by row key.
+    /// Kept on the menu so the Reasoning side list, a panel of its own, can set them too.
+    pub(super) model_efforts: std::collections::HashMap<String, String>,
 }
 
 pub(super) struct ChatOptionMenuPanel {
@@ -91,6 +98,15 @@ impl ChatOptionMenu {
         }
     }
 
+    /// True until the menu's first panel is on screen.
+    pub(in crate::app::native_chat) fn is_opening(&self) -> bool {
+        self.opening
+    }
+
+    pub(in crate::app::native_chat) fn is_outside_pane(&self) -> bool {
+        self.outside_pane
+    }
+
     pub(in crate::app::native_chat) fn close(
         &mut self,
         command: Option<Value>,
@@ -99,7 +115,7 @@ impl ChatOptionMenu {
         self.close_with_focus(command, true, cx);
     }
 
-    fn close_with_focus(
+    pub(in crate::app::native_chat) fn close_with_focus(
         &mut self,
         command: Option<Value>,
         restore_focus: bool,
@@ -336,6 +352,8 @@ impl ChatOptionMenu {
         );
         let menu = cx.entity();
         let parent = self.parent;
+        #[cfg(target_os = "linux")]
+        let owner = self.source;
         let accounts_customize = rows.first().is_some_and(|row| row["customize"] == true);
         self.opening = true;
         // Under window glass the menu's window blurs what is behind it, rounded to the card.
@@ -352,6 +370,8 @@ impl ChatOptionMenu {
             let result = cx.open_window(
                 WindowOptions {
                     kind: crate::app::window::popup_frame::child_window_kind(),
+                    #[cfg(target_os = "linux")]
+                    x11_parent: Some(owner),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     display_id,
                     titlebar: None,
@@ -373,6 +393,7 @@ impl ChatOptionMenu {
                     let menu = menu.clone();
                     move |window, cx| {
                         window.set_background_corner_radius(corner_radius);
+                        crate::app::helpers::apply_frosted_menu_blur(window);
                         crate::app::window::popup_frame::strip_gpui_popup_window_frame(window);
                         crate::app::window::attach_gpui_app_modal_window_to_main_window(
                             window, parent,
@@ -621,11 +642,23 @@ impl NativeChatView {
         let appearance = ChatAppearance::current(&self.snapshot);
         // `trigger` is in content coordinates; a window frame with a titlebar (Chat Lab) put every
         // menu that titlebar's height above its trigger or the pointer.
-        let source_bounds = super::super::child_window::content_bounds(window);
+        let content_bounds = super::super::child_window::content_bounds(window);
+        // Menus are kept inside the chat itself. On the desktop it fills its own window, so this is
+        // that window's content; in a page it is one pane beside the sidebar, and clamping to the
+        // page let a menu opened from the model pill cover the sidebar.
+        let view = self.bounds.get();
+        let source_bounds = if view.size.width > px(0.0) && view.size.height > px(0.0) {
+            Bounds::new(content_bounds.origin + view.origin, view.size)
+        } else {
+            content_bounds
+        };
         let chat = cx.weak_entity();
         let source = window.window_handle();
         let source_focus = window.focused(cx);
-        let parent = self.config.parent_native_view;
+        // Attached to the window the trigger is drawn in, whose content `trigger` is measured in.
+        let parent = super::super::child_window::window_native_view(window)
+            .unwrap_or(self.config.parent_native_view);
+        let outside_pane = std::mem::take(&mut self.menu_outside_pane);
         let menu = cx.new(|_| ChatOptionMenu {
             chat,
             source,
@@ -639,8 +672,10 @@ impl NativeChatView {
             parent,
             compact: below,
             rekeys: 0,
+            outside_pane,
+            model_efforts: Default::default(),
         });
-        let anchor = Bounds::new(source_bounds.origin + trigger.origin, trigger.size);
+        let anchor = Bounds::new(content_bounds.origin + trigger.origin, trigger.size);
         menu.update(cx, |menu, cx| {
             if below {
                 menu.open_dropdown(rows, anchor, width, 0, cx);

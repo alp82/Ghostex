@@ -1,5 +1,5 @@
 //! The app side of the native Automate view: which project it shows, rendering it in the view
-//! panel, and handing it the sidebar runtime's answers to its session-list requests.
+//! panel, and handing it the store's answers (gx_store/create/board.rs) to its session-list requests.
 
 use super::requests::AutomateScope;
 use super::view::{AutomateHostInfo, NATIVE_AUTOMATE_SESSIONS_REQUEST_PREFIX, NativeAutomateView};
@@ -83,6 +83,8 @@ impl GhostexGpuiApp {
             context.remote_target = self.gpui_remote_gxserver_request_target(remote_machine_id);
         }
         let host = AutomateHostInfo {
+            #[cfg(target_os = "linux")]
+            window: window.window_handle(),
             main_window_bounds: self.main_window_bounds,
             display_id: self.main_window_display_id,
             palette: self.gpui_native_modal_palette(),

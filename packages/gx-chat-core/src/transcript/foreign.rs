@@ -58,9 +58,9 @@ fn sort_rank(message: &ChatMessage) -> u8 {
 
 /// Family a, `orderSessionChatMessages`.
 ///
-/// The TypeScript's last tie-break before the id is a `WeakMap` of arrival order, which only the
-/// incremental assembler fills. A list that reaches the projection through a read has no entries in
-/// it, so the id decides, which is what this reproduces.
+/// The TypeScript's last tie-break before the id was a `WeakMap` of arrival order, which only the
+/// incremental assembler filled. A list that reaches the projection through a read has no entries
+/// in it, so the id decides, which is what this reproduces.
 pub fn order_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
     let mut ordered = messages.to_vec();
     ordered.sort_by(|left, right| {
@@ -84,7 +84,7 @@ pub fn order_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
 /// Family a, `mergeSessionChatMessagesWith`, in the one shape family b uses it: an id already in
 /// the list is replaced in place, a new id is appended.
 ///
-/// The source-priority argument the TypeScript takes is its default here, because the deferred rows
+/// The source-priority argument the TypeScript took is its default here, because the deferred rows
 /// this merges carry the same source as the turn's own work.
 pub fn merge_messages_with(existing: &[ChatMessage], incoming: &[ChatMessage]) -> Vec<ChatMessage> {
     let mut list = existing.to_vec();
@@ -227,10 +227,15 @@ pub fn is_role(message: &ChatMessage, role: ChatRole) -> bool {
 
 /// Family a: whether the agent is working, which decides the turn boundaries.
 ///
-/// `presentation.update(state.messages, state.workingSignal, …)` in `native-host.ts`: the
-/// projection is keyed on the controller's `workingSignal && !interrupted`, the raw live signal
-/// (an optimistic echo, a compaction, the server's flag or status, the host's own signal) before
-/// the lifecycle settle, not on the settled `working` the document publishes.
+/// `presentation.update(state.messages, state.transcriptWorking, …)` in `native-host.ts`, after
+/// `NativeChatPresentation.update` has applied the sticky fold: the live signal until the turn
+/// lifecycle ends the run ([`crate::session::working::transcript_working`]), held settled while the
+/// newest row is the one the transcript settled on. [`crate::transcript::rows::refresh`] records
+/// that settle; this only reads it, so pure readers get the same answer.
 pub fn is_working(state: &crate::state::ChatState) -> bool {
-    crate::session::working::working_signal(state) && !state.session.interrupted
+    crate::session::working::transcript_working(state)
+        && !crate::transcript::turns::sticky_fold_holds(
+            &state.messages.composed,
+            state.transcript_view.fold_settled_at.as_deref(),
+        )
 }

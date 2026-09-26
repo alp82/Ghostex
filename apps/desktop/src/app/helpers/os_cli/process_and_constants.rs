@@ -265,18 +265,6 @@ pub(crate) fn gpui_native_resource_child_rows(
         .collect()
 }
 
-pub(crate) fn format_gpui_resource_cpu(cpu: f64) -> String {
-    format!("CPU {:.0}%", cpu.max(0.0))
-}
-
-pub(crate) fn format_gpui_resource_memory(memory_mb: f64) -> String {
-    if memory_mb >= 1024.0 {
-        format!("RAM {:.1} GB", memory_mb / 1024.0)
-    } else {
-        format!("RAM {:.0} MB", memory_mb.max(0.0))
-    }
-}
-
 pub(crate) fn find_app_bundle_root(path: &std::path::Path) -> Option<PathBuf> {
     for ancestor in path.ancestors() {
         if ancestor
@@ -411,8 +399,6 @@ pub(crate) const GPUI_REMOTE_GXSERVER_TUNNEL_PORT_MIN: u16 = 42_000;
 pub(crate) const GPUI_REMOTE_GXSERVER_TUNNEL_PORT_MAX: u16 = 58_999;
 pub(crate) const GPUI_REMOTE_GXSERVER_TUNNEL_ATTEMPTS: usize = 8;
 pub(crate) const GPUI_REMOTE_GXSERVER_PARAMS_MAX_BYTES: usize = 64 * 1024;
-pub(crate) const GPUI_REMOTE_GXSERVER_SIDEBAR_REQUEST_TIMEOUT_MIN_MS: u64 = 1_000;
-pub(crate) const GPUI_REMOTE_GXSERVER_SIDEBAR_REQUEST_TIMEOUT_MAX_MS: u64 = 130_000;
 pub(crate) const GPUI_REMOTE_GXSERVER_PRESENTATION_STREAM_ATTEMPTS: usize = 4;
 pub(crate) const GPUI_REMOTE_GXSERVER_PRESENTATION_STREAM_FRAME_MAX_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const GPUI_REMOTE_GXSERVER_PRESENTATION_STREAM_HANDSHAKE_TIMEOUT: Duration =
@@ -486,7 +472,7 @@ pub(crate) const GPUI_BUNDLED_GHOSTEX_AGENT_SKILL_NAMES: &[&str] = &[
     "ghostex-computer-use",
     "ghostex-cli",
     "ghostex-help",
-    "ghostex-agents-orchestration",
+    "ghostex-agents",
     "ghostex-manage-beads",
     "ghostex-auto-rename-session",
     "ghostex-move-codex-session",

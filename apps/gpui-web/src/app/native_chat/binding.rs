@@ -23,27 +23,17 @@ impl GhostexGpuiApp {
             ),
             shell_session_id,
             app: Some(cx.weak_entity()),
-            preview: None,
             parent_native_view: std::ptr::null_mut(),
             client_id: format!("gpui-web-{}", crate::app::helpers::gpui_random_uuid_string().unwrap_or_default()),
             remote: None,
             initial_snapshot: None,
-            initial_presentation: self.chat_presentations.get(session).cloned(),
+            initial_presentation: self.initial_web_chat_presentation(session),
         };
         let view = cx.new(|cx| NativeChatView::new(config, cx));
         let key = session.clone();
-        let subscription = cx.subscribe(&view, move |this, view, event: &NativeChatEvent, cx| {
+        let subscription = cx.subscribe(&view, move |this, _view, event: &NativeChatEvent, cx| {
             match event {
-                NativeChatEvent::Broker(message) => {
-                    let mut message = message.clone();
-                    message["clientId"] = view.read(cx).config.client_id.clone().into();
-                    message["requestId"] = message["id"]
-                        .as_u64()
-                        .map(|id| id.to_string())
-                        .unwrap_or_default()
-                        .into();
-                    this.web_relay_chat_broker(&key, message, cx);
-                }
+                NativeChatEvent::Broker(message) => this.web_relay_chat_broker(&key, message),
                 NativeChatEvent::Host(message) => this.web_chat_host_action(&key, message, cx),
                 NativeChatEvent::ComposerFocused | NativeChatEvent::DraftState(_) => {}
             }
@@ -52,5 +42,31 @@ impl GhostexGpuiApp {
         self.native_chats
             .insert(session.clone(), (shell_session_id, view.clone()));
         view
+    }
+
+    /// The cached presentation plus the session's folder (its cwd, else its project's), as the
+    /// desktop's `initial_session_chat_presentation` seeds it, so tool rows and file cards show
+    /// paths relative to it from the first render.
+    fn initial_web_chat_presentation(&self, session: &SessionKey) -> Option<serde_json::Value> {
+        let mut state = self.chat_presentations.get(session).cloned();
+        let presentation = self.gx_store.core.presentation();
+        let working_directory = presentation
+            .session(session)
+            .and_then(|record| record.cwd.clone())
+            .filter(|cwd| !cwd.trim().is_empty())
+            .or_else(|| {
+                presentation
+                    .project(&ghostex_gx_core::ProjectKey {
+                        machine: session.machine.clone(),
+                        project_id: session.project_id.clone(),
+                    })
+                    .and_then(|project| project.path.clone())
+                    .filter(|path| !path.trim().is_empty())
+            });
+        if let Some(working_directory) = working_directory {
+            state.get_or_insert_with(|| serde_json::json!({}))["workingDirectory"] =
+                serde_json::json!(working_directory);
+        }
+        state
     }
 }

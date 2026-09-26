@@ -1,9 +1,9 @@
 //! Whether a press that landed on a transcript row is a click the row should
 //! act on, or the tail of a text selection.
 //!
-//! CDXC:SessionChat 2026-09-19 SEE-ALSO:
-//! React's row-level handlers ask the DOM event two questions before they
-//! toggle anything (`session-chat-message-list/rows.tsx`,
+//! CDXC:SessionChat 2026-09-19 WHY:
+//! React's row-level handlers asked the DOM event two questions before they
+//! toggled anything (`session-chat-message-list/rows.tsx`,
 //! `session-chat-file-change-card.tsx`): did the press land on a control of its
 //! own (`event.target.closest('a, button, …')`), and did it leave a selection
 //! behind (`getSelection()?.isCollapsed === false`). GPUI has no event target,
@@ -11,7 +11,6 @@
 //! second question for every row that turns its own text into a trigger.
 
 use gpui::{App, ClickEvent, Window};
-use gpui_component::WindowExt as _;
 
 /// How far the pointer may travel between press and release and still read as a
 /// click rather than a drag across the row's text. A selection that ends on
@@ -30,5 +29,7 @@ pub(super) fn acts_on_row(event: &ClickEvent, window: &mut Window, cx: &mut App)
             return false;
         }
     }
-    window.selected_text(cx).trim().is_empty()
+    gpui_component::TextSelection::selected_text(window, cx)
+        .trim()
+        .is_empty()
 }

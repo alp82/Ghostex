@@ -2,13 +2,13 @@
 //!
 //! The bar is a real sibling region at the top of the chat pane, above the
 //! transcript list: no overlay, no hit-test routing. Matching, the selected
-//! occurrence and next/previous live in shared TS (native-search.ts over
-//! session-chat-presentation/transcript-search.ts), so GPUI only draws the bar,
+//! occurrence and next/previous live in the core (`extras/search.rs` over
+//! `extras/transcript_search.rs` in gx-chat-core), so GPUI only draws the bar,
 //! scrolls the list to the selected row and tints the rows that matched.
 //!
 //! GPUI's markdown TextView cannot highlight a range inside its own layout, so
 //! the highlight is row-level: every matching row takes a faint tint and the
-//! selected one a stronger one. React highlights the exact characters.
+//! selected one a stronger one. React highlighted the exact characters.
 
 use super::{appearance::ChatAppearance, state::NativeChatView, transcript::text};
 use crate::app::native_chat::cursor::ChatCursor as _;
@@ -32,7 +32,7 @@ impl gpui::Global for ChatSearchRegistered {}
 /// The chat field is a gpui-component input, and that crate binds Cmd+F inside its own `Input`
 /// context to its in-field Search panel. A binding on `NativeChat` alone loses to it by depth and
 /// Cmd+F does nothing while the composer has focus, so transcript search claims both the pane and
-/// the focused field, the way React's window-level handler covers the whole chat surface.
+/// the focused field, the way React's window-level handler covered the whole chat surface.
 pub(super) fn register(cx: &mut App) {
     if cx.has_global::<ChatSearchRegistered>() {
         return;
@@ -52,6 +52,7 @@ impl NativeChatView {
         cx: &mut Context<Self>,
     ) {
         self.invoke(json!({"type":"searchOpen"}), cx);
+        self.search_pending_open = Some(true);
         self.ensure_search_input(window, cx);
         if let Some(input) = self.search_input.clone() {
             let end = input.read(cx).value().len();
@@ -94,7 +95,17 @@ impl NativeChatView {
         true
     }
 
+    /// Whether the find bar is shown.
+    ///
+    /// CDXC:SessionChat 2026-09-24 WHY:
+    /// `searchOpen` and `searchClose` reach the shared runtime asynchronously, so for a frame or more the snapshot still reports the old state. Rendering from the snapshot alone dropped the field Cmd+F had just focused (and briefly revived it after Escape), which sent the next keystrokes to the composer. The pane's own request wins until the snapshot catches up.
+    pub(super) fn search_open(&self) -> bool {
+        self.search_pending_open
+            .unwrap_or(self.snapshot["transcriptSearch"]["open"] == true)
+    }
+
     fn close_search(&mut self, cx: &mut Context<Self>) {
+        self.search_pending_open = Some(false);
         self.search_input = None;
         self.search_subscription = None;
         self.search_scrolled_revision = -1;
@@ -159,7 +170,11 @@ impl NativeChatView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.snapshot["transcriptSearch"]["open"] != true {
+        let snapshot_open = self.snapshot["transcriptSearch"]["open"] == true;
+        if self.search_pending_open == Some(snapshot_open) {
+            self.search_pending_open = None;
+        }
+        if !self.search_open() {
             if self.search_input.is_some() {
                 self.search_input = None;
                 self.search_subscription = None;

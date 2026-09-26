@@ -1,12 +1,12 @@
-//! The file-change cards under a message: the Activity-rail design React paints
+//! The file-change cards under a message: the Activity-rail design React painted
 //! in `session-chat-file-change-card.tsx`, with the circle marker, the single
 //! start-truncated path line, the +/- counts that toggle the diff, the left
 //! rail, the failed-write result, and the footer toggle.
 //!
 //! The counts, the shortened path, and "can this open" come from
-//! `packages/shared/session-chat-presentation/file-change-rows.ts`, which the
-//! React card reads too; this file only lays them out.
+//! `packages/gx-chat-core/src/transcript/file_change_rows.rs`; this file only lays them out.
 
+use super::disclosure_motion::measured;
 use super::{appearance::ChatAppearance, state::NativeChatView, transcript::text};
 use crate::app::native_chat::cursor::ChatCursor as _;
 use gpui::prelude::FluentBuilder as _;
@@ -70,7 +70,7 @@ impl NativeChatView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let files = message["files"].as_array().cloned().unwrap_or_default();
-        // React passes `hideFileChanges` to every row of a finished turn: the writes belong to that
+        // React passed `hideFileChanges` to every row of a finished turn: the writes belong to that
         // turn's "N files changed" fold instead, and a card must never be drawn in both places.
         if files.is_empty() || self.hide_file_changes {
             return Vec::new();
@@ -80,25 +80,29 @@ impl NativeChatView {
         let simple_key = format!("files:{id}");
         let simple_expanded = self.expanded.contains(&simple_key);
         if p.simple {
+            let motion = self.disclosure_frame(&simple_key, simple_expanded, cx);
             rows.push(self.disclosure(
-                simple_key,
+                simple_key.clone(),
                 text(message, "simpleFileLabel"),
                 simple_expanded,
                 None,
                 p,
                 cx,
             ));
-            if !simple_expanded {
+            if !simple_expanded && motion.is_none() {
                 return rows;
             }
+            let stack = self.file_change_stack(&id, &files, p, cx);
+            rows.push(self.disclosure_body_motion(&simple_key, motion, 8.0 * p.scale, stack));
+            return rows;
         }
         rows.push(self.file_change_stack(&id, &files, p, cx));
         rows
     }
 
-    /// The turn's writes, folded behind "N files changed" the way React groups a finished turn
+    /// The turn's writes, folded behind "N files changed" the way React grouped a finished turn
     /// (the decision in `session-chat-message-list/list.tsx`). The label and the rows are projected
-    /// together in `native-presentation.ts`, so both renderers count the same files.
+    /// together in the core (`transcript/presentation.rs`), so the label counts the files drawn.
     pub(super) fn completed_files_fold(
         &mut self,
         item: &Value,
@@ -106,12 +110,21 @@ impl NativeChatView {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let files = item["files"].as_array().cloned().unwrap_or_default();
-        if files.is_empty() {
+        // An older turn arrives collapsed with only the paths its unread work changed; the row
+        // stays and reads that work on open, as React's list did (`list.tsx`).
+        let unread = files.is_empty()
+            && item["deferred"]["filePaths"]
+                .as_array()
+                .is_some_and(|paths| !paths.is_empty());
+        if files.is_empty() && !unread {
             return None;
         }
         let id = text(item, "id");
         let key = format!("work-files:{id}");
         let expanded = self.is_expanded(&key, false);
+        let motion = self.disclosure_frame(&key, expanded, cx);
+        let load =
+            unread.then(|| json!({"type":"loadWork","id":item["id"],"work":item["deferred"]}));
         let label = text(
             item,
             if p.simple {
@@ -126,9 +139,16 @@ impl NativeChatView {
             .w_full()
             .min_w_0()
             .gap(px(8.0 * p.scale))
-            .child(self.disclosure(key, label, expanded, None, p, cx));
-        if expanded {
-            group = group.child(self.file_change_stack(&format!("work:{id}"), &files, p, cx));
+            .child(self.disclosure(key.clone(), label, expanded, load, p, cx));
+        if expanded || motion.is_some() {
+            let body = if unread {
+                self.deferred_work_notice(item, p, cx)
+            } else {
+                Some(self.file_change_stack(&format!("work:{id}"), &files, p, cx))
+            };
+            if let Some(body) = body {
+                group = group.child(self.disclosure_body_motion(&key, motion, 8.0 * p.scale, body));
+            }
         }
         Some(group.into_any_element())
     }
@@ -174,7 +194,11 @@ impl NativeChatView {
         let failed = file["failed"] == true;
         // React's rule with the half GPUI owns: previews already show everything a short change has.
         let can_expand = !p.file_previews || file["expandableWithPreviews"] == true;
-        let show_body = expanded || p.file_previews;
+        let motion = self.disclosure_frame(&key, expanded && can_expand, cx);
+        // While the diff opens or closes it is drawn whole and clipped to the frame; with previews
+        // on, the clip runs between the preview's height and the full diff's.
+        let moving = motion.is_some();
+        let show_body = expanded || p.file_previews || moving;
         let added = file["added"].as_u64().unwrap_or(0);
         let removed = file["removed"].as_u64().unwrap_or(0);
         let parent = text(file, "parent");
@@ -211,9 +235,9 @@ impl NativeChatView {
             .chat_cursor_pointer()
             .text_color(p.prose)
             .hover(|style| style.text_color(p.foreground))
-            // React shortens only the folder half (`direction: rtl` on the parent, `flex: 0 0 auto`
+            // React shortened only the folder half (`direction: rtl` on the parent, `flex: 0 0 auto`
             // on the name), so the file being written is always readable. The shared row hands over
-            // the whole folder, the way React's card asks for it, and this gives up what is too wide.
+            // the whole folder, the way React's card asked for it, and this gives up what is too wide.
             //
             // The folder gives up its head, never its tail: the separator before the filename stays
             // on screen. `truncate()` cannot do that here. It ellipsises from the end, which eats
@@ -268,7 +292,7 @@ impl NativeChatView {
                     .child(format!("\u{2212}{removed}")),
             );
 
-        // One press target, as React's `<section onClick>` is: the marker, the counts, the rail,
+        // One press target, as React's `<section onClick>` was: the marker, the counts, the rail,
         // the code, the footer and the empty space between them all toggle the diff from here, so
         // no two listeners can flip the same row twice. Only the path stops the press to open the file.
         let card_key = key.clone();
@@ -278,8 +302,7 @@ impl NativeChatView {
         // and of the gap to its neighbours, so its hover fill reaches the stack's edges and, for the
         // first and last file, its rounded corners: a single file lights the whole stack. The spacing
         // is the old 8px padding and 12px gap, so the layout does not move. Supersedes the
-        // 2026-09-22 fill in a 6px inset. SEE-ALSO: `.ghostex-chat-file-change-card` in
-        // packages/core-ui/chat/session-chat-file-change-card.css.
+        // 2026-09-22 fill in a 6px inset.
         let hover_fill: Hsla = if p.light {
             gpui::white().opacity(0.6)
         } else {
@@ -309,7 +332,7 @@ impl NativeChatView {
             .when(can_expand, |this| {
                 this.hover(move |style| style.bg(hover_fill))
             })
-            // The hairline React draws down the marker column joining one circle to the next
+            // The hairline React drew down the marker column joining one circle to the next
             // (`.ghostex-chat-file-change-card::before`); visual only, and it reaches into the
             // gap below every card but the last. A collapsed preview draws no rail through its code.
             .when(!show_body || expanded, |this| {
@@ -376,8 +399,8 @@ impl NativeChatView {
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|line| expanded || line["kind"] != "meta")
-            .take(if expanded { usize::MAX } else { 7 })
+            .filter(|line| expanded || moving || line["kind"] != "meta")
+            .take(if expanded || moving { usize::MAX } else { 7 })
             .collect();
         if lines.is_empty() {
             code = code.child(div().px(px(12.0 * s)).text_color(p.muted).child(
@@ -449,7 +472,7 @@ impl NativeChatView {
             );
         }
         let rail_group = format!("rail:{key}");
-        card = card.child(
+        let body =
             div()
                 .flex()
                 .w_full()
@@ -457,7 +480,7 @@ impl NativeChatView {
                 .mt(px(8.0 * s))
                 .gap(px(12.0 * s))
                 .child(
-                    // The rail is the grab target React gives the open code, not an invisible
+                    // The rail is the grab target React gave the open code, not an invisible
                     // overlay: a real column beside the code and the footer (React's
                     // `grid-row: 2 / 4`) whose line lights up white under the mouse.
                     div()
@@ -476,8 +499,16 @@ impl NativeChatView {
                             ))
                         }),
                 )
-                .child(detail_column),
-        );
+                .child(detail_column)
+                .into_any_element();
+        card = card.child(match motion {
+            Some(frame) if p.file_previews => self.capped_body_motion(&key, frame, 0.0, body),
+            Some(_) => self.disclosure_body_motion(&key, motion, 0.0, body),
+            None if p.file_previews && !expanded && can_expand => {
+                measured(self.disclosure_floor(&key), body)
+            }
+            None => body,
+        });
         card.into_any_element()
     }
 }

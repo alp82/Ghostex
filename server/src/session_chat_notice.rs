@@ -332,7 +332,7 @@ impl SessionChatTerminalNotice {
         self
     }
 
-    fn with_input_blocking(mut self, blocks_input: bool) -> Self {
+    pub(crate) fn with_input_blocking(mut self, blocks_input: bool) -> Self {
         self.blocks_input = blocks_input;
         self
     }
@@ -593,6 +593,20 @@ impl NoticeScreen {
             .iter()
             .skip(notice_index + 1)
             .any(|line| is_codex_composer_line(line))
+    }
+
+    /// CDXC:AgentScreenDetection 2026-09-24 WHY:
+    /// Claude's dialogs replace its input box, so a ready composer painted below the newest line carrying a dialog phrase proves that line is transcript text: an agent reply quoting "Do you trust the files in this folder?" refused every send with a hidden folder-trust notice.
+    fn has_claude_composer_after(&self, needle: &str) -> bool {
+        let Some(index) = self.folded.iter().rposition(|line| line.contains(needle)) else {
+            return false;
+        };
+        crate::session_chat_composer::detect_session_chat_composer_ready(
+            Some("claude"),
+            &self.display[index + 1..].join("\n"),
+        )
+        .state
+            == crate::session_chat_composer::SessionChatComposerState::Ready
     }
 
     /// CDXC:AgentScreenDetection 2026-09-05 WHY:
@@ -1117,9 +1131,10 @@ const CODEX_RULES: &[NoticeRule] = &[
         signatures: &[
             NoticeSignature {
                 scope: NoticeScope::Dialog,
+                // "Update available! 0.1…" and, since Codex 0.156, "Update available · 0.156.1 → …".
                 parts: &[
-                    NoticePart::Text("Update available!"),
-                    NoticePart::Gap(1),
+                    NoticePart::Text("Update available"),
+                    NoticePart::Gap(3),
                     NoticePart::Digit,
                 ],
                 // Only the blocking MODAL warrants a notice; the harmless
@@ -1666,6 +1681,7 @@ fn notice_from_picker(
     picker: crate::session_chat_resume_prompt::SessionChatTerminalPicker,
 ) -> SessionChatTerminalNotice {
     use crate::session_chat_resume_prompt::SessionChatTerminalPickerKind;
+    let picker = picker.with_catalog_model_names();
     let guidance =
         "Claude Code accepts no input until this is answered. Pick an option to answer it here.";
     let detail = match picker.detail.as_deref() {
@@ -1928,6 +1944,14 @@ pub fn classify_session_chat_terminal_notice(
             if agent == SessionChatOptionAgent::Claude
                 && rule.kind == SESSION_CHAT_NOTICE_USAGE_LIMIT
                 && screen.has_claude_model_switch_after(signature)
+            {
+                return false;
+            }
+            if agent == SessionChatOptionAgent::Claude
+                && rule.blocks_input
+                && matches!(signature.scope, NoticeScope::Dialog)
+                && signature_needle(signature)
+                    .is_some_and(|needle| screen.has_claude_composer_after(needle))
             {
                 return false;
             }

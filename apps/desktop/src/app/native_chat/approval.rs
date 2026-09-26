@@ -35,6 +35,7 @@ impl NativeChatView {
                     .text_color(p.foreground)
                     .child("Approval request"),
             )
+            // CDXC:SessionChat 2026-09-07 DECISION: User: card X buttons match Open terminal's color, outline and background, rather than a custom border and background of their own.
             .child(
                 div()
                     .id("approval-cancel")
@@ -62,6 +63,9 @@ impl NativeChatView {
                     })),
             )
             .into_any_element();
+        let ask = Some(text(&self.snapshot["questionCard"], "approvalAsk"))
+            .filter(|ask| !ask.is_empty())
+            .unwrap_or_else(|| "Allow this command?".to_string());
         let mut body = vec![
             div()
                 .flex()
@@ -73,7 +77,7 @@ impl NativeChatView {
                         .min_w_0()
                         .text_color(p.card_muted)
                         .line_height(px(19.6 * s))
-                        .child("Allow this command?"),
+                        .child(ask),
                 )
                 .child(
                     div()

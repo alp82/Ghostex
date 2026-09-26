@@ -37,17 +37,35 @@ export type DefaultEditorCommand =
   'code' | 'code-insiders' | 'zed' | 'zeditor' | 'cursor' | 'windsurf' | 'codium' | 'subl' | 'other';
 export type CommandsPanelSide = 'bottom' | 'right';
 export type WindowGlassMode = 'auto' | 'frosted' | 'opaque';
-export type WindowGlassSource = 'wallpaper' | 'desktopAndWindows' | 'customImage';
+export type WindowGlassSource = 'wallpaper' | 'desktopAndWindows' | 'customImage' | 'live';
+
+/**
+ * What a Live glass slot shows: one of the animated styles (`live_<id>` in the GPUI macOS crate's live_backdrop.metal),
+ * or `video`, the user's own file for that mode (`windowGlassVideoDark` / `windowGlassVideoLight`).
+ */
+export type WindowGlassLiveStyle =
+  'aurora' | 'ink' | 'drift' | 'nebula' | 'silk' | 'bokeh' | 'waves' | 'mesh' | 'video';
 export type WindowGlassImagePlacement = 'static' | 'desktop';
 export type PanelAnimationSpeed = 'off' | 'slow' | 'normal' | 'fast';
-export const MIN_WINDOW_GLASS_SIDEBAR_OPACITY_PERCENT = 40;
+/**
+ * CDXC:Theming 2026-09-26 DECISION:
+ * User: "i feel we're limiting the ability of the user to set things to be more transparent even in advanced mode please fix this i want to be able to set fully opaque or transparent there as i wish". The sidebar and work area tint sliders both run the full 0-100%; this supersedes the 40% floor the sidebar tint kept for text contrast.
+ */
+export const MIN_WINDOW_GLASS_SIDEBAR_OPACITY_PERCENT = 0;
 export const MAX_WINDOW_GLASS_SIDEBAR_OPACITY_PERCENT = 100;
 export const MIN_WINDOW_GLASS_WORK_AREA_TINT_PERCENT = 0;
 export const MAX_WINDOW_GLASS_WORK_AREA_TINT_PERCENT = 100;
-export const DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_DARK_PERCENT = 80;
-export const DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_LIGHT_PERCENT = 88;
-export const DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_DARK_PERCENT = 88;
-export const DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_LIGHT_PERCENT = 93;
+/**
+ * CDXC:Theming 2026-09-25 DECISION:
+ * User picked "Default to 20" for new users' Transparency strength, so a fresh install lands on a point of the
+ * strength slider (sidebar 88 / work area 81 in dark, 93 / 86 in light; `transparencyStrengthPatch(20)`) instead of
+ * showing Custom. Supersedes the sidebar 80 / work area 88 defaults. SEE-ALSO: the matching constants in
+ * apps/desktop/src/app/helpers/window_glass.rs.
+ */
+export const DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_DARK_PERCENT = 88;
+export const DEFAULT_WINDOW_GLASS_SIDEBAR_OPACITY_LIGHT_PERCENT = 93;
+export const DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_DARK_PERCENT = 81;
+export const DEFAULT_WINDOW_GLASS_WORK_AREA_TINT_LIGHT_PERCENT = 86;
 
 export function clampWindowGlassSidebarOpacityPercent(value: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
@@ -148,14 +166,6 @@ export function clampSidebarTooltipDelayMs(value: number): number {
 export type PreferredAgentInterface = 'terminal' | 'chat';
 export type SidebarSettingsPresetId = 'codex' | 'minimal' | 'detailed' | 'recommended';
 export type PromptEditorBackend = 'inherit' | 'monaco';
-/**
- * CDXC:SessionChat 2026-09-22 WHY:
- * Temporary. The chat's rules exist twice while the brain moves from the TypeScript bundle running
- * in QuickJS to the Rust core in `packages/gx-chat-core`, and this picks which one a chat view
- * creates. It is a developer switch on the Debugging page, not a product choice, and it goes away
- * with the TypeScript brain once the desktop app runs on `rust` alone.
- */
-export type ChatBrain = 'quickjs' | 'rust';
 export type SessionTitleGenerationAgent = 'codex' | 'cursor' | 'claude' | 'grok' | 'pi' | 'antigravity' | 'custom';
 export type AppShotsHotkey = 'both-command' | 'both-shift' | 'both-option' | 'double-left-shift' | 'double-left-option';
 export type KeepAwakeDurationMinutes = 0 | 120 | 300;
@@ -351,6 +361,13 @@ export type ghostexSettings = {
   linearViewTabHidden: boolean;
   jiraViewTabHidden: boolean;
   githubViewTabHidden: boolean;
+  sentryViewTabHidden: boolean;
+  figmaViewTabHidden: boolean;
+  vercelViewTabHidden: boolean;
+  supabaseViewTabHidden: boolean;
+  githubActionsViewTabHidden: boolean;
+  posthogViewTabHidden: boolean;
+  customWebsiteViewTabHidden: boolean;
   projectWebsiteViews: ProjectWebsiteSettings;
   /**
    * Quick-access switches affect only the matching right-side titlebar button.
@@ -459,8 +476,6 @@ export type ghostexSettings = {
    */
   analyticsEnabled: boolean;
   debuggingMode: boolean;
-  /** Which chat brain a chat view creates. See {@link ChatBrain}; `quickjs` is the shipped one. */
-  chatBrain: ChatBrain;
   /**
    * CDXC:Diagnostics 2026-06-27-22:07:
    * Debugging Mode no longer acts as the broad disk-logging switch. Routine
@@ -487,18 +502,6 @@ export type ghostexSettings = {
   showSessionCardHoverButtonsInContextMenu: boolean;
   hideLastActiveTimeOnSessionCards: boolean;
   hideAccountEmails: boolean;
-  /**
-   * CDXC:ContextMenus 2026-06-09-23:17:
-   * Session context menus should hide Copy resume and Copy attach command by default because they expose raw shell-command utilities. Settings owns a single opt-in that reveals both actions for users who intentionally copy commands into external terminals.
-   */
-  showSessionCommandCopyActions: boolean;
-  /**
-   * CDXC:ContextMenus 2026-06-11-23:08:
-   * Copy details is an explicit session-card context-menu opt-in. Keep it hidden
-   * by default because it copies project/session metadata, including paths and
-   * provider ids, into the system clipboard.
-   */
-  showSessionDetailsCopyAction: boolean;
   /**
    * CDXC:Sessions 2026-06-13-17:50:
    * Settings owns the sidebar tag-filter presentation list: users can reorder
@@ -576,6 +579,12 @@ export type ghostexSettings = {
    * `apps/desktop/src/app/panel_motion.rs`. macOS Reduce Motion always snaps.
    */
   panelAnimationSpeed: PanelAnimationSpeed;
+  /**
+   * CDXC:Workarea 2026-09-26 SEE-ALSO: closing the last tab in the side panel closes the panel
+   * instead of showing the "Open a view" picker; the user's decision lives on `close_view_tab` in
+   * `apps/desktop/src/app/view_panel.rs`.
+   */
+  closeSidePanelWithLastTab: boolean;
   /** Delay before sidebar hover tooltips appear. */
   sidebarTooltipDelayMs: number;
   /**
@@ -657,7 +666,7 @@ export type ghostexSettings = {
   /**
    * Reveal thinking-owned tool calls by default in Session Chat. Chats that
    * use the composer's Verbose pill store their own value and stop following
-   * this (packages/core-ui/chat/session-chat-verbose-override.ts).
+   * this (the `verbose` store, packages/gx-chat-core/src/composer/storage.rs).
    */
   sessionChatVerboseMode: boolean;
   /** CDXC:SessionChat 2026-09-13 DECISION:
@@ -812,6 +821,23 @@ export type ghostexSettings = {
    */
   windowGlassImageDark: string;
   windowGlassImageLight: string;
+  /**
+   * CDXC:Theming 2026-09-23 SEE-ALSO:
+   * The user's own videos Live glass plays in dark and light mode when that mode's Live slot is `video`: the absolute path of a .mov/.mp4/.m4v file (empty: none chosen, the live blur shows). `windowGlassVideoOnlyOnPower` pauses them on battery. window_glass_live.rs holds the user's decision and the GPUI macOS window plays them.
+   */
+  windowGlassVideoDark: string;
+  windowGlassVideoLight: string;
+  /** Pauses the glass video, and the Live style's motion, while the computer runs on battery. */
+  windowGlassVideoOnlyOnPower: boolean;
+  /**
+   * CDXC:Theming 2026-09-26 SEE-ALSO:
+   * The animated style Live glass draws in dark and light mode and how fast it moves (0.25 to 2); window_glass_live.rs holds the user's decision and the GPUI macOS window draws it in the theme's colours.
+   */
+  windowGlassLiveStyleDark: WindowGlassLiveStyle;
+  windowGlassLiveStyleLight: WindowGlassLiveStyle;
+  windowGlassLiveSpeed: number;
+  /** How bright the Live style is drawn, 10 to 100 percent (default 45). */
+  windowGlassLiveBrightness: number;
   /**
    * CDXC:Theming 2026-09-23 SEE-ALSO:
    * Whether the Wallpaper only or Custom image picture covers the window and moves with it (static) or stays still against the screen (desktop); window_glass.rs holds the user's decision and the GPUI macOS window places it.
