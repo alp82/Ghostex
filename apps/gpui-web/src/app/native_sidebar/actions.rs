@@ -11,6 +11,10 @@ impl GhostexGpuiApp {
         command: Value,
         cx: &mut gpui::Context<Self>,
     ) {
+        if crate::attention_prototype::enabled() {
+            self.attention_prototype_command(&command, cx);
+            return;
+        }
         self.web_run_sidebar_command(command, cx);
     }
 }

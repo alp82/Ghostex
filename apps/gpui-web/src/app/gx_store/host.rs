@@ -84,6 +84,10 @@ pub(crate) fn now_ms() -> u64 {
 impl GhostexGpuiApp {
     /// Bootstraps, connects and pumps until the page goes away, reconnecting on a close.
     pub(crate) fn gx_store_start(&mut self, cx: &mut gpui::Context<Self>) {
+        if crate::attention_prototype::enabled() {
+            self.start_attention_prototype(cx);
+            return;
+        }
         self.gx_store_restore_sidebar_ui();
         cx.spawn(async move |app, cx| {
             let endpoint = match web_transport::bootstrap().await {

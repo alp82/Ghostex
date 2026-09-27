@@ -144,6 +144,7 @@ impl Render for GhostexGpuiApp {
                 self.native_chats.get(session).map(|(_, view)| view.clone().into_any_element())
             }
         });
+        let surface = if crate::attention_prototype::enabled() { Some(self.render_attention_prototype(cx)) } else { surface };
         let header = self.render_workarea_header(cx);
         let terminal_bar = (self.show_terminal && surface.is_some())
             .then(|| self.render_terminal_action_bar(cx));

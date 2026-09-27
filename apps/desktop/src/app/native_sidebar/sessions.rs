@@ -103,6 +103,15 @@ impl GhostexGpuiApp {
             .and_then(Value::as_u64)
             .unwrap_or(0)
             > 0;
+        // Throwaway visual experiment, supplied only by the GPUI web fixture route.
+        #[cfg(target_family = "wasm")]
+        let prototype = crate::attention_prototype::signal(session);
+        #[cfg(not(target_family = "wasm"))]
+        let prototype: Option<(String, u32, bool)> = None;
+        #[cfg(target_family = "wasm")]
+        let prototype_variant = crate::attention_prototype::variant();
+        #[cfg(not(target_family = "wasm"))]
+        let prototype_variant = "";
         let timer = session.details.get("timerLabel").and_then(Value::as_str);
         let show_time = hud
             .get("settings")
@@ -151,10 +160,20 @@ impl GhostexGpuiApp {
                 .when_some(drop_position, |row, position| row.child(super::drag::drop_line(position, scale)))
                 .when(!focused, |row| row.hover(|row| row.bg(appearance.session_hover)))
                 .when(focused, |row| row.child(super::decorations::session_outline(appearance)))
+                .when_some(prototype.as_ref().filter(|(_,_,attention)| *attention), |row, (_,color,_)| {
+                    let fill = match prototype_variant.as_ref() {
+                        "A" => rgb(*color).opacity(0.12),
+                        "B" => rgb(*color).opacity(0.25),
+                        "C" => rgb(0x493044).opacity(1.0),
+                        _ => rgb(0x343640).opacity(1.0),
+                    };
+                    row.bg(fill).hover(move |row| row.bg(fill)).when(focused, |row| row.border_1().border_color(rgb(*color).opacity(0.7)))
+                })
                 .child(self.render_native_session_identity(session, icon, appearance, cx))
                 .children(self.render_native_session_decorations(session, appearance, cx))
                 .when_some(self.native_sidebar.reveal_flash.as_ref().filter(|(id, _)| id == &session.session_id).map(|(_, start)| *start), |row, start| row.child(super::scroll::reveal_flash(start, scale)))
                 .child(div().id(format!("native-session-title-{session_id}")).flex_1().min_w_0().h_full().flex().items_center().child(div().min_w_0().truncate().child(session.title().to_owned())).when(self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag(), |row| row.managed_discrete_tooltip_with_placement(tooltip_span.placement(), appearance.tooltip_delay, move |window, cx| super::tooltips::sidebar_tooltip(tooltip.clone(), tooltip_span, scale, window, cx))))
+                .when_some(prototype.as_ref().filter(|_| matches!(prototype_variant.as_ref(), "C" | "D")), |row, (label,color,_)| row.child(div().flex_shrink_0().px(px(5.0 * scale)).py(px(2.0 * scale)).rounded(px(4.0 * scale)).text_size(px(10.5 * scale)).text_color(rgb(*color)).bg(rgb(*color).opacity(0.09)).child(label.clone())))
                 .when(!hovered && !question, |row| row.children(super::status::activity_indicator(&session.activity, session.has_background_work, scale)))
                 .when(!hovered && !question && (timer.is_some() || (show_time && session.activity != "working" && session.activity != "attention" && !session.has_background_work)), |row| row.child(div().text_size(px(13.55 * scale)).text_color(if sleeping { chrome_color(0x686868, 0x959595) } else { chrome_color(0xa6a6a6, 0x424242) }).child(time)))
                 .when(hovered, |row| row.child(self.render_native_session_hover_actions(group, session, appearance, cx)))

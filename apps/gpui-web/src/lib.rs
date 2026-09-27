@@ -5,6 +5,7 @@ use gpui_component::{Root, theme::Theme};
 use wasm_bindgen::prelude::*;
 
 mod app;
+mod attention_prototype;
 // The desktop crate root doubles as a prelude (`use crate::*` in its modules), so the shared files expect the same names here.
 #[allow(unused_imports)]
 mod prelude {
@@ -117,7 +118,17 @@ pub fn run() -> Result<(), JsValue> {
     let app = gpui_platform::application();
     #[cfg(target_family = "wasm")]
     let app = {
-        let app = gpui_platform::single_threaded_web();
+        let app = if attention_prototype::enabled() {
+            // The throwaway preview uses WebGL explicitly: this checkout's WebGPU
+            // context loses its device in headless Chromium before the first paint.
+            let platform = std::rc::Rc::new(gpui_web::WebPlatform::new_with_backend(
+                false, gpui_web::WebBackendPreference::WebGl,
+            ));
+            let client = std::sync::Arc::new(platform.fetch_http_client());
+            Application::with_platform(platform).with_http_client(client)
+        } else {
+            gpui_platform::single_threaded_web()
+        };
         // `run()` returns to JavaScript instead of blocking in a native run loop, so the app cell is leaked to stay alive (same workaround as gpui-component's story-web).
         struct WasmApplication(std::rc::Rc<AppCell>);
         let wasm_app = unsafe { std::mem::transmute::<Application, WasmApplication>(app) };
